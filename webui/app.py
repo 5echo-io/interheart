@@ -4,10 +4,10 @@ import os
 import subprocess
 import time
 import json
+import re
 
 APP = Flask(__name__)
 
-# ---- SemVer from VERSION file ----
 def read_version():
     try:
         base = os.environ.get("INTERHEART_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,13 +35,11 @@ STATE_POLL_SECONDS = 2
 
 RUNTIME_FILE = "/var/lib/interheart/runtime.json"
 
-
 def run_cmd(args):
     cmd = ["sudo", CLI] + args
     p = subprocess.run(cmd, capture_output=True, text=True)
     out = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
     return p.returncode, out.strip()
-
 
 def parse_list_targets(list_output: str):
     targets = []
@@ -72,7 +70,6 @@ def parse_list_targets(list_output: str):
         })
     return targets
 
-
 def parse_status(status_output: str):
     state = {}
     in_table = False
@@ -82,7 +79,7 @@ def parse_status(status_output: str):
             continue
         if not in_table:
             continue
-        if line.strip().startswith("NAME") or line.strip().startswith("State:") or line.strip().startswith("(no"):
+        if line.strip().startswith("NAME") or line.strip().startswith("State:"):
             continue
         if not line.strip():
             continue
@@ -101,7 +98,6 @@ def parse_status(status_output: str):
         }
     return state
 
-
 def human_ts(epoch: int):
     if not epoch or epoch <= 0:
         return "-"
@@ -110,14 +106,12 @@ def human_ts(epoch: int):
     except Exception:
         return "-"
 
-
 def sudo_journalctl(lines: int) -> str:
     cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=short-iso"]
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         raise RuntimeError((p.stderr or "journalctl failed").strip())
     return (p.stdout or "").strip()
-
 
 def merged_targets():
     _, list_out = run_cmd(["list"])
@@ -137,36 +131,50 @@ def merged_targets():
             **t,
             "status": status,
             "last_ping_human": human_ts(last_ping_epoch),
-            "last_response_human": human_ts(last_sent_epoch),  # UI rename
+            "last_response_human": human_ts(last_sent_epoch),
             "last_ping_epoch": last_ping_epoch,
             "last_response_epoch": last_sent_epoch,
         })
     return merged
 
-
-def icon_svg(path_d: str):
+def icon_svg(path_d: str, opacity: float = 0.95):
     return Markup(
         f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-        xmlns="http://www.w3.org/2000/svg" style="opacity:.92">
+        xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">
         <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>"""
     )
-
 
 ICONS = {
     "plus": icon_svg("M12 5v14M5 12h14"),
     "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
     "close": icon_svg("M18 6L6 18M6 6l12 12"),
     "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
-    "copy": icon_svg("M8 8h12v12H8zM4 4h12v12"),
+    # robust copy icon (overlapping rectangles)
+    "copy": icon_svg("M9 9h11v11H9zM4 4h11v11H4z", opacity=0.98),
     "play": icon_svg("M8 5v14l11-7z"),
     "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
     "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
     "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
-    "spinner": icon_svg("M12 2a10 10 0 1 0 10 10"),
-    "check": icon_svg("M20 6 9 17l-5-5"),
-    "warn": icon_svg("M12 9v4m0 4h.01M10.29 3.86l-8.2 14.2A2 2 0 0 0 3.8 21h16.4a2 2 0 0 0 1.71-2.94l-8.2-14.2a2 2 0 0 0-3.42 0z"),
 }
+
+SUMMARY_RE = re.compile(
+    r"total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)"
+)
+
+def parse_run_summary(text: str):
+    m = SUMMARY_RE.search(text or "")
+    if not m:
+        return None
+    return {
+        "total": int(m.group(1)),
+        "due": int(m.group(2)),
+        "skipped": int(m.group(3)),
+        "ping_ok": int(m.group(4)),
+        "ping_fail": int(m.group(5)),
+        "sent": int(m.group(6)),
+        "curl_fail": int(m.group(7)),
+    }
 
 TEMPLATE = r"""
 <!doctype html>
@@ -179,12 +187,12 @@ TEMPLATE = r"""
   <style>
     :root{
       --bg:#091626;
-      --panel:#0b1220;
-      --panel2:#0c1526;
-      --line:rgba(255,255,255,.10);
+      --panel: rgba(12,18,32,.62);
+      --panel2: rgba(12,18,32,.78);
+      --line: rgba(255,255,255,.10);
 
-      --text:rgba(255,255,255,.92);
-      --muted:rgba(255,255,255,.60);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.60);
 
       --good:#35d39f;
       --danger:#ff3b5c;
@@ -216,27 +224,18 @@ TEMPLATE = r"""
       color:var(--muted);
     }
 
-    .subtitle{
-      color:var(--muted);
-      font-size:13px;
-      display:flex;
-      align-items:center;
-      gap:10px;
-    }
-    .subtitle a{
-      color:rgba(255,255,255,.85);
-      text-decoration:none;
-      border-bottom:1px solid rgba(255,255,255,.18);
-    }
+    .subtitle{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:10px}
+    .subtitle a{color:rgba(255,255,255,.85);text-decoration:none;border-bottom:1px solid rgba(255,255,255,.18)}
     .subtitle a:hover{border-bottom-color:rgba(255,255,255,.32)}
 
     .card{
-      background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.015));
-      border:1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,.040), rgba(255,255,255,.018));
+      border:1px solid rgba(255,255,255,.10);
       border-radius:var(--radius);
       box-shadow: var(--shadow);
       padding:16px;
       overflow:hidden;
+      backdrop-filter: blur(10px);
     }
 
     .hint{color:rgba(255,255,255,.52);font-size:12px}
@@ -249,54 +248,47 @@ TEMPLATE = r"""
       color:var(--text);
       padding:10px 12px;
       outline:none;
-      transition: border-color .15s ease, filter .15s ease;
+      transition: border-color .15s ease, filter .15s ease, background .15s ease;
       font-family:var(--sans);
     }
     input:focus{
       border-color:rgba(255,255,255,.24);
       filter:brightness(1.03);
+      background:rgba(255,255,255,.04);
     }
     input::placeholder{color:rgba(255,255,255,.30)}
 
-    /* Minimal buttons */
     .btn{
       border-radius:14px;
-      border:1px solid var(--line);
+      border:1px solid rgba(255,255,255,.12);
       padding:10px 12px;
       cursor:pointer;
       font-weight:850;
       color:rgba(255,255,255,.90);
       background:rgba(255,255,255,.03);
-      transition: transform .12s ease, border-color .12s ease, background .12s ease;
+      transition: transform .12s ease, border-color .12s ease, background .12s ease, filter .12s ease;
       display:inline-flex;
       align-items:center;
       justify-content:center;
       gap:8px;
       user-select:none;
-      height:36px;            /* unify height */
+      height:36px;
       line-height:1;
     }
     .btn:hover{
       transform: translateY(-1px);
       border-color: rgba(255,255,255,.20);
       background:rgba(255,255,255,.04);
+      filter:brightness(1.03);
     }
     .btn:active{transform: translateY(0px)}
     .btn-mini{font-size:12px;padding:0 12px;border-radius:12px;height:34px}
-    .btn-ghost{
-      background:transparent;
-      border-color:rgba(255,255,255,.12);
-    }
+    .btn-ghost{background:transparent;border-color:rgba(255,255,255,.12)}
     .btn-ghost:hover{border-color:rgba(255,255,255,.22)}
-
-    .btn-primary{
-      border-color:rgba(255,255,255,.22);
-      background:rgba(255,255,255,.06);
-    }
+    .btn-primary{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.06)}
 
     .right-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
-    /* Table */
     table{width:100%;border-collapse:collapse;border-radius:14px;overflow:hidden}
     th,td{padding:10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
     th{color:var(--muted);font-weight:850;text-align:left}
@@ -324,31 +316,18 @@ TEMPLATE = r"""
       100%{box-shadow:0 0 0 0 rgba(53,211,159,0)}
     }
 
-    /* Inline interval */
     .interval-wrap{display:flex;align-items:center;gap:8px}
     .interval-input{
-      width:86px;
-      height:34px;
-      padding:8px 10px;
-      border-radius:12px;
-      font-weight:850;
+      width:86px;height:34px;padding:8px 10px;border-radius:12px;font-weight:850;
       font-family:var(--mono);
       background:rgba(255,255,255,.03);
     }
     .interval-suffix{color:rgba(255,255,255,.45);font-size:12px;font-weight:850}
 
-    /* Actions menu */
     .menu{position:relative;display:inline-block}
-    .menu-btn{
-      width:40px;height:34px;
-      display:inline-flex;align-items:center;justify-content:center;
-      border-radius:12px;
-    }
+    .menu-btn{width:40px;height:34px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px}
     .menu-dd{
-      position:absolute;
-      right:0;
-      top:42px;
-      width:220px;
+      position:absolute;right:0;top:42px;width:220px;
       background:rgba(10,16,28,.96);
       border:1px solid rgba(255,255,255,.12);
       border-radius:14px;
@@ -357,76 +336,41 @@ TEMPLATE = r"""
       display:none;
       z-index:50;
       transform-origin: top right;
-      animation: pop .12s ease;
+      animation: pop .14s ease;
     }
-    @keyframes pop{from{transform:scale(.98);opacity:.7}to{transform:scale(1);opacity:1}}
+    @keyframes pop{from{transform:translateY(-4px) scale(.98);opacity:.70}to{transform:translateY(0) scale(1);opacity:1}}
     .menu.show .menu-dd{display:block}
     .menu-item{
-      width:100%;
-      border:0;
-      background:transparent;
-      color:rgba(255,255,255,.86);
-      padding:10px 10px;
-      border-radius:12px;
-      cursor:pointer;
-      display:flex;align-items:center;gap:10px;
-      font-weight:850;
-      height:38px;
+      width:100%;border:0;background:transparent;color:rgba(255,255,255,.86);
+      padding:10px 10px;border-radius:12px;cursor:pointer;
+      display:flex;align-items:center;gap:10px;font-weight:850;height:38px;
     }
     .menu-item:hover{background:rgba(255,255,255,.06)}
     .menu-item.danger:hover{background:rgba(255,59,92,.10)}
 
-    /* Toasts */
     .toasts{
-      position:fixed;
-      top:18px; right:18px;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-      z-index:9999;
-      width:min(460px, calc(100vw - 24px));
-      pointer-events:none;
+      position:fixed;top:18px; right:18px;display:flex;flex-direction:column;gap:10px;
+      z-index:9999;width:min(460px, calc(100vw - 24px));pointer-events:none;
     }
     .toast{
-      pointer-events:auto;
-      border-radius:16px;
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(10,16,28,.92);
-      box-shadow: 0 18px 54px rgba(0,0,0,.70);
-      padding:12px 12px;
-      display:flex;
-      gap:10px;
-      align-items:flex-start;
-      animation: toastIn .14s ease;
+      pointer-events:auto;border-radius:16px;border:1px solid rgba(255,255,255,.12);
+      background:rgba(10,16,28,.92);box-shadow: 0 18px 54px rgba(0,0,0,.70);
+      padding:12px 12px;display:flex;gap:10px;align-items:flex-start;animation: toastIn .14s ease;
     }
     @keyframes toastIn{from{transform:translateY(-6px);opacity:.65}to{transform:translateY(0);opacity:1}}
     .toast b{font-size:13px}
     .toast p{margin:2px 0 0 0;font-size:12px;color:rgba(255,255,255,.64);line-height:1.35}
-    .toast .x{
-      margin-left:auto;
-      cursor:pointer;
-      border:0;
-      background:transparent;
-      color:rgba(255,255,255,.70);
-      font-weight:900;
-    }
+    .toast .x{margin-left:auto;cursor:pointer;border:0;background:transparent;color:rgba(255,255,255,.70);font-weight:900}
 
-    /* Modal */
     .modal{
-      position:fixed;inset:0;
-      display:none;
-      align-items:center;justify-content:center;
-      z-index:9997;
-      padding:26px;
-      background:rgba(0,0,0,.60);
-      backdrop-filter: blur(12px);
+      position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+      z-index:9997;padding:26px;background:rgba(0,0,0,.60);backdrop-filter: blur(12px);
     }
     .modal.show{display:flex}
     .modal-card{
       width:min(980px, calc(100vw - 40px));
       max-height:min(82vh, 880px);
-      display:flex;
-      flex-direction:column;
+      display:flex;flex-direction:column;
       border:1px solid rgba(255,255,255,.12);
       border-radius:22px;
       background:rgba(10,16,28,.94);
@@ -434,170 +378,79 @@ TEMPLATE = r"""
       overflow:hidden;
     }
     .modal-head{
-      padding:14px 14px;
-      border-bottom:1px solid rgba(255,255,255,.10);
-      display:flex;
-      gap:12px;
-      align-items:center;          /* align better */
-      justify-content:space-between;
-      flex-wrap:nowrap;           /* prevent awkward wrapping */
+      padding:14px 14px;border-bottom:1px solid rgba(255,255,255,.10);
+      display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:nowrap;
     }
-    .modal-title{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      min-width:0;
-      white-space:nowrap;         /* keep “Last 200 lines” on one line */
-    }
+    .modal-title{display:flex;align-items:center;gap:10px;min-width:0;white-space:nowrap}
     .modal-title b{font-size:14px}
-    .modal-title span{
-      font-size:12px;
-      color:rgba(255,255,255,.62);
-    }
-    .modal-actions{
-      display:flex;
-      gap:10px;
-      align-items:center;
-      justify-content:flex-end;
-      flex-wrap:nowrap;
-    }
+    .modal-title span{font-size:12px;color:rgba(255,255,255,.62)}
+    .modal-actions{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:nowrap}
 
     .modal-body{padding:16px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:12px}
 
     .logbox{
-      width:100%;
-      min-height:380px;
-      background:rgba(255,255,255,.03);
-      border:1px solid rgba(255,255,255,.10);
-      border-radius:16px;
-      padding:12px;
-      font-family:var(--mono);
-      font-size:12px;
-      line-height:1.45;
-      color:rgba(255,255,255,.84);
-      white-space:pre;
-      overflow:auto;
-      position:relative;
+      width:100%;min-height:380px;background:rgba(255,255,255,.03);
+      border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:12px;
+      font-family:var(--mono);font-size:12px;line-height:1.45;color:rgba(255,255,255,.84);
+      white-space:pre;overflow:auto;position:relative;
     }
 
-    /* Larger/smoother update flash */
-    .flash{
-      animation: flash .80s ease;
-      border-radius:10px;
-      padding:2px 6px;
-    }
-    @keyframes flash{
-      0%{background:rgba(255,255,255,.18)}
-      100%{background:transparent}
-    }
+    .flash{animation: flash .80s ease;border-radius:10px;padding:2px 6px}
+    @keyframes flash{0%{background:rgba(255,255,255,.18)}100%{background:transparent}}
 
-    /* Run-now row visualization */
-    tr.working td{
-      background:rgba(255,255,255,.03);
+    tr.working td{background:rgba(255,255,255,.035)}
+    tr.working td:first-child{position:relative}
+    tr.working td:first-child:before{
+      content:"";position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px;
+      background:rgba(255,255,255,.20);
     }
-    tr.blink-ok td{
-      animation: rowOk .9s ease;
-    }
-    tr.blink-bad td{
-      animation: rowBad .9s ease;
-    }
-    @keyframes rowOk{
-      0%{background:rgba(53,211,159,.16)}
-      100%{background:transparent}
-    }
-    @keyframes rowBad{
-      0%{background:rgba(255,59,92,.14)}
-      100%{background:transparent}
-    }
+    tr.blink-ok td{animation: rowOk .9s ease}
+    tr.blink-bad td{animation: rowBad .9s ease}
+    @keyframes rowOk{0%{background:rgba(53,211,159,.16)}100%{background:transparent}}
+    @keyframes rowBad{0%{background:rgba(255,59,92,.14)}100%{background:transparent}}
 
     .footer{
-      margin-top:14px;
-      color:var(--muted);
-      font-size:12px;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      padding-top:10px;
-      border-top:1px solid var(--line);
+      margin-top:14px;color:var(--muted);font-size:12px;
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+      padding-top:10px;border-top:1px solid var(--line);
     }
-    .footer a{
-      color:rgba(255,255,255,.82);
-      text-decoration:none;
-      border-bottom:1px solid rgba(255,255,255,.18);
-    }
+    .footer a{color:rgba(255,255,255,.82);text-decoration:none;border-bottom:1px solid rgba(255,255,255,.18)}
     .footer a:hover{border-bottom-color:rgba(255,255,255,.34)}
 
     .spin{animation: spin 0.9s linear infinite}
     @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 
-    /* Add modal layout (row fields) */
-    .grid3{
-      display:grid;
-      grid-template-columns: 1.2fr 1fr .7fr;
-      gap:12px;
-    }
-    .field label{
-      display:block;
-      font-size:12px;
-      color:rgba(255,255,255,.55);
-      margin:0 0 6px 2px;
-    }
+    .grid3{display:grid;grid-template-columns: 1.2fr 1fr .7fr;gap:12px}
+    .field label{display:block;font-size:12px;color:rgba(255,255,255,.55);margin:0 0 6px 2px}
     .field input{width:100%}
 
-    .modal-foot-actions{
-      display:flex;
-      justify-content:flex-end; /* right side */
-      gap:10px;
-      margin-top:12px;
-    }
+    .modal-foot-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
 
-    /* Run summary modal */
-    .summary-wrap{
-      display:grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap:12px;
-    }
-    .metric{
+    .summary-wrap{display:grid;grid-template-columns: repeat(4, 1fr);gap:12px}
+    .metric{border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);border-radius:16px;padding:12px}
+    .metric b{font-size:12px;color:rgba(255,255,255,.65);display:block;margin-bottom:6px}
+    .metric .v{font-size:18px;font-weight:900;letter-spacing:.2px}
+    .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);overflow:hidden;margin-top:10px}
+    .bar > div{height:100%;width:0%;background:rgba(255,255,255,.28);transition: width .25s ease}
+    .summary-sub{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;color:rgba(255,255,255,.60);font-size:12px;font-family:var(--mono)}
+
+    .run-live{
+      display:inline-flex;align-items:center;gap:10px;
+      padding:8px 10px;border-radius:14px;
       border:1px solid rgba(255,255,255,.10);
       background:rgba(255,255,255,.03);
-      border-radius:16px;
-      padding:12px;
-    }
-    .metric b{
-      font-size:12px;
-      color:rgba(255,255,255,.65);
-      display:block;
-      margin-bottom:6px;
-    }
-    .metric .v{
-      font-size:18px;
-      font-weight:900;
-      letter-spacing:.2px;
-    }
-    .bar{
-      height:10px;
-      border-radius:999px;
-      background:rgba(255,255,255,.06);
-      border:1px solid rgba(255,255,255,.08);
-      overflow:hidden;
-      margin-top:10px;
-    }
-    .bar > div{
-      height:100%;
-      width:0%;
-      background:rgba(255,255,255,.28);
-      transition: width .25s ease;
-    }
-    .summary-sub{
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      margin-top:10px;
-      color:rgba(255,255,255,.60);
-      font-size:12px;
       font-family:var(--mono);
+      font-size:12px;
+      color:rgba(255,255,255,.78);
+    }
+    .run-live .pulse{
+      width:10px;height:10px;border-radius:999px;background:rgba(255,255,255,.30);
+      animation: pulse2 1.2s infinite;
+    }
+    @keyframes pulse2{
+      0%{box-shadow:0 0 0 0 rgba(255,255,255,.18)}
+      70%{box-shadow:0 0 0 12px rgba(255,255,255,0)}
+      100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}
     }
 
     @media (max-width: 940px){
@@ -613,7 +466,6 @@ TEMPLATE = r"""
 <body>
 <div class="toasts" id="toasts"></div>
 
-<!-- Logs modal -->
 <div class="modal" id="logModal" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logs">
     <div class="modal-head">
@@ -624,13 +476,13 @@ TEMPLATE = r"""
       <div class="modal-actions">
         <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="height:34px; padding:0 12px; border-radius:12px; min-width:220px;">
         <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">
-          <span class="ico" aria-hidden="true">{{ icons.refresh|safe }}</span> Reload
+          {{ icons.refresh|safe }} Reload
         </button>
         <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
-          <span class="ico" aria-hidden="true">{{ icons.copy|safe }}</span> Copy
+          {{ icons.copy|safe }} Copy
         </button>
         <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">
-          <span class="ico" aria-hidden="true">{{ icons.close|safe }}</span> Close
+          {{ icons.close|safe }} Close
         </button>
       </div>
     </div>
@@ -642,14 +494,11 @@ TEMPLATE = r"""
 
     <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
       <div class="hint">interheart <code>{{ ui_version }}</code></div>
-      <div>
-        <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved
-      </div>
+      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
     </div>
   </div>
 </div>
 
-<!-- Run summary modal -->
 <div class="modal" id="runModal" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-label="Run summary">
     <div class="modal-head">
@@ -658,8 +507,12 @@ TEMPLATE = r"""
         <span id="runTitleMeta">-</span>
       </div>
       <div class="modal-actions">
+        <div class="run-live" id="runLive" style="display:none;">
+          <span class="pulse"></span>
+          <span id="runLiveText">Running…</span>
+        </div>
         <button class="btn btn-ghost btn-mini" id="btnCloseRun" type="button">
-          <span class="ico" aria-hidden="true">{{ icons.close|safe }}</span> Close
+          {{ icons.close|safe }} Close
         </button>
       </div>
     </div>
@@ -696,14 +549,11 @@ TEMPLATE = r"""
 
     <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
       <div class="hint">interheart <code>{{ ui_version }}</code></div>
-      <div>
-        <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved
-      </div>
+      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
     </div>
   </div>
 </div>
 
-<!-- Add target modal -->
 <div class="modal" id="addModal" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
     <div class="modal-head">
@@ -711,9 +561,7 @@ TEMPLATE = r"""
         <b>Add target</b>
         <span>Ping target, then call endpoint on success</span>
       </div>
-      <div class="modal-actions">
-        <!-- removed Close button (requested) -->
-      </div>
+      <div class="modal-actions"></div>
     </div>
 
     <div class="modal-body">
@@ -741,11 +589,11 @@ TEMPLATE = r"""
         </div>
 
         <div class="modal-foot-actions">
-          <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
+          <!-- swapped order (requested) -->
           <button class="btn btn-primary" type="submit" id="btnAddSubmit" data-default-html="">
-            <span class="ico" aria-hidden="true">{{ icons.plus|safe }}</span>
-            Add target
+            {{ icons.plus|safe }} Add target
           </button>
+          <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
         </div>
 
         <div class="hint" style="margin-top:10px;">
@@ -756,9 +604,7 @@ TEMPLATE = r"""
 
     <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
       <div class="hint">interheart <code>{{ ui_version }}</code></div>
-      <div>
-        <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved
-      </div>
+      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
     </div>
   </div>
 </div>
@@ -767,23 +613,14 @@ TEMPLATE = r"""
   <div class="top">
     <div class="brand">
       <div class="title">interheart <span class="badge">targets</span></div>
-      <div class="subtitle">
-        Powered by <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
-      </div>
+      <div class="subtitle">Powered by <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a></div>
     </div>
 
     <div class="right-actions">
-      <button class="btn btn-ghost btn-mini" id="openLogs" type="button">
-        <span class="ico" aria-hidden="true">{{ icons.logs|safe }}</span> Logs
-      </button>
-
-      <button class="btn btn-ghost btn-mini" id="openAdd" type="button">
-        <span class="ico" aria-hidden="true">{{ icons.plus|safe }}</span> Add
-      </button>
-
+      <button class="btn btn-ghost btn-mini" id="openLogs" type="button">{{ icons.logs|safe }} Logs</button>
+      <button class="btn btn-ghost btn-mini" id="openAdd" type="button">{{ icons.plus|safe }} Add</button>
       <button class="btn btn-primary btn-mini" id="btnRunNow" type="button" data-default-html="">
-        <span class="ico" id="runNowIcon" aria-hidden="true">{{ icons.play|safe }}</span>
-        Run now
+        {{ icons.play|safe }} Run now
       </button>
     </div>
   </div>
@@ -831,15 +668,11 @@ TEMPLATE = r"""
           <td style="text-align:right;">
             <div class="menu">
               <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">
-                <span class="ico" aria-hidden="true">{{ icons.more|safe }}</span>
+                {{ icons.more|safe }}
               </button>
               <div class="menu-dd" role="menu">
-                <button class="menu-item" data-action="test" type="button">
-                  <span class="ico" aria-hidden="true">{{ icons.test|safe }}</span> Test
-                </button>
-                <button class="menu-item danger" data-action="remove" type="button">
-                  <span class="ico" aria-hidden="true">{{ icons.trash|safe }}</span> Remove
-                </button>
+                <button class="menu-item" data-action="test" type="button">{{ icons.test|safe }} Test</button>
+                <button class="menu-item danger" data-action="remove" type="button">{{ icons.trash|safe }} Remove</button>
               </div>
             </div>
           </td>
@@ -849,22 +682,20 @@ TEMPLATE = r"""
     </table>
 
     <div class="footer">
-      <div class="hint">
-        WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code>
-      </div>
-
-      <div>
-        <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
-        © {{ copyright_year }} All rights reserved
-      </div>
+      <div class="hint">WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code></div>
+      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
     </div>
   </div>
 </div>
 
 <script>
 (function(){
-  // ---- Toasts ----
   const toasts = document.getElementById("toasts");
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
   function toast(title, msg){
     const el = document.createElement("div");
     el.className = "toast";
@@ -879,29 +710,15 @@ TEMPLATE = r"""
     toasts.appendChild(el);
     setTimeout(() => { if (el && el.parentNode) el.remove(); }, 5200);
   }
-  function escapeHtml(s){
-    return String(s ?? "")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
-  }
-
   function show(el){ el.classList.add("show"); el.setAttribute("aria-hidden","false"); }
   function hide(el){ el.classList.remove("show"); el.setAttribute("aria-hidden","true"); }
 
-  // ---- Default button HTML snapshots ----
   function captureDefaultHtml(btn){
     if (!btn) return;
     if (!btn.dataset.defaultHtml || btn.dataset.defaultHtml === ""){
       btn.dataset.defaultHtml = btn.innerHTML;
     }
   }
-  const btnRunNow = document.getElementById("btnRunNow");
-  const btnAddSubmit = document.getElementById("btnAddSubmit");
-  captureDefaultHtml(btnRunNow);
-  captureDefaultHtml(btnAddSubmit);
 
   // ---- Logs modal ----
   const logModal = document.getElementById("logModal");
@@ -934,6 +751,7 @@ TEMPLATE = r"""
     const lines = (rawLog || "").split("\n").filter(l => l.toLowerCase().includes(q));
     logBox.textContent = lines.join("\n") || "(no matches)";
   }
+
   openLogs.addEventListener("click", async () => { show(logModal); logFilter.focus(); await loadLogs(); });
   closeLogs.addEventListener("click", () => hide(logModal));
   reloadLogs.addEventListener("click", async () => await loadLogs());
@@ -948,6 +766,8 @@ TEMPLATE = r"""
   const openAdd = document.getElementById("openAdd");
   const addCancel = document.getElementById("btnAddCancel");
   const addForm = document.getElementById("addForm");
+  const btnAddSubmit = document.getElementById("btnAddSubmit");
+  captureDefaultHtml(btnAddSubmit);
 
   openAdd.addEventListener("click", () => show(addModal));
   addCancel.addEventListener("click", () => hide(addModal));
@@ -997,6 +817,9 @@ TEMPLATE = r"""
   const runModal = document.getElementById("runModal");
   const btnCloseRun = document.getElementById("btnCloseRun");
   const runTitleMeta = document.getElementById("runTitleMeta");
+  const runLive = document.getElementById("runLive");
+  const runLiveText = document.getElementById("runLiveText");
+
   const mTotal = document.getElementById("mTotal");
   const mDue = document.getElementById("mDue");
   const mOk = document.getElementById("mOk");
@@ -1016,24 +839,9 @@ TEMPLATE = r"""
     runBar.style.width = pct + "%";
   }
 
-  function parseSummaryLine(text){
-    // Example: OK: total=7 due=0 skipped=7 ping_ok=0 ping_fail=0 sent=0 curl_fail=0
-    const m = /total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)/.exec(text || "");
-    if (!m) return null;
-    return {
-      total: Number(m[1]),
-      due: Number(m[2]),
-      skipped: Number(m[3]),
-      ok: Number(m[4]),
-      fail: Number(m[5]),
-      sent: Number(m[6]),
-      curl_fail: Number(m[7]),
-    };
-  }
-
-  // ---- Runtime polling (current target / progress) ----
+  // runtime poll (optional)
   let runtimePoll = null;
-  let lastRuntime = null;
+  let lastRuntimeUpdated = 0;
 
   async function fetchRuntime(){
     try{
@@ -1050,34 +858,40 @@ TEMPLATE = r"""
       else r.classList.remove("working");
     });
   }
-
   function clearWorking(){
     document.querySelectorAll("tr[data-name]").forEach(r => r.classList.remove("working"));
   }
 
-  async function startRuntimePoll(){
+  function startRuntimePoll(){
     stopRuntimePoll();
-    lastRuntime = null;
+    lastRuntimeUpdated = 0;
     runtimePoll = setInterval(async () => {
       const rt = await fetchRuntime();
       if (!rt) return;
 
-      if (!lastRuntime || rt.updated !== lastRuntime.updated || rt.current !== lastRuntime.current || rt.done !== lastRuntime.done){
-        const cur = rt.current || "";
-        if (rt.status === "running" && cur) {
+      // only update if changed
+      const upd = Number(rt.updated || 0);
+      if (upd && upd === lastRuntimeUpdated) return;
+      if (upd) lastRuntimeUpdated = upd;
+
+      if (rt.status === "running"){
+        runLive.style.display = "inline-flex";
+        const cur = (rt.current || "").trim();
+        if (cur){
           highlightWorking(cur);
           runNowLine.textContent = "Now checking: " + cur;
-        } else {
-          clearWorking();
-          runNowLine.textContent = "Idle";
+        }else{
+          runNowLine.textContent = "Running…";
         }
-        runDoneLine.textContent = `done: ${rt.done || 0} / ${rt.due || 0}`;
-        setBar(rt.done || 0, rt.due || 0);
-        lastRuntime = rt;
+        const done = Number(rt.done || 0);
+        const due = Number(rt.due || 0);
+        runDoneLine.textContent = `done: ${done} / ${due}`;
+        setBar(done, due);
+      }else{
+        runLive.style.display = "none";
       }
     }, 350);
   }
-
   function stopRuntimePoll(){
     if (runtimePoll){
       clearInterval(runtimePoll);
@@ -1085,14 +899,14 @@ TEMPLATE = r"""
     }
   }
 
-  // ---- Run Now ----
-  const runNowIcon = document.getElementById("runNowIcon");
-  btnRunNow.addEventListener("click", async () => {
-    btnRunNow.disabled = true;
-    if (runNowIcon) runNowIcon.classList.add("spin");
+  // ---- Run Now (robust) ----
+  const btnRunNow = document.getElementById("btnRunNow");
+  captureDefaultHtml(btnRunNow);
 
-    // open run modal + start runtime poll
+  function setRunningUi(){
     runTitleMeta.textContent = "running…";
+    runLive.style.display = "inline-flex";
+    runLiveText.textContent = "Running…";
     mTotal.textContent = "-";
     mDue.textContent = "-";
     mOk.textContent = "-";
@@ -1101,47 +915,64 @@ TEMPLATE = r"""
     mCurlFail.textContent = "-";
     runNowLine.textContent = "Starting…";
     runDoneLine.textContent = "done: 0 / 0";
+    runRaw.style.display = "none";
     setBar(0, 0);
-    runRaw.textContent = "";
+  }
+
+  btnRunNow.addEventListener("click", async () => {
+    btnRunNow.disabled = true;
+
+    // always show modal and visible running state (fix #1)
+    setRunningUi();
     show(runModal);
 
-    await startRuntimePoll();
+    // runtime poll is best-effort (works if engine writes runtime.json)
+    startRuntimePoll();
 
     try{
       const res = await fetch("/api/run-now", {method:"POST"});
       const data = await res.json();
 
-      const summary = parseSummaryLine(data.message || "");
+      stopRuntimePoll();
+      clearWorking();
+      runLive.style.display = "none";
+
       const ts = new Date().toLocaleString();
       runTitleMeta.textContent = ts;
 
+      // Prefer parsed JSON summary if present
+      const summary = data.summary || null;
+
       if (summary){
-        mTotal.textContent = String(summary.total);
-        mDue.textContent = String(summary.due);
-        mOk.textContent = String(summary.ok);
-        mFail.textContent = String(summary.fail);
-        mSent.textContent = String(summary.sent);
-        mCurlFail.textContent = String(summary.curl_fail);
+        mTotal.textContent = String(summary.total ?? "-");
+        mDue.textContent = String(summary.due ?? "-");
+        mOk.textContent = String(summary.ping_ok ?? "-");
+        mFail.textContent = String(summary.ping_fail ?? "-");
+        mSent.textContent = String(summary.sent ?? "-");
+        mCurlFail.textContent = String(summary.curl_fail ?? "-");
+
+        // “Due” might be 0 if not due; still show progress as completed state
+        setBar(summary.due || 0, summary.due || 0);
+        runNowLine.textContent = "Completed";
+        runDoneLine.textContent = `done: ${summary.due || 0} / ${summary.due || 0}`;
       }else{
-        // fallback
+        // fallback: show message
         runRaw.textContent = data.message || "-";
         runRaw.style.display = "block";
+        runNowLine.textContent = data.ok ? "Completed" : "Failed";
       }
 
-      if (data.ok){
-        toast("Run completed", "Done");
-      }else{
-        toast("Run failed", data.message || "Error");
-      }
+      toast(data.ok ? "Run completed" : "Run failed", data.ok ? "Done" : (data.message || "Error"));
     }catch(e){
-      toast("Run failed", e && e.message ? e.message : "Error");
-    }finally{
       stopRuntimePoll();
       clearWorking();
-      if (runNowIcon) runNowIcon.classList.remove("spin");
+      runLive.style.display = "none";
+      toast("Run failed", e && e.message ? e.message : "Error");
+      runRaw.textContent = e && e.message ? e.message : "Run failed";
+      runRaw.style.display = "block";
+      runNowLine.textContent = "Failed";
+    }finally{
       btnRunNow.disabled = false;
-      btnRunNow.innerHTML = btnRunNow.dataset.defaultHtml || btnRunNow.innerHTML;
-
       await refreshState(true);
     }
   });
@@ -1219,7 +1050,6 @@ TEMPLATE = r"""
           fd.set("name", name);
 
           if (action === "remove"){
-            // confirm (requested)
             if (!confirm(`Remove "${name}"?\n\nThis cannot be undone.`)) return;
           }
 
@@ -1235,11 +1065,7 @@ TEMPLATE = r"""
               return;
             }
 
-            if (data.ok){
-              toast("OK", data.message || "Done");
-            }else{
-              toast("Error", data.message || "Failed");
-            }
+            toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
           }catch(e){
             toast("Error", e && e.message ? e.message : "Failed");
           }finally{
@@ -1298,12 +1124,10 @@ TEMPLATE = r"""
 
         setStatusChip(row, t.status);
 
-        // detect last_ping change to blink row green/red
         const prevPing = parseInt(row.getAttribute("data-last-ping") || "0", 10);
         const newPing = parseInt(String(t.last_ping_epoch || 0), 10);
 
-        const pingChanged = (newPing && newPing !== prevPing);
-        if (pingChanged){
+        if (newPing && newPing !== prevPing){
           row.setAttribute("data-last-ping", String(newPing));
           blinkRow(row, t.status === "up");
         }
@@ -1349,13 +1173,11 @@ TEMPLATE = r"""
 </html>
 """
 
-
 @APP.get("/")
 def index():
-    targets = merged_targets()
     return render_template_string(
         TEMPLATE,
-        targets=targets,
+        targets=merged_targets(),
         bind_host=BIND_HOST,
         bind_port=BIND_PORT,
         ui_version=UI_VERSION,
@@ -1365,11 +1187,9 @@ def index():
         icons=ICONS
     )
 
-
 @APP.get("/state")
 def state():
     return jsonify({"updated": int(time.time()), "targets": merged_targets()})
-
 
 @APP.get("/runtime")
 def runtime():
@@ -1377,7 +1197,6 @@ def runtime():
         if os.path.exists(RUNTIME_FILE):
             with open(RUNTIME_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            # ensure keys exist
             data.setdefault("status", "idle")
             data.setdefault("current", "")
             data.setdefault("done", 0)
@@ -1387,7 +1206,6 @@ def runtime():
     except Exception:
         pass
     return jsonify({"status": "idle", "current": "", "done": 0, "due": 0, "updated": int(time.time())})
-
 
 @APP.get("/logs")
 def logs():
@@ -1406,12 +1224,15 @@ def logs():
     except Exception as e:
         return jsonify({"source": "journalctl (error)", "lines": 1, "updated": updated, "text": f"(journalctl error: {str(e)})"})
 
-
 @APP.post("/api/run-now")
 def api_run_now():
     rc, out = run_cmd(["run"])
-    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
-
+    summary = parse_run_summary(out)
+    return jsonify({
+        "ok": rc == 0,
+        "message": out or ("OK" if rc == 0 else "Failed"),
+        "summary": summary
+    })
 
 @APP.post("/api/test")
 def api_test():
@@ -1419,13 +1240,11 @@ def api_test():
     rc, out = run_cmd(["test", name])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
-
 @APP.post("/api/remove")
 def api_remove():
     name = request.form.get("name", "")
     rc, out = run_cmd(["remove", name])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
-
 
 @APP.post("/api/add")
 def api_add():
@@ -1436,14 +1255,12 @@ def api_add():
     rc, out = run_cmd(["add", name, ip, endpoint, interval])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
-
 @APP.post("/api/set-target-interval")
 def api_set_target_interval():
     name = request.form.get("name", "")
     sec = request.form.get("seconds", "")
     rc, out = run_cmd(["set-target-interval", name, sec])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
-
 
 if __name__ == "__main__":
     APP.run(host=BIND_HOST, port=BIND_PORT)
