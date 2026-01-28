@@ -1,0 +1,23 @@
+
+---
+
+# 7) `webui/systemd/uptimerobot-heartbeat-webui.service`
+
+```ini
+[Unit]
+Description=5echo UptimeRobot Heartbeat Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/uptimerobot-heartbeat/webui
+Environment=WEBUI_USER=admin
+Environment=WEBUI_PASS=change-me
+ExecStart=/opt/uptimerobot-heartbeat/webui/.venv/bin/python /opt/uptimerobot-heartbeat/webui/app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
