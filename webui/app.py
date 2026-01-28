@@ -5,7 +5,7 @@ import time
 
 APP = Flask(__name__)
 
-UI_VERSION = "v6"
+UI_VERSION = "v7"
 COPYRIGHT_YEAR = "2026"
 
 CLI = "/usr/local/bin/interheart"
@@ -306,7 +306,7 @@ TEMPLATE = r"""
     .modal.show{display:flex;}
     .modal-card{
       width:min(1100px, calc(100vw - 24px));
-      max-height: min(78vh, 780px);
+      max-height: min(80vh, 820px);
       display:flex;
       flex-direction:column;
       border:1px solid var(--line);
@@ -320,25 +320,61 @@ TEMPLATE = r"""
       border-bottom:1px solid var(--line);
       display:flex;
       gap:10px;
-      align-items:center;
+      align-items:flex-start;
       justify-content:space-between;
     }
-    .modal-title{
-      display:flex;
-      flex-direction:column;
-      gap:2px;
-    }
+    .modal-title{display:flex; flex-direction:column; gap:2px;}
     .modal-title b{font-size:14px}
     .modal-title span{font-size:12px; color:rgba(255,255,255,.62)}
-    .modal-actions{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+
+    .modal-actions{
+      display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-end;
+    }
+
     .modal-body{
       padding:12px;
       overflow:auto;
       flex:1;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
     }
+
+    .chips{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      padding:10px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      border-radius:18px;
+    }
+    .chip-btn{
+      cursor:pointer;
+      user-select:none;
+      padding:7px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.04);
+      color:rgba(255,255,255,.74);
+      font-size:12px;
+      font-weight:850;
+      transition: transform .12s ease, border-color .12s ease, filter .12s ease, background .12s ease;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+    }
+    .chip-btn:hover{transform: translateY(-1px); filter:brightness(1.03); border-color:rgba(42,116,255,.35);}
+    .chip-btn:active{transform: translateY(0px); filter:brightness(.98);}
+    .chip-btn.active{
+      border-color:rgba(42,116,255,.55);
+      background:linear-gradient(180deg, rgba(42,116,255,.20), rgba(42,116,255,.06));
+      color:rgba(255,255,255,.90);
+    }
+
     .logbox{
       width:100%;
-      min-height: 380px;
+      min-height: 360px;
       background:rgba(0,0,0,.25);
       border:1px solid var(--line);
       border-radius:16px;
@@ -349,7 +385,23 @@ TEMPLATE = r"""
       color:rgba(255,255,255,.84);
       white-space:pre;
       overflow:auto;
+      position:relative;
     }
+    .logbox.loading:after{
+      content:"Oppdaterer…";
+      position:absolute;
+      top:12px; right:12px;
+      font-family:var(--sans);
+      font-size:12px;
+      font-weight:900;
+      color:rgba(255,255,255,.70);
+      background:rgba(10,14,24,.60);
+      border:1px solid var(--line);
+      padding:6px 10px;
+      border-radius:999px;
+      backdrop-filter: blur(10px);
+    }
+
     .modal-foot{
       padding:10px 12px;
       border-top:1px solid var(--line);
@@ -361,11 +413,32 @@ TEMPLATE = r"""
       font-size:12px;
     }
 
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      padding:7px 10px;
+      border-radius:999px;
+      font-family:var(--mono);
+      font-size:11px;
+      color:rgba(255,255,255,.70);
+    }
+    .live-dot{
+      width:8px; height:8px; border-radius:99px;
+      background:rgba(255,255,255,.25);
+    }
+    .pill.on{border-color:rgba(56,211,159,.25); background:rgba(56,211,159,.09);}
+    .pill.on .live-dot{background:var(--good); box-shadow:0 0 0 0 rgba(56,211,159,.35); animation:pulse 1.4s infinite;}
+
     @media (max-width: 940px){
       .footer{flex-direction:column; align-items:flex-start;}
       .toast-wrap{right:12px; left:12px}
       .toast{min-width:unset; max-width:unset}
       .logbox{min-height: 320px;}
+      .modal-head{flex-direction:column; align-items:stretch;}
+      .modal-actions{justify-content:flex-start;}
     }
   </style>
 </head>
@@ -386,21 +459,49 @@ TEMPLATE = r"""
     <div class="modal-head">
       <div class="modal-title">
         <b>Logg</b>
-        <span>Siste <span id="logLinesLbl">{{ log_lines }}</span> linjer • filter på target • copy med ett klikk</span>
+        <span>Siste <span id="logLinesLbl">{{ log_lines }}</span> linjer • target-chips • live tail</span>
       </div>
       <div class="modal-actions">
         <input id="logFilter" placeholder="filter (f.eks. anl-0161)" style="min-width:220px;">
         <button class="btn btn-secondary btn-mini" id="btnReloadLogs" type="button"><span class="icon">⟳</span> Last på nytt</button>
         <button class="btn btn-secondary btn-mini" id="btnCopyLogs" type="button"><span class="icon">⧉</span> Copy</button>
+
+        <div class="toggle" id="liveToggle" title="Live tail (poll hver 3s)">
+          <div class="switch"><div class="knob"></div></div>
+          <div>
+            <div style="font-weight:900; font-size:12px;">Live tail</div>
+            <small>3s</small>
+          </div>
+        </div>
+
+        <div class="toggle" id="followToggle" title="Hold scroller i bunn ved nye linjer">
+          <div class="switch"><div class="knob"></div></div>
+          <div>
+            <div style="font-weight:900; font-size:12px;">Follow</div>
+            <small>bottom</small>
+          </div>
+        </div>
+
         <button class="btn btn-danger btn-mini" id="btnCloseLogs" type="button"><span class="icon">✕</span> Lukk</button>
       </div>
     </div>
+
     <div class="modal-body">
+      <div class="chips" id="targetChips">
+        <span class="hint">Laster targets…</span>
+      </div>
+
       <div class="logbox" id="logBox">Laster logg…</div>
+
+      <div class="row" style="justify-content:space-between;">
+        <div class="pill" id="livePill"><span class="live-dot"></span> LIVE: OFF</div>
+        <div class="muted" id="logMeta">-</div>
+      </div>
     </div>
+
     <div class="modal-foot">
-      <div>Tips: ESC lukker. Filter matcher tekst (name/ip/OK/DOWN osv.)</div>
-      <div class="muted" id="logMeta">-</div>
+      <div>Tips: ESC lukker. Klikk chip → filter. Live tail kan stå på mens du feilsøker.</div>
+      <div class="muted">Filter matcher tekst (name/ip/OK/DOWN osv.)</div>
     </div>
   </div>
 </div>
@@ -412,7 +513,7 @@ TEMPLATE = r"""
     <div class="brand">
       <div class="title">interheart <span class="badge">targets</span></div>
       <div class="subtitle">
-        Steg 6: Logg i popup. Du kan filtrere på target og kopiere loggen.
+        Steg 7: Logg-popup med target-chips + live tail + follow bottom.
       </div>
     </div>
 
@@ -667,7 +768,7 @@ TEMPLATE = r"""
 
   apply();
 
-  // Logs modal
+  // Logs modal (Step 7)
   var modal = document.getElementById("logModal");
   var openBtn = document.getElementById("openLogs");
   var closeBtn = document.getElementById("btnCloseLogs");
@@ -676,33 +777,58 @@ TEMPLATE = r"""
   var logBox = document.getElementById("logBox");
   var logMeta = document.getElementById("logMeta");
   var filter = document.getElementById("logFilter");
+  var chipsWrap = document.getElementById("targetChips");
+
+  var liveToggle = document.getElementById("liveToggle");
+  var followToggle = document.getElementById("followToggle");
+  var livePill = document.getElementById("livePill");
 
   var rawLog = "";
+  var liveOn = false;
+  var followBottom = true;
+  var liveTimer = null;
+  var LIVE_INTERVAL_MS = 3000;
+
+  var activeChip = ""; // target name
 
   function openModal(){
     modal.classList.add("show");
     modal.setAttribute("aria-hidden","false");
-    filter.value = filter.value || "";
     filter.focus();
   }
   function closeModal(){
+    stopLive();
     modal.classList.remove("show");
     modal.setAttribute("aria-hidden","true");
   }
 
-  async function loadLogs(){
-    logBox.textContent = "Laster logg…";
-    logMeta.textContent = "-";
+  function setLivePill(){
+    if (liveOn){
+      livePill.classList.add("on");
+      livePill.innerHTML = '<span class="live-dot"></span> LIVE: ON';
+    } else {
+      livePill.classList.remove("on");
+      livePill.innerHTML = '<span class="live-dot"></span> LIVE: OFF';
+    }
+  }
+
+  async function loadLogs(silent){
+    if (!silent) logBox.classList.add("loading");
     try{
       const res = await fetch("/logs?lines={{ log_lines }}", {cache:"no-store"});
       const data = await res.json();
       rawLog = data.text || "";
       logMeta.textContent = (data.source || "log") + " • " + (data.lines || 0) + " linjer • " + (data.updated || "");
       applyFilter();
+      if (followBottom){
+        logBox.scrollTop = logBox.scrollHeight;
+      }
     }catch(e){
       rawLog = "";
       logBox.textContent = "Kunne ikke hente logg: " + (e && e.message ? e.message : "ukjent feil");
       logMeta.textContent = "error";
+    }finally{
+      logBox.classList.remove("loading");
     }
   }
 
@@ -718,17 +844,81 @@ TEMPLATE = r"""
     logBox.textContent = lines.join("\n") || "(ingen treff)";
   }
 
+  function renderChips(){
+    chipsWrap.innerHTML = "";
+    var allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "chip-btn" + (activeChip === "" ? " active" : "");
+    allBtn.textContent = "ALL";
+    allBtn.addEventListener("click", function(){
+      activeChip = "";
+      filter.value = "";
+      renderChips();
+      applyFilter();
+      toast("Filter", "ALL");
+    });
+    chipsWrap.appendChild(allBtn);
+
+    (window.__targets || []).forEach(function(t){
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chip-btn" + (activeChip === t.name ? " active" : "");
+      btn.textContent = t.name;
+      btn.addEventListener("click", function(){
+        activeChip = t.name;
+        filter.value = t.name;
+        renderChips();
+        applyFilter();
+        toast("Filter", t.name);
+      });
+      chipsWrap.appendChild(btn);
+    });
+
+    if ((window.__targets || []).length === 0){
+      var s = document.createElement("span");
+      s.className = "hint";
+      s.textContent = "Ingen targets funnet.";
+      chipsWrap.appendChild(s);
+    }
+  }
+
+  function startLive(){
+    if (liveTimer) return;
+    liveOn = true;
+    setLivePill();
+    liveTimer = setInterval(function(){
+      loadLogs(true);
+    }, LIVE_INTERVAL_MS);
+  }
+
+  function stopLive(){
+    liveOn = false;
+    setLivePill();
+    if (liveTimer){
+      clearInterval(liveTimer);
+      liveTimer = null;
+    }
+  }
+
+  function setToggle(el, on){
+    if (on) el.classList.add("on"); else el.classList.remove("on");
+  }
+
   openBtn.addEventListener("click", async function(){
     toast("Åpner logg…", "Henter siste linjer");
     openModal();
-    await loadLogs();
+    renderChips();
+    await loadLogs(false);
+    if (followBottom){
+      logBox.scrollTop = logBox.scrollHeight;
+    }
   });
 
   closeBtn.addEventListener("click", function(){ closeModal(); });
 
   reloadBtn.addEventListener("click", async function(){
     toast("Oppdaterer logg…", "");
-    await loadLogs();
+    await loadLogs(false);
   });
 
   copyBtn.addEventListener("click", async function(){
@@ -740,7 +930,41 @@ TEMPLATE = r"""
     }
   });
 
-  filter.addEventListener("input", function(){ applyFilter(); });
+  filter.addEventListener("input", function(){
+    activeChip = ""; // typing overrides chip
+    renderChips();
+    applyFilter();
+  });
+
+  // Live toggle
+  liveToggle.addEventListener("click", function(){
+    var newState = !liveOn;
+    if (newState){
+      setToggle(liveToggle, true);
+      startLive();
+      toast("Live tail", "På (poll hver 3s)");
+      loadLogs(true);
+    } else {
+      setToggle(liveToggle, false);
+      stopLive();
+      toast("Live tail", "Av");
+    }
+  });
+
+  // Follow bottom toggle
+  followToggle.addEventListener("click", function(){
+    followBottom = !followBottom;
+    setToggle(followToggle, followBottom);
+    toast("Follow bottom", followBottom ? "På" : "Av");
+    if (followBottom){
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+  });
+
+  // Defaults
+  setToggle(liveToggle, false);
+  setToggle(followToggle, true);
+  setLivePill();
 
   // ESC closes
   document.addEventListener("keydown", function(e){
@@ -755,7 +979,25 @@ TEMPLATE = r"""
       closeModal();
     }
   });
+
+  // Scroll detection: if user scrolls up, disable follow bottom automatically (soft)
+  logBox.addEventListener("scroll", function(){
+    if (!modal.classList.contains("show")) return;
+    var nearBottom = (logBox.scrollTop + logBox.clientHeight) >= (logBox.scrollHeight - 30);
+    if (!nearBottom && followBottom){
+      followBottom = false;
+      setToggle(followToggle, false);
+      toast("Follow bottom", "Av (du scrollet opp)");
+    } else if (nearBottom && !followBottom){
+      // do nothing; user toggles back manually
+    }
+  });
 })();
+</script>
+
+<script>
+// expose targets to JS for chips
+window.__targets = {{ targets_json | safe }};
 </script>
 
 </body>
@@ -836,7 +1078,6 @@ def human_ts(epoch: int):
     return "-"
 
 def sudo_journalctl(lines: int) -> str:
-  # We keep it super specific (tag = interheart) and no paging.
   cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=short-iso"]
   p = subprocess.run(cmd, capture_output=True, text=True)
   if p.returncode != 0:
@@ -847,7 +1088,6 @@ def read_log_file(lines: int) -> str:
   if not os.path.exists(LOG_FILE_FALLBACK):
     return ""
   try:
-    # Read tail-ish without external deps
     with open(LOG_FILE_FALLBACK, "r", encoding="utf-8", errors="replace") as f:
       data = f.read().splitlines()
     return "\n".join(data[-lines:])
@@ -880,6 +1120,12 @@ def index():
       "last_sent_human": human_ts(last_sent_epoch),
     })
 
+  # For chips in JS
+  targets_json = []
+  for t in targets:
+    targets_json.append({"name": t["name"], "ip": t["ip"]})
+
+  import json
   return render_template_string(
     TEMPLATE,
     targets=merged,
@@ -888,12 +1134,12 @@ def index():
     message=message,
     ui_version=UI_VERSION,
     copyright_year=COPYRIGHT_YEAR,
-    log_lines=LOG_LINES_DEFAULT
+    log_lines=LOG_LINES_DEFAULT,
+    targets_json=json.dumps(targets_json)
   )
 
 @APP.get("/logs")
 def logs():
-  # returns JSON: { source, lines, updated, text }
   try:
     lines = int(request.args.get("lines", str(LOG_LINES_DEFAULT)))
   except Exception:
@@ -902,18 +1148,15 @@ def logs():
 
   updated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(time.time())))
 
-  # Prefer journalctl
   try:
     text = sudo_journalctl(lines)
     src = "journalctl -t interheart"
     actual = len(text.splitlines()) if text else 0
     return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
   except Exception as e:
-    # fallback to file
     text = read_log_file(lines)
     src = "file: /var/log/interheart.log (fallback)"
     actual = len(text.splitlines()) if text else 0
-    # include journal error lightly
     if not text:
       text = f"(ingen logg funnet)\n(journalctl-feil: {str(e)})"
       actual = len(text.splitlines())
