@@ -1,10 +1,18 @@
-# 5echo - UpTimeRobot Heartbeat Bridge
+# 5echo – UptimeRobot Heartbeat Bridge
 
-Dette scriptet lar deg overvåke intern infrastruktur med UpTimeRobot Heartbeats, ved å:
-- ping'e interne IP-adresser
-- sende individuell heartbeat per IP hvis ping er OK
-- ikke sende heartbeat hvis ping feiler (UpTimeRobot varsler når heartbeat uteblir)
+Overvåk intern infrastruktur med UptimeRobot Heartbeat-monitorer.
 
-## Install
+**Hvordan det funker:**
+- Scriptet leser en liste targets (name, ip, heartbeat-url)
+- Ping'er hver IP
+- Hvis ping OK → sender *individuell* heartbeat til UptimeRobot
+- Hvis ping feiler → sender ikke heartbeat → UptimeRobot varsler når heartbeat uteblir
+
+## Installer på server
 ```bash
-sudo ./uptimerobot-heartbeat.sh install
+sudo apt update
+sudo apt install -y git curl iputils-ping
+sudo git clone <DIN_GITHUB_REPO_URL> /opt/uptimerobot-heartbeat
+cd /opt/uptimerobot-heartbeat
+sudo chmod +x install.sh
+sudo ./install.sh
