@@ -3,14 +3,19 @@
 **ping → endpoint relay**
 
 - Pinger interne targets (IP)
-- Hvis ping er OK → sender request til target sitt endpoint (HTTP GET)
-- Hvis ping feiler → sender ikke request
+- Hver target har eget **intervall**
+- Når en target er “due”:
+  - Ping OK → sender request til target sitt endpoint (HTTP GET)
+  - Ping feiler → sender ikke request
+- Systemd timer kjører ofte (default 10s), men selve per-target intervallstyringen skjer i `interheart run`.
 
 Endpoint kan være hva som helst:
 - UptimeRobot Heartbeat
 - Uptime Kuma push endpoint
 - Zapier webhook
 - intern API
+
+---
 
 ## Install (server)
 ```bash
