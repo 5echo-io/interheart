@@ -1,0 +1,8 @@
+[Unit]
+Description=5echo interheart runner (manual runs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/interheart run
