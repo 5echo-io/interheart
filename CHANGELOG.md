@@ -3,6 +3,21 @@ All notable changes to this project will be documented in this file.
 
 This project follows Semantic Versioning (SemVer).
 
+## [4.4.0] - 2026-01-28
+### Added
+- `interheart run-now` command to force-check all targets immediately (ignores per-target schedules).
+- Runtime progress output to `/var/lib/interheart/runtime.json` for live UI progress updates.
+- Custom "Confirm remove" modal (replaces browser `confirm()`).
+
+### Changed
+- Run Now WebUI now calls `interheart run-now` by default for expected behavior.
+- Run summary modal now displays meaningful metrics and progress based on runtime + forced execution.
+
+### Fixed
+- Logs "Copy" button icon was not visible in some builds: now uses a guaranteed inline SVG icon.
+- Run summary modal previously showed `0/0` and felt inactive when no targets were due.
+
+
 ## [4.3.0] - 2026-01-28
 ### Added
 - UI polish pass: softer “glass” feel, smoother hover states, and improved dropdown animation.
