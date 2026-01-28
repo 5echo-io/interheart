@@ -1,16 +1,19 @@
-from flask import Flask, request, render_template_string, redirect, url_for
+from flask import Flask, request, render_template_string, redirect, url_for, jsonify
 import os
 import subprocess
 import time
 
 APP = Flask(__name__)
 
-UI_VERSION = "v5"
+UI_VERSION = "v6"
 COPYRIGHT_YEAR = "2026"
 
 CLI = "/usr/local/bin/interheart"
 BIND_HOST = os.environ.get("WEBUI_BIND", "127.0.0.1")
 BIND_PORT = int(os.environ.get("WEBUI_PORT", "8088"))
+
+LOG_LINES_DEFAULT = 200
+LOG_FILE_FALLBACK = "/var/log/interheart.log"
 
 TEMPLATE = r"""
 <!doctype html>
@@ -156,7 +159,6 @@ TEMPLATE = r"""
       100%{box-shadow:0 0 0 0 rgba(56,211,159,0)}
     }
 
-    /* Due highlight */
     tr.due-soon{
       background: linear-gradient(90deg, rgba(42,116,255,.10), transparent 60%);
     }
@@ -231,12 +233,8 @@ TEMPLATE = r"""
     }
     .toast .t-title{font-weight:900; font-size:12px; color:rgba(255,255,255,.90)}
     .toast .t-body{margin-top:4px; font-size:12px; color:rgba(255,255,255,.68); line-height:1.35}
-    @keyframes toastIn{
-      to{transform: translateY(0px); opacity:1;}
-    }
-    @keyframes toastOut{
-      to{transform: translateY(8px); opacity:0;}
-    }
+    @keyframes toastIn{to{transform: translateY(0px); opacity:1;}}
+    @keyframes toastOut{to{transform: translateY(8px); opacity:0;}}
 
     /* Working overlay */
     .overlay{
@@ -286,30 +284,88 @@ TEMPLATE = r"""
       transition: border-color .12s ease, filter .12s ease;
     }
     .toggle:hover{border-color:rgba(42,116,255,.35); filter:brightness(1.03);}
-    .switch{
-      width:34px; height:18px;
-      border-radius:999px;
-      background:rgba(255,255,255,.12);
-      border:1px solid var(--line);
-      position:relative;
-    }
-    .knob{
-      position:absolute;
-      top:1px; left:1px;
-      width:14px; height:14px;
-      border-radius:99px;
-      background:rgba(255,255,255,.70);
-      transition: transform .14s ease, background .14s ease;
-    }
+    .switch{width:34px; height:18px; border-radius:999px; background:rgba(255,255,255,.12); border:1px solid var(--line); position:relative;}
+    .knob{position:absolute; top:1px; left:1px; width:14px; height:14px; border-radius:99px; background:rgba(255,255,255,.70); transition: transform .14s ease, background .14s ease;}
     .toggle.on .switch{background:rgba(42,116,255,.22); border-color:rgba(42,116,255,.30);}
     .toggle.on .knob{transform: translateX(16px); background:rgba(255,255,255,.92);}
     .toggle small{color:rgba(255,255,255,.62); font-size:12px}
     .autorefresh-info{font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.66);}
 
+    /* Modal (logs) */
+    .modal{
+      position:fixed;
+      inset:0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:9997;
+      padding:18px;
+      background:rgba(0,0,0,.52);
+      backdrop-filter: blur(10px);
+    }
+    .modal.show{display:flex;}
+    .modal-card{
+      width:min(1100px, calc(100vw - 24px));
+      max-height: min(78vh, 780px);
+      display:flex;
+      flex-direction:column;
+      border:1px solid var(--line);
+      border-radius:22px;
+      background:rgba(10,14,24,.86);
+      box-shadow: 0 26px 70px rgba(0,0,0,.70);
+      overflow:hidden;
+    }
+    .modal-head{
+      padding:12px 12px;
+      border-bottom:1px solid var(--line);
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+    }
+    .modal-title{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+    }
+    .modal-title b{font-size:14px}
+    .modal-title span{font-size:12px; color:rgba(255,255,255,.62)}
+    .modal-actions{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+    .modal-body{
+      padding:12px;
+      overflow:auto;
+      flex:1;
+    }
+    .logbox{
+      width:100%;
+      min-height: 380px;
+      background:rgba(0,0,0,.25);
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:12px;
+      font-family:var(--mono);
+      font-size:12px;
+      line-height:1.45;
+      color:rgba(255,255,255,.84);
+      white-space:pre;
+      overflow:auto;
+    }
+    .modal-foot{
+      padding:10px 12px;
+      border-top:1px solid var(--line);
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:center;
+      color:rgba(255,255,255,.62);
+      font-size:12px;
+    }
+
     @media (max-width: 940px){
       .footer{flex-direction:column; align-items:flex-start;}
       .toast-wrap{right:12px; left:12px}
       .toast{min-width:unset; max-width:unset}
+      .logbox{min-height: 320px;}
     }
   </style>
 </head>
@@ -325,6 +381,30 @@ TEMPLATE = r"""
   </div>
 </div>
 
+<div class="modal" id="logModal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logg">
+    <div class="modal-head">
+      <div class="modal-title">
+        <b>Logg</b>
+        <span>Siste <span id="logLinesLbl">{{ log_lines }}</span> linjer • filter på target • copy med ett klikk</span>
+      </div>
+      <div class="modal-actions">
+        <input id="logFilter" placeholder="filter (f.eks. anl-0161)" style="min-width:220px;">
+        <button class="btn btn-secondary btn-mini" id="btnReloadLogs" type="button"><span class="icon">⟳</span> Last på nytt</button>
+        <button class="btn btn-secondary btn-mini" id="btnCopyLogs" type="button"><span class="icon">⧉</span> Copy</button>
+        <button class="btn btn-danger btn-mini" id="btnCloseLogs" type="button"><span class="icon">✕</span> Lukk</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="logbox" id="logBox">Laster logg…</div>
+    </div>
+    <div class="modal-foot">
+      <div>Tips: ESC lukker. Filter matcher tekst (name/ip/OK/DOWN osv.)</div>
+      <div class="muted" id="logMeta">-</div>
+    </div>
+  </div>
+</div>
+
 <div class="toast-wrap" id="toastWrap"></div>
 
 <div class="wrap">
@@ -332,11 +412,13 @@ TEMPLATE = r"""
     <div class="brand">
       <div class="title">interheart <span class="badge">targets</span></div>
       <div class="subtitle">
-        Steg 5: overlay/spinner + “due now” highlight + valgfri auto-refresh (client-side).
+        Steg 6: Logg i popup. Du kan filtrere på target og kopiere loggen.
       </div>
     </div>
 
     <div class="right-actions">
+      <button class="btn btn-secondary btn-mini" id="openLogs" type="button"><span class="icon">🧾</span> Logg</button>
+
       <div class="toggle" id="autoToggle" title="Auto refresh klient-side">
         <div class="switch"><div class="knob"></div></div>
         <div>
@@ -567,17 +649,12 @@ TEMPLATE = r"""
       toggle.classList.add("on");
       status.textContent = "on (" + REFRESH_SEC + "s)";
       if (!timer){
-        timer = setInterval(function(){
-          window.location.reload();
-        }, REFRESH_SEC * 1000);
+        timer = setInterval(function(){ window.location.reload(); }, REFRESH_SEC * 1000);
       }
     } else {
       toggle.classList.remove("on");
       status.textContent = "off";
-      if (timer){
-        clearInterval(timer);
-        timer = null;
-      }
+      if (timer){ clearInterval(timer); timer = null; }
     }
   }
 
@@ -589,6 +666,95 @@ TEMPLATE = r"""
   });
 
   apply();
+
+  // Logs modal
+  var modal = document.getElementById("logModal");
+  var openBtn = document.getElementById("openLogs");
+  var closeBtn = document.getElementById("btnCloseLogs");
+  var reloadBtn = document.getElementById("btnReloadLogs");
+  var copyBtn = document.getElementById("btnCopyLogs");
+  var logBox = document.getElementById("logBox");
+  var logMeta = document.getElementById("logMeta");
+  var filter = document.getElementById("logFilter");
+
+  var rawLog = "";
+
+  function openModal(){
+    modal.classList.add("show");
+    modal.setAttribute("aria-hidden","false");
+    filter.value = filter.value || "";
+    filter.focus();
+  }
+  function closeModal(){
+    modal.classList.remove("show");
+    modal.setAttribute("aria-hidden","true");
+  }
+
+  async function loadLogs(){
+    logBox.textContent = "Laster logg…";
+    logMeta.textContent = "-";
+    try{
+      const res = await fetch("/logs?lines={{ log_lines }}", {cache:"no-store"});
+      const data = await res.json();
+      rawLog = data.text || "";
+      logMeta.textContent = (data.source || "log") + " • " + (data.lines || 0) + " linjer • " + (data.updated || "");
+      applyFilter();
+    }catch(e){
+      rawLog = "";
+      logBox.textContent = "Kunne ikke hente logg: " + (e && e.message ? e.message : "ukjent feil");
+      logMeta.textContent = "error";
+    }
+  }
+
+  function applyFilter(){
+    var q = (filter.value || "").trim().toLowerCase();
+    if (!q){
+      logBox.textContent = rawLog || "(tom logg)";
+      return;
+    }
+    var lines = (rawLog || "").split("\n").filter(function(l){
+      return l.toLowerCase().indexOf(q) !== -1;
+    });
+    logBox.textContent = lines.join("\n") || "(ingen treff)";
+  }
+
+  openBtn.addEventListener("click", async function(){
+    toast("Åpner logg…", "Henter siste linjer");
+    openModal();
+    await loadLogs();
+  });
+
+  closeBtn.addEventListener("click", function(){ closeModal(); });
+
+  reloadBtn.addEventListener("click", async function(){
+    toast("Oppdaterer logg…", "");
+    await loadLogs();
+  });
+
+  copyBtn.addEventListener("click", async function(){
+    try{
+      await navigator.clipboard.writeText(logBox.textContent || "");
+      toast("Kopiert!", "Logg er lagt på clipboard.");
+    }catch(e){
+      toast("Kunne ikke kopiere", "Nettleser blokkerer clipboard.");
+    }
+  });
+
+  filter.addEventListener("input", function(){ applyFilter(); });
+
+  // ESC closes
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape" && modal.classList.contains("show")){
+      closeModal();
+    }
+  });
+
+  // Click outside closes
+  modal.addEventListener("click", function(e){
+    if (e.target === modal){
+      closeModal();
+    }
+  });
 })();
 </script>
 
@@ -669,6 +835,25 @@ def human_ts(epoch: int):
   except Exception:
     return "-"
 
+def sudo_journalctl(lines: int) -> str:
+  # We keep it super specific (tag = interheart) and no paging.
+  cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=short-iso"]
+  p = subprocess.run(cmd, capture_output=True, text=True)
+  if p.returncode != 0:
+    raise RuntimeError((p.stderr or "journalctl feilet").strip())
+  return (p.stdout or "").strip()
+
+def read_log_file(lines: int) -> str:
+  if not os.path.exists(LOG_FILE_FALLBACK):
+    return ""
+  try:
+    # Read tail-ish without external deps
+    with open(LOG_FILE_FALLBACK, "r", encoding="utf-8", errors="replace") as f:
+      data = f.read().splitlines()
+    return "\n".join(data[-lines:])
+  except Exception:
+    return ""
+
 @APP.get("/")
 def index():
   message = request.args.get("message", "")
@@ -702,8 +887,37 @@ def index():
     bind_port=BIND_PORT,
     message=message,
     ui_version=UI_VERSION,
-    copyright_year=COPYRIGHT_YEAR
+    copyright_year=COPYRIGHT_YEAR,
+    log_lines=LOG_LINES_DEFAULT
   )
+
+@APP.get("/logs")
+def logs():
+  # returns JSON: { source, lines, updated, text }
+  try:
+    lines = int(request.args.get("lines", str(LOG_LINES_DEFAULT)))
+  except Exception:
+    lines = LOG_LINES_DEFAULT
+  lines = max(50, min(1000, lines))
+
+  updated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(time.time())))
+
+  # Prefer journalctl
+  try:
+    text = sudo_journalctl(lines)
+    src = "journalctl -t interheart"
+    actual = len(text.splitlines()) if text else 0
+    return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
+  except Exception as e:
+    # fallback to file
+    text = read_log_file(lines)
+    src = "file: /var/log/interheart.log (fallback)"
+    actual = len(text.splitlines()) if text else 0
+    # include journal error lightly
+    if not text:
+      text = f"(ingen logg funnet)\n(journalctl-feil: {str(e)})"
+      actual = len(text.splitlines())
+    return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
 
 @APP.post("/add")
 def add():
