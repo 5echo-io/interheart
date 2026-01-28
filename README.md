@@ -1,18 +1,22 @@
-# 5echo – UptimeRobot Heartbeat Bridge
+# interheart (5echo)
 
-Overvåk intern infrastruktur med UptimeRobot Heartbeat-monitorer.
+**ping → endpoint relay**
 
-**Hvordan det funker:**
-- Scriptet leser en liste targets (name, ip, heartbeat-url)
-- Ping'er hver IP
-- Hvis ping OK → sender *individuell* heartbeat til UptimeRobot
-- Hvis ping feiler → sender ikke heartbeat → UptimeRobot varsler når heartbeat uteblir
+- Pinger interne targets (IP)
+- Hvis ping er OK → sender request til target sitt endpoint (HTTP GET)
+- Hvis ping feiler → sender ikke request
 
-## Installer på server
+Endpoint kan være hva som helst:
+- UptimeRobot Heartbeat
+- Uptime Kuma push endpoint
+- Zapier webhook
+- intern API
+
+## Install (server)
 ```bash
 sudo apt update
 sudo apt install -y git curl iputils-ping
-sudo git clone <DIN_GITHUB_REPO_URL> /opt/uptimerobot-heartbeat
-cd /opt/uptimerobot-heartbeat
-sudo chmod +x install.sh
+sudo git clone https://github.com/5echo-io/interheart.git /opt/interheart
+cd /opt/interheart
+sudo chmod +x install.sh interheart.sh
 sudo ./install.sh
