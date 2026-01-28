@@ -1,0 +1,7 @@
+# interheart webui sudoers
+# Allow only interheart + journalctl for tag "interheart"
+
+Cmnd_Alias INTERHEART = /usr/local/bin/interheart *
+Cmnd_Alias INTERHEART_JOURNAL = /usr/bin/journalctl -t interheart -n * --no-pager --output=short-iso
+
+www-data ALL=(root) NOPASSWD: INTERHEART, INTERHEART_JOURNAL
