@@ -1,14 +1,17 @@
-# Web UI (Flask)
+# interheart WebUI
 
-Enkel webside for:
-- list/add/remove targets
+Modern darkmode WebUI for å:
+- liste/legge til/fjerne targets
+- teste target
 - kjøre sjekk nå
-- se siste logs
+- endre intervall (systemd timer)
 
-## Install
+**Ingen login** – default bindes WebUI til `127.0.0.1:8088`.
+
+## Install dependencies
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv
-cd /opt/uptimerobot-heartbeat/webui
+cd /opt/interheart/webui
 sudo python3 -m venv .venv
-sudo ./.venv/bin/pip install flask
+sudo /opt/interheart/webui/.venv/bin/pip install flask
