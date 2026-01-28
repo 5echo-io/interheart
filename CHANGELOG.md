@@ -3,6 +3,16 @@ All notable changes to this project will be documented in this file.
 
 This project follows Semantic Versioning (SemVer).
 
+## [4.6.0] - 2026-01-29
+### Fixed
+- WebUI "Run now" no longer fails with permission denied writing `/var/lib/interheart/run_last_output.txt`.
+- Logs modal no longer fails due to sudo password prompt (`sudo: a terminal is required...`).
+
+### Changed
+- WebUI systemd service now runs as root (local-only use case) so the UI can read journal and write runtime/output files without sudo.
+- WebUI no longer uses `sudo` internally for `interheart` and `journalctl` calls.
+
+
 ## [4.5.0] - 2026-01-28
 ### Changed
 - Logs modal now reads journal output using `journalctl -o cat` to remove syslog prefixes and show clean interheart log lines only.
