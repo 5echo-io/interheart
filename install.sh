@@ -1,1204 +1,294 @@
-from flask import Flask, request, render_template_string, redirect, url_for, jsonify
-import os
-import subprocess
-import time
-
-APP = Flask(__name__)
-
-UI_VERSION = "v7"
-COPYRIGHT_YEAR = "2026"
-
-CLI = "/usr/local/bin/interheart"
-BIND_HOST = os.environ.get("WEBUI_BIND", "127.0.0.1")
-BIND_PORT = int(os.environ.get("WEBUI_PORT", "8088"))
-
-LOG_LINES_DEFAULT = 200
-LOG_FILE_FALLBACK = "/var/log/interheart.log"
-
-TEMPLATE = r"""
-<!doctype html>
-<html lang="no">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>interheart</title>
-  <style>
-    :root{
-      --bg:#060a12;
-      --line:rgba(255,255,255,.085);
-      --text:rgba(255,255,255,.92);
-      --muted:rgba(255,255,255,.62);
-
-      --navy:#012746;
-      --accent:#2a74ff;
-      --danger:#ff3b5c;
-
-      --good:#38d39f;
-      --warn:#ffd34d;
-
-      --chip:rgba(255,255,255,.06);
-      --shadow: 0 16px 40px rgba(0,0,0,.42);
-      --radius: 18px;
-
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-    }
-
-    *{box-sizing:border-box}
-    body{
-      margin:0; font-family:var(--sans); color:var(--text);
-      background:
-        radial-gradient(1200px 700px at 20% 8%, rgba(42,116,255,.20), transparent 55%),
-        radial-gradient(900px 600px at 85% 15%, rgba(1,39,70,.38), transparent 62%),
-        radial-gradient(700px 500px at 70% 80%, rgba(255,59,92,.08), transparent 55%),
-        var(--bg);
-    }
-
-    .wrap{max-width:1280px; margin:34px auto; padding:0 18px;}
-    .top{display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:18px;}
-    .brand{display:flex; flex-direction:column; gap:8px;}
-    .title{display:flex; align-items:center; gap:10px; font-size:22px; font-weight:900; letter-spacing:.2px;}
-    .badge{
-      font-size:12px; padding:6px 10px; border-radius:999px;
-      background:linear-gradient(180deg, rgba(42,116,255,.18), rgba(42,116,255,.06));
-      border:1px solid var(--line); color:var(--muted);
-    }
-    .subtitle{color:var(--muted); font-size:13px; line-height:1.45}
-
-    .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
-      border:1px solid var(--line);
-      border-radius:var(--radius);
-      box-shadow: var(--shadow);
-      padding:16px;
-      position:relative;
-      overflow:hidden;
-    }
-    .card:before{
-      content:"";
-      position:absolute; inset:-2px;
-      background: radial-gradient(900px 220px at 30% 0%, rgba(42,116,255,.12), transparent 55%);
-      pointer-events:none;
-    }
-    .card > *{position:relative;}
-
-    .card h3{margin:0 0 10px 0; font-size:14px; color:rgba(255,255,255,.86)}
-    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
-
-    input{
-      border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.20);
-      color:var(--text); padding:10px 12px; outline:none;
-      transition: border-color .15s ease, transform .12s ease, filter .12s ease;
-    }
-    input{flex:1; min-width:160px;}
-    input::placeholder{color:rgba(255,255,255,.35)}
-    input:focus{
-      border-color:rgba(42,116,255,.45);
-      filter:brightness(1.03);
-    }
-
-    .btn{
-      border-radius:14px;
-      border:1px solid var(--line);
-      padding:10px 12px;
-      cursor:pointer;
-      font-weight:850;
-      color:var(--text);
-      background:rgba(255,255,255,.04);
-      transition: transform .12s ease, border-color .12s ease, filter .12s ease, background .12s ease;
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      user-select:none;
-    }
-    .btn:hover{transform: translateY(-1px); filter:brightness(1.03); border-color:rgba(42,116,255,.35);}
-    .btn:active{transform: translateY(0px); filter:brightness(.98);}
-
-    .btn-primary{
-      background:linear-gradient(180deg, rgba(42,116,255,.26), rgba(42,116,255,.07));
-      border-color:rgba(42,116,255,.30);
-    }
-    .btn-primary:hover{border-color:rgba(42,116,255,.55);}
-
-    .btn-secondary{
-      background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
-    }
-
-    .btn-danger{
-      background:linear-gradient(180deg, rgba(255,59,92,.22), rgba(255,59,92,.07));
-      border-color:rgba(255,59,92,.28);
-    }
-    .btn-danger:hover{border-color:rgba(255,59,92,.50);}
-
-    .btn-mini{font-size:12px; padding:8px 10px; border-radius:12px;}
-    .icon{width:14px; height:14px; display:inline-block; opacity:.9;}
-
-    .sep{height:1px; background:var(--line); margin:12px 0;}
-
-    table{width:100%; border-collapse:collapse; overflow:hidden; border-radius:14px;}
-    th, td{padding:10px 10px; border-bottom:1px solid var(--line); font-size:13px; vertical-align:top;}
-    th{color:var(--muted); font-weight:850; text-align:left}
-    td code{font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.88)}
-
-    .chip{
-      display:inline-flex; align-items:center; gap:8px;
-      padding:6px 10px; border-radius:999px; background:var(--chip); border:1px solid var(--line);
-      color:var(--muted); font-size:12px;
-      backdrop-filter: blur(6px);
-    }
-    .dot{width:8px; height:8px; border-radius:99px; background:rgba(255,255,255,.35)}
-    .status-up{border-color:rgba(56,211,159,.26); background:rgba(56,211,159,.10)}
-    .status-up .dot{background:var(--good); box-shadow:0 0 0 0 rgba(56,211,159,.35); animation:pulse 1.6s infinite;}
-    .status-down{border-color:rgba(255,59,92,.30); background:rgba(255,59,92,.09)}
-    .status-down .dot{background:var(--danger); box-shadow:0 0 18px rgba(255,59,92,.18);}
-    .status-unknown{border-color:rgba(255,211,77,.22); background:rgba(255,211,77,.06)}
-    .status-unknown .dot{background:var(--warn);}
-    @keyframes pulse{
-      0%{box-shadow:0 0 0 0 rgba(56,211,159,.35)}
-      70%{box-shadow:0 0 0 10px rgba(56,211,159,0)}
-      100%{box-shadow:0 0 0 0 rgba(56,211,159,0)}
-    }
-
-    tr.due-soon{
-      background: linear-gradient(90deg, rgba(42,116,255,.10), transparent 60%);
-    }
-    tr.due-now{
-      background: linear-gradient(90deg, rgba(255,211,77,.12), transparent 65%);
-      animation: dueFlash 1.2s ease-in-out infinite;
-    }
-    @keyframes dueFlash{
-      0%,100%{filter:brightness(1.00)}
-      50%{filter:brightness(1.08)}
-    }
-
-    .msg{
-      border:1px solid var(--line); background:rgba(255,255,255,.03);
-      border-radius:14px; padding:12px; color:var(--muted); font-size:13px;
-      margin-bottom:14px;
-    }
-
-    .footer{
-      margin-top:16px;
-      color:var(--muted);
-      font-size:12px;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      padding-top:10px;
-      border-top:1px solid var(--line);
-    }
-    .footer a{
-      color:rgba(255,255,255,.80);
-      text-decoration:none;
-      border-bottom:1px solid rgba(255,255,255,.18);
-    }
-    .footer a:hover{
-      color:rgba(255,255,255,.94);
-      border-bottom-color:rgba(255,255,255,.35);
-    }
-
-    .hint{color:rgba(255,255,255,.55); font-size:12px}
-    .right-actions{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
-    .kbd{font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.68); padding:6px 8px; border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,.18);}
-    .countdown{font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.80)}
-    .small{font-size:12px; color:rgba(255,255,255,.62)}
-    .muted{color:rgba(255,255,255,.62)}
-    .nowrap{white-space:nowrap}
-
-    /* Toast */
-    .toast-wrap{
-      position:fixed;
-      bottom:18px;
-      right:18px;
-      z-index:9999;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-      pointer-events:none;
-    }
-    .toast{
-      pointer-events:none;
-      min-width:260px;
-      max-width:360px;
-      border:1px solid var(--line);
-      background:rgba(10,14,24,.78);
-      backdrop-filter: blur(10px);
-      border-radius:16px;
-      box-shadow: 0 18px 40px rgba(0,0,0,.55);
-      padding:12px 12px;
-      transform: translateY(8px);
-      opacity:0;
-      animation: toastIn .24s ease forwards;
-    }
-    .toast .t-title{font-weight:900; font-size:12px; color:rgba(255,255,255,.90)}
-    .toast .t-body{margin-top:4px; font-size:12px; color:rgba(255,255,255,.68); line-height:1.35}
-    @keyframes toastIn{to{transform: translateY(0px); opacity:1;}}
-    @keyframes toastOut{to{transform: translateY(8px); opacity:0;}}
-
-    /* Working overlay */
-    .overlay{
-      position:fixed;
-      inset:0;
-      background:rgba(0,0,0,.45);
-      backdrop-filter: blur(8px);
-      display:none;
-      align-items:center;
-      justify-content:center;
-      z-index:9998;
-    }
-    .overlay.show{display:flex;}
-    .overlay-card{
-      width:min(560px, calc(100vw - 24px));
-      border:1px solid var(--line);
-      border-radius:20px;
-      background:rgba(10,14,24,.78);
-      box-shadow: 0 22px 60px rgba(0,0,0,.65);
-      padding:16px 16px;
-    }
-    .overlay-top{
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:12px;
-    }
-    .spinner{
-      width:18px; height:18px; border-radius:999px;
-      border:2px solid rgba(255,255,255,.22);
-      border-top-color: rgba(42,116,255,.85);
-      animation: spin 0.9s linear infinite;
-    }
-    @keyframes spin{to{transform:rotate(360deg)}}
-    .overlay-title{display:flex; align-items:center; gap:10px; font-weight:950;}
-    .overlay-body{margin-top:10px; color:rgba(255,255,255,.70); font-size:13px; line-height:1.45}
-
-    /* Auto refresh toggle */
-    .toggle{
-      display:inline-flex; align-items:center; gap:8px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.18);
-      padding:7px 10px;
-      border-radius:14px;
-      cursor:pointer;
-      user-select:none;
-      transition: border-color .12s ease, filter .12s ease;
-    }
-    .toggle:hover{border-color:rgba(42,116,255,.35); filter:brightness(1.03);}
-    .switch{width:34px; height:18px; border-radius:999px; background:rgba(255,255,255,.12); border:1px solid var(--line); position:relative;}
-    .knob{position:absolute; top:1px; left:1px; width:14px; height:14px; border-radius:99px; background:rgba(255,255,255,.70); transition: transform .14s ease, background .14s ease;}
-    .toggle.on .switch{background:rgba(42,116,255,.22); border-color:rgba(42,116,255,.30);}
-    .toggle.on .knob{transform: translateX(16px); background:rgba(255,255,255,.92);}
-    .toggle small{color:rgba(255,255,255,.62); font-size:12px}
-    .autorefresh-info{font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.66);}
-
-    /* Modal (logs) */
-    .modal{
-      position:fixed;
-      inset:0;
-      display:none;
-      align-items:center;
-      justify-content:center;
-      z-index:9997;
-      padding:18px;
-      background:rgba(0,0,0,.52);
-      backdrop-filter: blur(10px);
-    }
-    .modal.show{display:flex;}
-    .modal-card{
-      width:min(1100px, calc(100vw - 24px));
-      max-height: min(80vh, 820px);
-      display:flex;
-      flex-direction:column;
-      border:1px solid var(--line);
-      border-radius:22px;
-      background:rgba(10,14,24,.86);
-      box-shadow: 0 26px 70px rgba(0,0,0,.70);
-      overflow:hidden;
-    }
-    .modal-head{
-      padding:12px 12px;
-      border-bottom:1px solid var(--line);
-      display:flex;
-      gap:10px;
-      align-items:flex-start;
-      justify-content:space-between;
-    }
-    .modal-title{display:flex; flex-direction:column; gap:2px;}
-    .modal-title b{font-size:14px}
-    .modal-title span{font-size:12px; color:rgba(255,255,255,.62)}
-
-    .modal-actions{
-      display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-end;
-    }
-
-    .modal-body{
-      padding:12px;
-      overflow:auto;
-      flex:1;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-    }
-
-    .chips{
-      display:flex;
-      flex-wrap:wrap;
-      gap:8px;
-      padding:10px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.18);
-      border-radius:18px;
-    }
-    .chip-btn{
-      cursor:pointer;
-      user-select:none;
-      padding:7px 10px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:rgba(255,255,255,.04);
-      color:rgba(255,255,255,.74);
-      font-size:12px;
-      font-weight:850;
-      transition: transform .12s ease, border-color .12s ease, filter .12s ease, background .12s ease;
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-    }
-    .chip-btn:hover{transform: translateY(-1px); filter:brightness(1.03); border-color:rgba(42,116,255,.35);}
-    .chip-btn:active{transform: translateY(0px); filter:brightness(.98);}
-    .chip-btn.active{
-      border-color:rgba(42,116,255,.55);
-      background:linear-gradient(180deg, rgba(42,116,255,.20), rgba(42,116,255,.06));
-      color:rgba(255,255,255,.90);
-    }
-
-    .logbox{
-      width:100%;
-      min-height: 360px;
-      background:rgba(0,0,0,.25);
-      border:1px solid var(--line);
-      border-radius:16px;
-      padding:12px;
-      font-family:var(--mono);
-      font-size:12px;
-      line-height:1.45;
-      color:rgba(255,255,255,.84);
-      white-space:pre;
-      overflow:auto;
-      position:relative;
-    }
-    .logbox.loading:after{
-      content:"Oppdaterer…";
-      position:absolute;
-      top:12px; right:12px;
-      font-family:var(--sans);
-      font-size:12px;
-      font-weight:900;
-      color:rgba(255,255,255,.70);
-      background:rgba(10,14,24,.60);
-      border:1px solid var(--line);
-      padding:6px 10px;
-      border-radius:999px;
-      backdrop-filter: blur(10px);
-    }
-
-    .modal-foot{
-      padding:10px 12px;
-      border-top:1px solid var(--line);
-      display:flex;
-      justify-content:space-between;
-      gap:10px;
-      align-items:center;
-      color:rgba(255,255,255,.62);
-      font-size:12px;
-    }
-
-    .pill{
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.18);
-      padding:7px 10px;
-      border-radius:999px;
-      font-family:var(--mono);
-      font-size:11px;
-      color:rgba(255,255,255,.70);
-    }
-    .live-dot{
-      width:8px; height:8px; border-radius:99px;
-      background:rgba(255,255,255,.25);
-    }
-    .pill.on{border-color:rgba(56,211,159,.25); background:rgba(56,211,159,.09);}
-    .pill.on .live-dot{background:var(--good); box-shadow:0 0 0 0 rgba(56,211,159,.35); animation:pulse 1.4s infinite;}
-
-    @media (max-width: 940px){
-      .footer{flex-direction:column; align-items:flex-start;}
-      .toast-wrap{right:12px; left:12px}
-      .toast{min-width:unset; max-width:unset}
-      .logbox{min-height: 320px;}
-      .modal-head{flex-direction:column; align-items:stretch;}
-      .modal-actions{justify-content:flex-start;}
-    }
-  </style>
-</head>
-<body>
-
-<div class="overlay" id="overlay">
-  <div class="overlay-card">
-    <div class="overlay-top">
-      <div class="overlay-title"><span class="spinner"></span> <span id="ovTitle">Jobber…</span></div>
-      <div class="kbd">venter</div>
-    </div>
-    <div class="overlay-body" id="ovBody">Utfører handlingen. Dette tar som regel bare noen sekunder.</div>
-  </div>
-</div>
-
-<div class="modal" id="logModal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logg">
-    <div class="modal-head">
-      <div class="modal-title">
-        <b>Logg</b>
-        <span>Siste <span id="logLinesLbl">{{ log_lines }}</span> linjer • target-chips • live tail</span>
-      </div>
-      <div class="modal-actions">
-        <input id="logFilter" placeholder="filter (f.eks. anl-0161)" style="min-width:220px;">
-        <button class="btn btn-secondary btn-mini" id="btnReloadLogs" type="button"><span class="icon">⟳</span> Last på nytt</button>
-        <button class="btn btn-secondary btn-mini" id="btnCopyLogs" type="button"><span class="icon">⧉</span> Copy</button>
-
-        <div class="toggle" id="liveToggle" title="Live tail (poll hver 3s)">
-          <div class="switch"><div class="knob"></div></div>
-          <div>
-            <div style="font-weight:900; font-size:12px;">Live tail</div>
-            <small>3s</small>
-          </div>
-        </div>
-
-        <div class="toggle" id="followToggle" title="Hold scroller i bunn ved nye linjer">
-          <div class="switch"><div class="knob"></div></div>
-          <div>
-            <div style="font-weight:900; font-size:12px;">Follow</div>
-            <small>bottom</small>
-          </div>
-        </div>
-
-        <button class="btn btn-danger btn-mini" id="btnCloseLogs" type="button"><span class="icon">✕</span> Lukk</button>
-      </div>
-    </div>
-
-    <div class="modal-body">
-      <div class="chips" id="targetChips">
-        <span class="hint">Laster targets…</span>
-      </div>
-
-      <div class="logbox" id="logBox">Laster logg…</div>
-
-      <div class="row" style="justify-content:space-between;">
-        <div class="pill" id="livePill"><span class="live-dot"></span> LIVE: OFF</div>
-        <div class="muted" id="logMeta">-</div>
-      </div>
-    </div>
-
-    <div class="modal-foot">
-      <div>Tips: ESC lukker. Klikk chip → filter. Live tail kan stå på mens du feilsøker.</div>
-      <div class="muted">Filter matcher tekst (name/ip/OK/DOWN osv.)</div>
-    </div>
-  </div>
-</div>
-
-<div class="toast-wrap" id="toastWrap"></div>
-
-<div class="wrap">
-  <div class="top">
-    <div class="brand">
-      <div class="title">interheart <span class="badge">targets</span></div>
-      <div class="subtitle">
-        Steg 7: Logg-popup med target-chips + live tail + follow bottom.
-      </div>
-    </div>
-
-    <div class="right-actions">
-      <button class="btn btn-secondary btn-mini" id="openLogs" type="button"><span class="icon">🧾</span> Logg</button>
-
-      <div class="toggle" id="autoToggle" title="Auto refresh klient-side">
-        <div class="switch"><div class="knob"></div></div>
-        <div>
-          <div style="font-weight:900; font-size:12px;">Auto refresh</div>
-          <small>hver <span id="autoEvery">15</span>s</small>
-        </div>
-      </div>
-      <div class="autorefresh-info" id="autoStatus">off</div>
-
-      <form method="post" action="/run-now"
-            data-working-title="Kjører sjekk nå…"
-            data-working-body="Kaller interheart run. (timeren kjører også i bakgrunnen.)"
-            data-toast="Kjører sjekk…"
-            data-toast2="Dette går fort – du kan refreshe etterpå om du vil.">
-        <button class="btn btn-primary btn-mini" type="submit">
-          <span class="icon">⚡</span> Kjør nå
-        </button>
-      </form>
-    </div>
-  </div>
-
-  {% if message %}
-    <div class="msg"><b>{{ message }}</b></div>
-  {% endif %}
-
-  <div class="card">
-    <h3>Targets</h3>
-    <div class="hint">UI teller ned lokalt. Status/last ping/sent kommer fra state.</div>
-    <div class="sep"></div>
-
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 190px;">Name</th>
-          <th style="width: 120px;">IP</th>
-          <th style="width: 120px;">Status</th>
-          <th style="width: 140px;">Next ping</th>
-          <th style="width: 120px;">Intervall</th>
-          <th style="width: 170px;">Last ping</th>
-          <th style="width: 170px;">Last sent</th>
-          <th>Endpoint</th>
-          <th style="width: 260px;">Handling</th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for t in targets %}
-        <tr data-due="{{ t.next_due_epoch }}">
-          <td><code>{{ t.name }}</code></td>
-          <td><code>{{ t.ip }}</code></td>
-
-          <td>
-            <span class="chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
-              <span class="dot"></span>
-              <span style="font-weight:900; text-transform:uppercase;">{{ t.status }}</span>
-            </span>
-          </td>
-
-          <td>
-            <div class="countdown" data-due="{{ t.next_due_epoch }}">…</div>
-            <div class="small">due: <code>{{ t.next_due_epoch }}</code></div>
-          </td>
-
-          <td><span class="chip nowrap">{{ t.interval }}s</span></td>
-
-          <td><code>{{ t.last_ping_human }}</code></td>
-          <td><code>{{ t.last_sent_human }}</code></td>
-
-          <td><code>{{ t.endpoint_masked }}</code></td>
-
-          <td class="row">
-            <form method="post" action="/set-target-interval" style="display:inline"
-                  data-working-title="Oppdaterer intervall…"
-                  data-working-body="{{ t.name }} — oppdaterer intervall og setter target “due” nå."
-                  data-toast="Oppdaterer intervall…"
-                  data-toast2="{{ t.name }}">
-              <input type="hidden" name="name" value="{{ t.name }}">
-              <input class="btn-mini" style="width:110px" name="seconds" type="number" min="10" max="86400" step="1" placeholder="sek" required>
-              <button class="btn btn-secondary btn-mini" type="submit"><span class="icon">⏱</span> Intervall</button>
-            </form>
-
-            <form method="post" action="/test" style="display:inline"
-                  data-working-title="Tester target…"
-                  data-working-body="{{ t.name }} ({{ t.ip }}) — ping + endpoint."
-                  data-toast="Tester target…"
-                  data-toast2="{{ t.name }} ({{ t.ip }})">
-              <input type="hidden" name="name" value="{{ t.name }}">
-              <button class="btn btn-secondary btn-mini" type="submit"><span class="icon">🧪</span> Test</button>
-            </form>
-
-            <form method="post" action="/remove" style="display:inline"
-                  data-working-title="Fjerner target…"
-                  data-working-body="{{ t.name }} — fjerner fra config og state."
-                  data-toast="Fjerner target…"
-                  data-toast2="{{ t.name }}"
-                  onsubmit="return confirm('Fjerne {{ t.name }}?');">
-              <input type="hidden" name="name" value="{{ t.name }}">
-              <button class="btn btn-danger btn-mini" type="submit"><span class="icon">🗑</span> Fjern</button>
-            </form>
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-
-    <div class="sep"></div>
-
-    <h3>Legg til target</h3>
-    <form method="post" action="/add"
-          data-working-title="Legger til target…"
-          data-working-body="Skriver til config + initialiserer state (due nå)."
-          data-toast="Legger til target…"
-          data-toast2="Sjekk at endpoint er korrekt.">
-      <div class="row">
-        <input name="name" placeholder="name (f.eks anl-0161-core-gw)" required>
-        <input name="ip" placeholder="ip (f.eks 10.5.0.1)" required>
-        <input name="interval" type="number" min="10" max="86400" step="1" placeholder="intervall (sek)" required>
-      </div>
-      <div class="row">
-        <input name="endpoint" placeholder="endpoint url (https://...)" required>
-        <button class="btn btn-primary" type="submit"><span class="icon">＋</span> Legg til</button>
-      </div>
-      <div class="hint">Kritisk = 30–120s. Mindre kritisk = 300–900s.</div>
-    </form>
-
-    <div class="footer">
-      <div class="muted">
-        WebUI: <code>{{ bind_host }}:{{ bind_port }}</code>
-        <span class="hint">• UI {{ ui_version }}</span>
-      </div>
-
-      <div>
-        <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
-        © {{ copyright_year }} All rights reserved
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-(function(){
-  // Countdown ticker + row highlight
-  function fmt(sec){
-    if (sec <= 0) return "due now";
-    if (sec < 60) return sec + "s";
-    var m = Math.floor(sec/60);
-    var s = sec % 60;
-    return m + "m " + (s<10?("0"+s):s) + "s";
-  }
-
-  function tick(){
-    var now = Math.floor(Date.now()/1000);
-
-    document.querySelectorAll(".countdown[data-due]").forEach(function(n){
-      var due = parseInt(n.getAttribute("data-due") || "0", 10);
-      if (!due || due <= 0){ n.textContent = "due now"; return; }
-      n.textContent = fmt(due - now);
-    });
-
-    document.querySelectorAll("tr[data-due]").forEach(function(tr){
-      var due = parseInt(tr.getAttribute("data-due") || "0", 10);
-      tr.classList.remove("due-now","due-soon");
-      if (!due || due <= 0) return;
-
-      var left = due - now;
-      if (left <= 0){
-        tr.classList.add("due-now");
-      } else if (left <= 10){
-        tr.classList.add("due-soon");
-      }
-    });
-  }
-  tick();
-  setInterval(tick, 1000);
-
-  // Toasts
-  var wrap = document.getElementById("toastWrap");
-  function toast(title, body){
-    var el = document.createElement("div");
-    el.className = "toast";
-    el.innerHTML = '<div class="t-title"></div><div class="t-body"></div>';
-    el.querySelector(".t-title").textContent = title || "Jobber…";
-    el.querySelector(".t-body").textContent = body || "";
-    wrap.appendChild(el);
-
-    setTimeout(function(){
-      el.style.animation = "toastOut .22s ease forwards";
-      setTimeout(function(){ el.remove(); }, 260);
-    }, 1800);
-  }
-
-  // Working overlay
-  var overlay = document.getElementById("overlay");
-  var ovTitle = document.getElementById("ovTitle");
-  var ovBody = document.getElementById("ovBody");
-  function showOverlay(t, b){
-    ovTitle.textContent = t || "Jobber…";
-    ovBody.textContent = b || "Utfører handlingen.";
-    overlay.classList.add("show");
-  }
-
-  // Hook forms
-  document.querySelectorAll("form[data-toast], form[data-working-title]").forEach(function(f){
-    f.addEventListener("submit", function(){
-      var t = f.getAttribute("data-toast");
-      var b = f.getAttribute("data-toast2") || "";
-      if (t) toast(t, b);
-
-      var wt = f.getAttribute("data-working-title");
-      var wb = f.getAttribute("data-working-body");
-      if (wt || wb) showOverlay(wt || "Jobber…", wb || "");
-    });
-  });
-
-  // Auto refresh (client-side)
-  var toggle = document.getElementById("autoToggle");
-  var status = document.getElementById("autoStatus");
-  var every = document.getElementById("autoEvery");
-
-  var REFRESH_SEC = 15;
-  every.textContent = String(REFRESH_SEC);
-
-  var key = "interheart_autorefresh";
-  var enabled = (localStorage.getItem(key) === "1");
-  var timer = null;
-
-  function apply(){
-    if (enabled){
-      toggle.classList.add("on");
-      status.textContent = "on (" + REFRESH_SEC + "s)";
-      if (!timer){
-        timer = setInterval(function(){ window.location.reload(); }, REFRESH_SEC * 1000);
-      }
-    } else {
-      toggle.classList.remove("on");
-      status.textContent = "off";
-      if (timer){ clearInterval(timer); timer = null; }
-    }
-  }
-
-  toggle.addEventListener("click", function(){
-    enabled = !enabled;
-    localStorage.setItem(key, enabled ? "1" : "0");
-    apply();
-    toast("Auto refresh " + (enabled ? "på" : "av"), enabled ? ("Refresher hver " + REFRESH_SEC + "s") : "Ingen auto refresh");
-  });
-
-  apply();
-
-  // Logs modal (Step 7)
-  var modal = document.getElementById("logModal");
-  var openBtn = document.getElementById("openLogs");
-  var closeBtn = document.getElementById("btnCloseLogs");
-  var reloadBtn = document.getElementById("btnReloadLogs");
-  var copyBtn = document.getElementById("btnCopyLogs");
-  var logBox = document.getElementById("logBox");
-  var logMeta = document.getElementById("logMeta");
-  var filter = document.getElementById("logFilter");
-  var chipsWrap = document.getElementById("targetChips");
-
-  var liveToggle = document.getElementById("liveToggle");
-  var followToggle = document.getElementById("followToggle");
-  var livePill = document.getElementById("livePill");
-
-  var rawLog = "";
-  var liveOn = false;
-  var followBottom = true;
-  var liveTimer = null;
-  var LIVE_INTERVAL_MS = 3000;
-
-  var activeChip = ""; // target name
-
-  function openModal(){
-    modal.classList.add("show");
-    modal.setAttribute("aria-hidden","false");
-    filter.focus();
-  }
-  function closeModal(){
-    stopLive();
-    modal.classList.remove("show");
-    modal.setAttribute("aria-hidden","true");
-  }
-
-  function setLivePill(){
-    if (liveOn){
-      livePill.classList.add("on");
-      livePill.innerHTML = '<span class="live-dot"></span> LIVE: ON';
-    } else {
-      livePill.classList.remove("on");
-      livePill.innerHTML = '<span class="live-dot"></span> LIVE: OFF';
-    }
-  }
-
-  async function loadLogs(silent){
-    if (!silent) logBox.classList.add("loading");
-    try{
-      const res = await fetch("/logs?lines={{ log_lines }}", {cache:"no-store"});
-      const data = await res.json();
-      rawLog = data.text || "";
-      logMeta.textContent = (data.source || "log") + " • " + (data.lines || 0) + " linjer • " + (data.updated || "");
-      applyFilter();
-      if (followBottom){
-        logBox.scrollTop = logBox.scrollHeight;
-      }
-    }catch(e){
-      rawLog = "";
-      logBox.textContent = "Kunne ikke hente logg: " + (e && e.message ? e.message : "ukjent feil");
-      logMeta.textContent = "error";
-    }finally{
-      logBox.classList.remove("loading");
-    }
-  }
-
-  function applyFilter(){
-    var q = (filter.value || "").trim().toLowerCase();
-    if (!q){
-      logBox.textContent = rawLog || "(tom logg)";
-      return;
-    }
-    var lines = (rawLog || "").split("\n").filter(function(l){
-      return l.toLowerCase().indexOf(q) !== -1;
-    });
-    logBox.textContent = lines.join("\n") || "(ingen treff)";
-  }
-
-  function renderChips(){
-    chipsWrap.innerHTML = "";
-    var allBtn = document.createElement("button");
-    allBtn.type = "button";
-    allBtn.className = "chip-btn" + (activeChip === "" ? " active" : "");
-    allBtn.textContent = "ALL";
-    allBtn.addEventListener("click", function(){
-      activeChip = "";
-      filter.value = "";
-      renderChips();
-      applyFilter();
-      toast("Filter", "ALL");
-    });
-    chipsWrap.appendChild(allBtn);
-
-    (window.__targets || []).forEach(function(t){
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "chip-btn" + (activeChip === t.name ? " active" : "");
-      btn.textContent = t.name;
-      btn.addEventListener("click", function(){
-        activeChip = t.name;
-        filter.value = t.name;
-        renderChips();
-        applyFilter();
-        toast("Filter", t.name);
-      });
-      chipsWrap.appendChild(btn);
-    });
-
-    if ((window.__targets || []).length === 0){
-      var s = document.createElement("span");
-      s.className = "hint";
-      s.textContent = "Ingen targets funnet.";
-      chipsWrap.appendChild(s);
-    }
-  }
-
-  function startLive(){
-    if (liveTimer) return;
-    liveOn = true;
-    setLivePill();
-    liveTimer = setInterval(function(){
-      loadLogs(true);
-    }, LIVE_INTERVAL_MS);
-  }
-
-  function stopLive(){
-    liveOn = false;
-    setLivePill();
-    if (liveTimer){
-      clearInterval(liveTimer);
-      liveTimer = null;
-    }
-  }
-
-  function setToggle(el, on){
-    if (on) el.classList.add("on"); else el.classList.remove("on");
-  }
-
-  openBtn.addEventListener("click", async function(){
-    toast("Åpner logg…", "Henter siste linjer");
-    openModal();
-    renderChips();
-    await loadLogs(false);
-    if (followBottom){
-      logBox.scrollTop = logBox.scrollHeight;
-    }
-  });
-
-  closeBtn.addEventListener("click", function(){ closeModal(); });
-
-  reloadBtn.addEventListener("click", async function(){
-    toast("Oppdaterer logg…", "");
-    await loadLogs(false);
-  });
-
-  copyBtn.addEventListener("click", async function(){
-    try{
-      await navigator.clipboard.writeText(logBox.textContent || "");
-      toast("Kopiert!", "Logg er lagt på clipboard.");
-    }catch(e){
-      toast("Kunne ikke kopiere", "Nettleser blokkerer clipboard.");
-    }
-  });
-
-  filter.addEventListener("input", function(){
-    activeChip = ""; // typing overrides chip
-    renderChips();
-    applyFilter();
-  });
-
-  // Live toggle
-  liveToggle.addEventListener("click", function(){
-    var newState = !liveOn;
-    if (newState){
-      setToggle(liveToggle, true);
-      startLive();
-      toast("Live tail", "På (poll hver 3s)");
-      loadLogs(true);
-    } else {
-      setToggle(liveToggle, false);
-      stopLive();
-      toast("Live tail", "Av");
-    }
-  });
-
-  // Follow bottom toggle
-  followToggle.addEventListener("click", function(){
-    followBottom = !followBottom;
-    setToggle(followToggle, followBottom);
-    toast("Follow bottom", followBottom ? "På" : "Av");
-    if (followBottom){
-      logBox.scrollTop = logBox.scrollHeight;
-    }
-  });
-
-  // Defaults
-  setToggle(liveToggle, false);
-  setToggle(followToggle, true);
-  setLivePill();
-
-  // ESC closes
-  document.addEventListener("keydown", function(e){
-    if (e.key === "Escape" && modal.classList.contains("show")){
-      closeModal();
-    }
-  });
-
-  // Click outside closes
-  modal.addEventListener("click", function(e){
-    if (e.target === modal){
-      closeModal();
-    }
-  });
-
-  // Scroll detection: if user scrolls up, disable follow bottom automatically (soft)
-  logBox.addEventListener("scroll", function(){
-    if (!modal.classList.contains("show")) return;
-    var nearBottom = (logBox.scrollTop + logBox.clientHeight) >= (logBox.scrollHeight - 30);
-    if (!nearBottom && followBottom){
-      followBottom = false;
-      setToggle(followToggle, false);
-      toast("Follow bottom", "Av (du scrollet opp)");
-    } else if (nearBottom && !followBottom){
-      // do nothing; user toggles back manually
-    }
-  });
-})();
-</script>
-
-<script>
-// expose targets to JS for chips
-window.__targets = {{ targets_json | safe }};
-</script>
-
-</body>
-</html>
-"""
-
-def run_cmd(args):
-  cmd = ["sudo", CLI] + args
-  p = subprocess.run(cmd, capture_output=True, text=True)
-  out = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
-  return p.returncode, out.strip()
-
-def parse_list_targets(list_output: str):
-  targets = []
-  in_table = False
-  for line in list_output.splitlines():
-    line = line.rstrip()
-    if line.startswith("--------------------------------------------------------------------------------"):
-      in_table = True
-      continue
-    if not in_table:
-      continue
-    if line.strip().startswith("NAME") or line.strip().startswith("Targets:"):
-      continue
-    if not line.strip():
-      continue
-    parts = line.split()
-    if len(parts) < 4:
-      continue
-    name = parts[0]
-    ip = parts[1]
-    interval = parts[2].replace("s", "").strip()
-    endpoint_masked = parts[3]
-    targets.append({
-      "name": name,
-      "ip": ip,
-      "interval": interval,
-      "endpoint_masked": endpoint_masked
-    })
-  return targets
-
-def parse_status(status_output: str):
-  state = {}
-  in_table = False
-  for line in status_output.splitlines():
-    if line.startswith("--------------------------------------------------------------------------------------------------------------"):
-      in_table = True
-      continue
-    if not in_table:
-      continue
-    if line.strip().startswith("NAME") or line.strip().startswith("State:") or line.strip().startswith("(ingen"):
-      continue
-    if not line.strip():
-      continue
-
-    parts = line.split()
-    if len(parts) < 6:
-      continue
-    name = parts[0]
-    status = parts[1]
-    next_due = parts[3]
-    last_ping = parts[4]
-    last_sent = parts[5]
-    state[name] = {
-      "status": status,
-      "next_due_epoch": int(next_due) if next_due.isdigit() else 0,
-      "last_ping_epoch": int(last_ping) if last_ping.isdigit() else 0,
-      "last_sent_epoch": int(last_sent) if last_sent.isdigit() else 0,
-    }
-  return state
-
-def human_ts(epoch: int):
-  if not epoch or epoch <= 0:
-    return "-"
-  try:
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(epoch))
-  except Exception:
-    return "-"
-
-def sudo_journalctl(lines: int) -> str:
-  cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=short-iso"]
-  p = subprocess.run(cmd, capture_output=True, text=True)
-  if p.returncode != 0:
-    raise RuntimeError((p.stderr or "journalctl feilet").strip())
-  return (p.stdout or "").strip()
-
-def read_log_file(lines: int) -> str:
-  if not os.path.exists(LOG_FILE_FALLBACK):
-    return ""
-  try:
-    with open(LOG_FILE_FALLBACK, "r", encoding="utf-8", errors="replace") as f:
-      data = f.read().splitlines()
-    return "\n".join(data[-lines:])
-  except Exception:
-    return ""
-
-@APP.get("/")
-def index():
-  message = request.args.get("message", "")
-
-  _, list_out = run_cmd(["list"])
-  targets = parse_list_targets(list_out)
-
-  _, st_out = run_cmd(["status"])
-  state = parse_status(st_out)
-
-  merged = []
-  for t in targets:
-    st = state.get(t["name"], {})
-    status = st.get("status", "unknown")
-    next_due_epoch = st.get("next_due_epoch", 0)
-    last_ping_epoch = st.get("last_ping_epoch", 0)
-    last_sent_epoch = st.get("last_sent_epoch", 0)
-
-    merged.append({
-      **t,
-      "status": status,
-      "next_due_epoch": next_due_epoch,
-      "last_ping_human": human_ts(last_ping_epoch),
-      "last_sent_human": human_ts(last_sent_epoch),
-    })
-
-  # For chips in JS
-  targets_json = []
-  for t in targets:
-    targets_json.append({"name": t["name"], "ip": t["ip"]})
-
-  import json
-  return render_template_string(
-    TEMPLATE,
-    targets=merged,
-    bind_host=BIND_HOST,
-    bind_port=BIND_PORT,
-    message=message,
-    ui_version=UI_VERSION,
-    copyright_year=COPYRIGHT_YEAR,
-    log_lines=LOG_LINES_DEFAULT,
-    targets_json=json.dumps(targets_json)
-  )
-
-@APP.get("/logs")
-def logs():
-  try:
-    lines = int(request.args.get("lines", str(LOG_LINES_DEFAULT)))
-  except Exception:
-    lines = LOG_LINES_DEFAULT
-  lines = max(50, min(1000, lines))
-
-  updated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(time.time())))
-
-  try:
-    text = sudo_journalctl(lines)
-    src = "journalctl -t interheart"
-    actual = len(text.splitlines()) if text else 0
-    return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
-  except Exception as e:
-    text = read_log_file(lines)
-    src = "file: /var/log/interheart.log (fallback)"
-    actual = len(text.splitlines()) if text else 0
-    if not text:
-      text = f"(ingen logg funnet)\n(journalctl-feil: {str(e)})"
-      actual = len(text.splitlines())
-    return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
-
-@APP.post("/add")
-def add():
-  name = request.form.get("name", "")
-  ip = request.form.get("ip", "")
-  endpoint = request.form.get("endpoint", "")
-  interval = request.form.get("interval", "60")
-  rc, out = run_cmd(["add", name, ip, endpoint, interval])
-  msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
-  return redirect(url_for("index", message=msg))
-
-@APP.post("/remove")
-def remove():
-  name = request.form.get("name", "")
-  rc, out = run_cmd(["remove", name])
-  msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
-  return redirect(url_for("index", message=msg))
-
-@APP.post("/run-now")
-def run_now():
-  rc, out = run_cmd(["run"])
-  msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
-  return redirect(url_for("index", message=msg))
-
-@APP.post("/test")
-def test():
-  name = request.form.get("name", "")
-  rc, out = run_cmd(["test", name])
-  msg = ("TEST OK: " + out) if rc == 0 else ("TEST: " + out)
-  return redirect(url_for("index", message=msg))
-
-@APP.post("/set-target-interval")
-def set_target_interval():
-  name = request.form.get("name", "")
-  sec = request.form.get("seconds", "")
-  rc, out = run_cmd(["set-target-interval", name, sec])
-  msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
-  return redirect(url_for("index", message=msg))
-
-if __name__ == "__main__":
-  APP.run(host=BIND_HOST, port=BIND_PORT)
+#!/usr/bin/env bash
+set -euo pipefail
+
+# interheart installer/upgrader (one command)
+# - stops existing services (including legacy)
+# - clones/pulls repo
+# - installs deps + venv
+# - installs sudoers (restricted)
+# - installs systemd units (dynamic paths)
+# - enables + starts interheart + webui
+
+REPO_URL_DEFAULT="https://github.com/5echo-io/interheart.git"
+INSTALL_DIR_DEFAULT="/opt/interheart"
+SERVICE_USER_DEFAULT="www-data"
+WEBUI_PORT_DEFAULT="8088"
+WEBUI_BIND_DEFAULT="0.0.0.0"
+
+FORCE_RESET="0"
+REPO_URL="${REPO_URL_DEFAULT}"
+INSTALL_DIR="${INSTALL_DIR_DEFAULT}"
+SERVICE_USER="${SERVICE_USER_DEFAULT}"
+WEBUI_PORT="${WEBUI_PORT_DEFAULT}"
+WEBUI_BIND="${WEBUI_BIND_DEFAULT}"
+
+usage() {
+  cat <<EOF
+Usage:
+  sudo ./install.sh [options]
+
+Options:
+  --dir <path>        Install dir (default: ${INSTALL_DIR_DEFAULT})
+  --repo <url>        Repo URL (default: ${REPO_URL_DEFAULT})
+  --user <user>       Service user for WebUI (default: ${SERVICE_USER_DEFAULT})
+  --bind <ip>         WebUI bind address (default: ${WEBUI_BIND_DEFAULT})
+  --port <port>       WebUI port (default: ${WEBUI_PORT_DEFAULT})
+  --force             Hard reset local changes on update (default: off)
+
+Examples:
+  sudo ./install.sh
+  sudo ./install.sh --dir /opt/interheart --port 8088 --bind 0.0.0.0
+  sudo ./install.sh --force
+EOF
+}
+
+log() { echo -e "\033[1;34m[interheart]\033[0m $*"; }
+warn() { echo -e "\033[1;33m[warn]\033[0m $*"; }
+err() { echo -e "\033[1;31m[error]\033[0m $*" >&2; }
+
+need_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    err "Kjør som root: sudo ./install.sh"
+    exit 1
+  fi
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir) INSTALL_DIR="$2"; shift 2 ;;
+      --repo) REPO_URL="$2"; shift 2 ;;
+      --user) SERVICE_USER="$2"; shift 2 ;;
+      --bind) WEBUI_BIND="$2"; shift 2 ;;
+      --port) WEBUI_PORT="$2"; shift 2 ;;
+      --force) FORCE_RESET="1"; shift 1 ;;
+      -h|--help) usage; exit 0 ;;
+      *) err "Ukjent argument: $1"; usage; exit 1 ;;
+    esac
+  done
+}
+
+stop_services() {
+  log "Stopper evt. gamle services (hvis de finnes)…"
+  # New names
+  systemctl disable --now interheart-webui.service 2>/dev/null || true
+  systemctl disable --now interheart.timer 2>/dev/null || true
+  systemctl disable --now interheart.service 2>/dev/null || true
+
+  # Legacy/backwards
+  systemctl disable --now uptimekuma-webui.service 2>/dev/null || true
+  systemctl disable --now uptimerobot-heartbeat-webui.service 2>/dev/null || true
+  systemctl disable --now uptime-kuma.service 2>/dev/null || true
+  systemctl disable --now uptimekuma.service 2>/dev/null || true
+  systemctl disable --now uptimerobot-heartbeat.service 2>/dev/null || true
+
+  # Kill lingering old python bound to 8088 (best effort)
+  fuser -k "${WEBUI_PORT}/tcp" 2>/dev/null || true
+}
+
+install_packages() {
+  log "Installerer pakker (git, curl, ping, python venv)…"
+  apt-get update -y
+  apt-get install -y \
+    git curl iputils-ping \
+    python3 python3-venv python3-pip \
+    ca-certificates
+}
+
+clone_or_update_repo() {
+  if [[ ! -d "${INSTALL_DIR}/.git" ]]; then
+    log "Cloner repo → ${INSTALL_DIR}"
+    rm -rf "${INSTALL_DIR}" || true
+    git clone "${REPO_URL}" "${INSTALL_DIR}"
+    return
+  fi
+
+  log "Oppdaterer repo i ${INSTALL_DIR}"
+  pushd "${INSTALL_DIR}" >/dev/null
+
+  if [[ "${FORCE_RESET}" == "1" ]]; then
+    warn "--force: Hard reset mot origin/main (lokale endringer blir kastet)"
+    git fetch origin
+    git reset --hard origin/main
+    git clean -fd
+  else
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+      warn "Repo har lokale endringer → stasher før pull"
+      git stash push -m "auto-stash before pull $(date -Is)" || true
+    fi
+    git pull --ff-only
+  fi
+
+  popd >/dev/null
+}
+
+install_cli_symlink() {
+  log "Setter opp CLI symlink: /usr/local/bin/interheart"
+  ln -sf "${INSTALL_DIR}/interheart.sh" /usr/local/bin/interheart
+  chmod +x "${INSTALL_DIR}/interheart.sh" || true
+}
+
+read_version() {
+  if [[ -f "${INSTALL_DIR}/VERSION" ]]; then
+    cat "${INSTALL_DIR}/VERSION" | tr -d '\r\n' || true
+  else
+    echo "0.0.0"
+  fi
+}
+
+setup_logfile_fallback() {
+  log "Sikrer fallback-loggfil: /var/log/interheart.log"
+  touch /var/log/interheart.log
+  chmod 0644 /var/log/interheart.log || true
+}
+
+setup_webui_venv() {
+  log "Setter opp WebUI venv + requirements"
+  local webui_dir="${INSTALL_DIR}/webui"
+  local venv_dir="${webui_dir}/.venv"
+  local pip="${venv_dir}/bin/pip"
+
+  if [[ ! -d "${webui_dir}" ]]; then
+    err "Fant ikke webui-mappe: ${webui_dir}"
+    exit 1
+  fi
+
+  python3 -m venv "${venv_dir}"
+  "${pip}" install --upgrade pip
+  if [[ -f "${webui_dir}/requirements.txt" ]]; then
+    "${pip}" install -r "${webui_dir}/requirements.txt"
+  else
+    warn "Fant ikke webui/requirements.txt – installerer Flask manuelt"
+    "${pip}" install Flask
+  fi
+
+  chown -R "${SERVICE_USER}:${SERVICE_USER}" "${webui_dir}" || true
+}
+
+install_systemd_units_dynamic() {
+  log "Installerer systemd units (dynamic paths)"
+  mkdir -p /etc/systemd/system
+
+  # interheart runner
+  cat > /etc/systemd/system/interheart.service <<EOF
+[Unit]
+Description=5echo interheart runner (manual runs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/interheart run
+EOF
+
+  # interheart timer
+  cat > /etc/systemd/system/interheart.timer <<EOF
+[Unit]
+Description=5echo interheart scheduler
+
+[Timer]
+OnBootSec=10s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Unit=interheart.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  # webui service (dynamic WorkingDirectory + ExecStart)
+  cat > /etc/systemd/system/interheart-webui.service <<EOF
+[Unit]
+Description=5echo interheart Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+WorkingDirectory=${INSTALL_DIR}/webui
+
+Environment=PYTHONUNBUFFERED=1
+Environment=INTERHEART_DIR=${INSTALL_DIR}
+
+# Env settes i override.conf av install.sh (WEBUI_BIND + WEBUI_PORT)
+ExecStart=${INSTALL_DIR}/webui/.venv/bin/python ${INSTALL_DIR}/webui/app.py
+
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+}
+
+install_sudoers() {
+  log "Installerer sudoers (begrenset) for WebUI"
+  local sudoers_path="/etc/sudoers.d/interheart-webui"
+
+  cat > "${sudoers_path}" <<EOF
+# interheart webui sudoers
+# Allow only interheart + journalctl for tag "interheart"
+
+Cmnd_Alias INTERHEART = /usr/local/bin/interheart *
+Cmnd_Alias INTERHEART_JOURNAL = /usr/bin/journalctl -t interheart -n * --no-pager --output=short-iso
+
+${SERVICE_USER} ALL=(root) NOPASSWD: INTERHEART, INTERHEART_JOURNAL
+EOF
+
+  chmod 0440 "${sudoers_path}"
+  visudo -c -f "${sudoers_path}"
+}
+
+enable_start() {
+  log "Starter interheart + WebUI"
+  mkdir -p /etc/systemd/system/interheart-webui.service.d
+  cat > /etc/systemd/system/interheart-webui.service.d/override.conf <<EOF
+[Service]
+Environment=WEBUI_BIND=${WEBUI_BIND}
+Environment=WEBUI_PORT=${WEBUI_PORT}
+EOF
+
+  systemctl daemon-reload
+
+  systemctl enable --now interheart.service
+  systemctl enable --now interheart.timer
+  systemctl enable --now interheart-webui.service
+
+  log "Status:"
+  systemctl --no-pager --full status interheart.service || true
+  systemctl --no-pager --full status interheart.timer || true
+  systemctl --no-pager --full status interheart-webui.service || true
+}
+
+main() {
+  need_root
+  parse_args "$@"
+
+  log "Config:"
+  echo "  Repo: ${REPO_URL}"
+  echo "  Dir : ${INSTALL_DIR}"
+  echo "  User: ${SERVICE_USER}"
+  echo "  Web : ${WEBUI_BIND}:${WEBUI_PORT}"
+  echo "  Force reset: ${FORCE_RESET}"
+
+  stop_services
+  install_packages
+  clone_or_update_repo
+  install_cli_symlink
+  setup_logfile_fallback
+  setup_webui_venv
+  install_systemd_units_dynamic
+  install_sudoers
+  enable_start
+
+  local ver
+  ver="$(read_version)"
+  log "Ferdig ✅ interheart ${ver}"
+  log "WebUI: http://${WEBUI_BIND}:${WEBUI_PORT}"
+}
+
+main "$@"
