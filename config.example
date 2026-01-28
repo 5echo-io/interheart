@@ -1,0 +1,10 @@
+# interheart config
+# Format:
+#   NAME|IP|ENDPOINT_URL|INTERVAL_SEC
+#
+# Notes:
+# - INTERVAL_SEC: 10..86400
+# - Backwards compatible: if INTERVAL_SEC is missing, defaults to 60
+
+anl-0161-core-gw|10.5.0.1|https://example.com/endpoint1|30
+anl-0161-core-switch|10.5.10.2|https://example.com/endpoint2|120
