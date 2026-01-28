@@ -5,7 +5,23 @@ import time
 
 APP = Flask(__name__)
 
-UI_VERSION = "v7"
+# SemVer from VERSION file
+def read_version():
+  try:
+    base = os.environ.get("INTERHEART_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    candidates = [
+      os.path.join(base, "VERSION"),
+      os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION"),
+    ]
+    for p in candidates:
+      if os.path.exists(p):
+        with open(p, "r", encoding="utf-8") as f:
+          return f.read().strip()
+  except Exception:
+    pass
+  return "0.0.0"
+
+UI_VERSION = read_version()
 COPYRIGHT_YEAR = "2026"
 
 CLI = "/usr/local/bin/interheart"
@@ -92,24 +108,14 @@ TEMPLATE = r"""
     }
     input{flex:1; min-width:160px;}
     input::placeholder{color:rgba(255,255,255,.35)}
-    input:focus{
-      border-color:rgba(42,116,255,.45);
-      filter:brightness(1.03);
-    }
+    input:focus{ border-color:rgba(42,116,255,.45); filter:brightness(1.03); }
 
     .btn{
-      border-radius:14px;
-      border:1px solid var(--line);
-      padding:10px 12px;
-      cursor:pointer;
-      font-weight:850;
-      color:var(--text);
+      border-radius:14px; border:1px solid var(--line);
+      padding:10px 12px; cursor:pointer; font-weight:850; color:var(--text);
       background:rgba(255,255,255,.04);
       transition: transform .12s ease, border-color .12s ease, filter .12s ease, background .12s ease;
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      user-select:none;
+      display:inline-flex; align-items:center; gap:8px; user-select:none;
     }
     .btn:hover{transform: translateY(-1px); filter:brightness(1.03); border-color:rgba(42,116,255,.35);}
     .btn:active{transform: translateY(0px); filter:brightness(.98);}
@@ -120,10 +126,7 @@ TEMPLATE = r"""
     }
     .btn-primary:hover{border-color:rgba(42,116,255,.55);}
 
-    .btn-secondary{
-      background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
-    }
-
+    .btn-secondary{ background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03)); }
     .btn-danger{
       background:linear-gradient(180deg, rgba(255,59,92,.22), rgba(255,59,92,.07));
       border-color:rgba(255,59,92,.28);
@@ -132,7 +135,6 @@ TEMPLATE = r"""
 
     .btn-mini{font-size:12px; padding:8px 10px; border-radius:12px;}
     .icon{width:14px; height:14px; display:inline-block; opacity:.9;}
-
     .sep{height:1px; background:var(--line); margin:12px 0;}
 
     table{width:100%; border-collapse:collapse; overflow:hidden; border-radius:14px;}
@@ -143,8 +145,7 @@ TEMPLATE = r"""
     .chip{
       display:inline-flex; align-items:center; gap:8px;
       padding:6px 10px; border-radius:999px; background:var(--chip); border:1px solid var(--line);
-      color:var(--muted); font-size:12px;
-      backdrop-filter: blur(6px);
+      color:var(--muted); font-size:12px; backdrop-filter: blur(6px);
     }
     .dot{width:8px; height:8px; border-radius:99px; background:rgba(255,255,255,.35)}
     .status-up{border-color:rgba(56,211,159,.26); background:rgba(56,211,159,.10)}
@@ -159,22 +160,9 @@ TEMPLATE = r"""
       100%{box-shadow:0 0 0 0 rgba(56,211,159,0)}
     }
 
-    tr.due-soon{
-      background: linear-gradient(90deg, rgba(42,116,255,.10), transparent 60%);
-    }
-    tr.due-now{
-      background: linear-gradient(90deg, rgba(255,211,77,.12), transparent 65%);
-      animation: dueFlash 1.2s ease-in-out infinite;
-    }
-    @keyframes dueFlash{
-      0%,100%{filter:brightness(1.00)}
-      50%{filter:brightness(1.08)}
-    }
-
     .msg{
       border:1px solid var(--line); background:rgba(255,255,255,.03);
-      border-radius:14px; padding:12px; color:var(--muted); font-size:13px;
-      margin-bottom:14px;
+      border-radius:14px; padding:12px; color:var(--muted); font-size:13px; margin-bottom:14px;
     }
 
     .footer{
@@ -193,176 +181,49 @@ TEMPLATE = r"""
       text-decoration:none;
       border-bottom:1px solid rgba(255,255,255,.18);
     }
-    .footer a:hover{
-      color:rgba(255,255,255,.94);
-      border-bottom-color:rgba(255,255,255,.35);
-    }
+    .footer a:hover{ color:rgba(255,255,255,.94); border-bottom-color:rgba(255,255,255,.35); }
 
     .hint{color:rgba(255,255,255,.55); font-size:12px}
     .right-actions{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
-    .kbd{font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.68); padding:6px 8px; border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,.18);}
     .countdown{font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.80)}
     .small{font-size:12px; color:rgba(255,255,255,.62)}
     .muted{color:rgba(255,255,255,.62)}
     .nowrap{white-space:nowrap}
 
-    /* Toast */
-    .toast-wrap{
-      position:fixed;
-      bottom:18px;
-      right:18px;
-      z-index:9999;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-      pointer-events:none;
-    }
-    .toast{
-      pointer-events:none;
-      min-width:260px;
-      max-width:360px;
-      border:1px solid var(--line);
-      background:rgba(10,14,24,.78);
-      backdrop-filter: blur(10px);
-      border-radius:16px;
-      box-shadow: 0 18px 40px rgba(0,0,0,.55);
-      padding:12px 12px;
-      transform: translateY(8px);
-      opacity:0;
-      animation: toastIn .24s ease forwards;
-    }
-    .toast .t-title{font-weight:900; font-size:12px; color:rgba(255,255,255,.90)}
-    .toast .t-body{margin-top:4px; font-size:12px; color:rgba(255,255,255,.68); line-height:1.35}
-    @keyframes toastIn{to{transform: translateY(0px); opacity:1;}}
-    @keyframes toastOut{to{transform: translateY(8px); opacity:0;}}
-
-    /* Working overlay */
-    .overlay{
-      position:fixed;
-      inset:0;
-      background:rgba(0,0,0,.45);
-      backdrop-filter: blur(8px);
-      display:none;
-      align-items:center;
-      justify-content:center;
-      z-index:9998;
-    }
-    .overlay.show{display:flex;}
-    .overlay-card{
-      width:min(560px, calc(100vw - 24px));
-      border:1px solid var(--line);
-      border-radius:20px;
-      background:rgba(10,14,24,.78);
-      box-shadow: 0 22px 60px rgba(0,0,0,.65);
-      padding:16px 16px;
-    }
-    .overlay-top{
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:12px;
-    }
-    .spinner{
-      width:18px; height:18px; border-radius:999px;
-      border:2px solid rgba(255,255,255,.22);
-      border-top-color: rgba(42,116,255,.85);
-      animation: spin 0.9s linear infinite;
-    }
-    @keyframes spin{to{transform:rotate(360deg)}}
-    .overlay-title{display:flex; align-items:center; gap:10px; font-weight:950;}
-    .overlay-body{margin-top:10px; color:rgba(255,255,255,.70); font-size:13px; line-height:1.45}
-
-    /* Auto refresh toggle */
-    .toggle{
-      display:inline-flex; align-items:center; gap:8px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.18);
-      padding:7px 10px;
-      border-radius:14px;
-      cursor:pointer;
-      user-select:none;
-      transition: border-color .12s ease, filter .12s ease;
-    }
-    .toggle:hover{border-color:rgba(42,116,255,.35); filter:brightness(1.03);}
-    .switch{width:34px; height:18px; border-radius:999px; background:rgba(255,255,255,.12); border:1px solid var(--line); position:relative;}
-    .knob{position:absolute; top:1px; left:1px; width:14px; height:14px; border-radius:99px; background:rgba(255,255,255,.70); transition: transform .14s ease, background .14s ease;}
-    .toggle.on .switch{background:rgba(42,116,255,.22); border-color:rgba(42,116,255,.30);}
-    .toggle.on .knob{transform: translateX(16px); background:rgba(255,255,255,.92);}
-    .toggle small{color:rgba(255,255,255,.62); font-size:12px}
-    .autorefresh-info{font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.66);}
-
-    /* Modal (logs) */
+    /* Modal + chips + live tail styles kept from v7 */
     .modal{
-      position:fixed;
-      inset:0;
-      display:none;
-      align-items:center;
-      justify-content:center;
-      z-index:9997;
-      padding:18px;
-      background:rgba(0,0,0,.52);
-      backdrop-filter: blur(10px);
+      position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+      z-index:9997; padding:18px; background:rgba(0,0,0,.52); backdrop-filter: blur(10px);
     }
     .modal.show{display:flex;}
     .modal-card{
       width:min(1100px, calc(100vw - 24px));
       max-height: min(80vh, 820px);
-      display:flex;
-      flex-direction:column;
-      border:1px solid var(--line);
-      border-radius:22px;
+      display:flex; flex-direction:column;
+      border:1px solid var(--line); border-radius:22px;
       background:rgba(10,14,24,.86);
       box-shadow: 0 26px 70px rgba(0,0,0,.70);
       overflow:hidden;
     }
     .modal-head{
-      padding:12px 12px;
-      border-bottom:1px solid var(--line);
-      display:flex;
-      gap:10px;
-      align-items:flex-start;
-      justify-content:space-between;
+      padding:12px 12px; border-bottom:1px solid var(--line);
+      display:flex; gap:10px; align-items:flex-start; justify-content:space-between;
     }
     .modal-title{display:flex; flex-direction:column; gap:2px;}
     .modal-title b{font-size:14px}
     .modal-title span{font-size:12px; color:rgba(255,255,255,.62)}
-
-    .modal-actions{
-      display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-end;
-    }
-
-    .modal-body{
-      padding:12px;
-      overflow:auto;
-      flex:1;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-    }
-
+    .modal-actions{display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-end;}
+    .modal-body{padding:12px; overflow:auto; flex:1; display:flex; flex-direction:column; gap:10px;}
     .chips{
-      display:flex;
-      flex-wrap:wrap;
-      gap:8px;
-      padding:10px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.18);
-      border-radius:18px;
+      display:flex; flex-wrap:wrap; gap:8px; padding:10px;
+      border:1px solid var(--line); background:rgba(0,0,0,.18); border-radius:18px;
     }
     .chip-btn{
-      cursor:pointer;
-      user-select:none;
-      padding:7px 10px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:rgba(255,255,255,.04);
-      color:rgba(255,255,255,.74);
-      font-size:12px;
-      font-weight:850;
+      cursor:pointer; user-select:none; padding:7px 10px; border-radius:999px;
+      border:1px solid var(--line); background:rgba(255,255,255,.04);
+      color:rgba(255,255,255,.74); font-size:12px; font-weight:850;
       transition: transform .12s ease, border-color .12s ease, filter .12s ease, background .12s ease;
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
+      display:inline-flex; align-items:center; gap:8px;
     }
     .chip-btn:hover{transform: translateY(-1px); filter:brightness(1.03); border-color:rgba(42,116,255,.35);}
     .chip-btn:active{transform: translateY(0px); filter:brightness(.98);}
@@ -371,88 +232,49 @@ TEMPLATE = r"""
       background:linear-gradient(180deg, rgba(42,116,255,.20), rgba(42,116,255,.06));
       color:rgba(255,255,255,.90);
     }
-
     .logbox{
-      width:100%;
-      min-height: 360px;
-      background:rgba(0,0,0,.25);
-      border:1px solid var(--line);
-      border-radius:16px;
-      padding:12px;
-      font-family:var(--mono);
-      font-size:12px;
-      line-height:1.45;
-      color:rgba(255,255,255,.84);
-      white-space:pre;
-      overflow:auto;
-      position:relative;
+      width:100%; min-height: 360px;
+      background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:16px;
+      padding:12px; font-family:var(--mono); font-size:12px; line-height:1.45;
+      color:rgba(255,255,255,.84); white-space:pre; overflow:auto; position:relative;
     }
     .logbox.loading:after{
-      content:"Oppdaterer…";
-      position:absolute;
-      top:12px; right:12px;
-      font-family:var(--sans);
-      font-size:12px;
-      font-weight:900;
+      content:"Oppdaterer…"; position:absolute; top:12px; right:12px;
+      font-family:var(--sans); font-size:12px; font-weight:900;
       color:rgba(255,255,255,.70);
-      background:rgba(10,14,24,.60);
-      border:1px solid var(--line);
-      padding:6px 10px;
-      border-radius:999px;
-      backdrop-filter: blur(10px);
+      background:rgba(10,14,24,.60); border:1px solid var(--line);
+      padding:6px 10px; border-radius:999px; backdrop-filter: blur(10px);
     }
-
-    .modal-foot{
-      padding:10px 12px;
-      border-top:1px solid var(--line);
-      display:flex;
-      justify-content:space-between;
-      gap:10px;
-      align-items:center;
-      color:rgba(255,255,255,.62);
-      font-size:12px;
-    }
-
     .pill{
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      border:1px solid var(--line);
-      background:rgba(0,0,0,.18);
-      padding:7px 10px;
-      border-radius:999px;
-      font-family:var(--mono);
-      font-size:11px;
-      color:rgba(255,255,255,.70);
+      display:inline-flex; align-items:center; gap:8px;
+      border:1px solid var(--line); background:rgba(0,0,0,.18);
+      padding:7px 10px; border-radius:999px; font-family:var(--mono);
+      font-size:11px; color:rgba(255,255,255,.70);
     }
-    .live-dot{
-      width:8px; height:8px; border-radius:99px;
-      background:rgba(255,255,255,.25);
-    }
+    .live-dot{width:8px; height:8px; border-radius:99px; background:rgba(255,255,255,.25);}
     .pill.on{border-color:rgba(56,211,159,.25); background:rgba(56,211,159,.09);}
     .pill.on .live-dot{background:var(--good); box-shadow:0 0 0 0 rgba(56,211,159,.35); animation:pulse 1.4s infinite;}
 
+    .toggle{
+      display:inline-flex; align-items:center; gap:8px;
+      border:1px solid var(--line); background:rgba(0,0,0,.18);
+      padding:7px 10px; border-radius:14px; cursor:pointer; user-select:none;
+      transition: border-color .12s ease, filter .12s ease;
+    }
+    .toggle:hover{border-color:rgba(42,116,255,.35); filter:brightness(1.03);}
+    .switch{width:34px; height:18px; border-radius:999px; background:rgba(255,255,255,.12); border:1px solid var(--line); position:relative;}
+    .knob{position:absolute; top:1px; left:1px; width:14px; height:14px; border-radius:99px; background:rgba(255,255,255,.70); transition: transform .14s ease, background .14s ease;}
+    .toggle.on .switch{background:rgba(42,116,255,.22); border-color:rgba(42,116,255,.30);}
+    .toggle.on .knob{transform: translateX(16px); background:rgba(255,255,255,.92);}
+
     @media (max-width: 940px){
       .footer{flex-direction:column; align-items:flex-start;}
-      .toast-wrap{right:12px; left:12px}
-      .toast{min-width:unset; max-width:unset}
-      .logbox{min-height: 320px;}
       .modal-head{flex-direction:column; align-items:stretch;}
       .modal-actions{justify-content:flex-start;}
     }
   </style>
 </head>
 <body>
-
-<div class="overlay" id="overlay">
-  <div class="overlay-card">
-    <div class="overlay-top">
-      <div class="overlay-title"><span class="spinner"></span> <span id="ovTitle">Jobber…</span></div>
-      <div class="kbd">venter</div>
-    </div>
-    <div class="overlay-body" id="ovBody">Utfører handlingen. Dette tar som regel bare noen sekunder.</div>
-  </div>
-</div>
 
 <div class="modal" id="logModal" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logg">
@@ -487,10 +309,7 @@ TEMPLATE = r"""
     </div>
 
     <div class="modal-body">
-      <div class="chips" id="targetChips">
-        <span class="hint">Laster targets…</span>
-      </div>
-
+      <div class="chips" id="targetChips"><span class="hint">Laster targets…</span></div>
       <div class="logbox" id="logBox">Laster logg…</div>
 
       <div class="row" style="justify-content:space-between;">
@@ -499,41 +318,24 @@ TEMPLATE = r"""
       </div>
     </div>
 
-    <div class="modal-foot">
-      <div>Tips: ESC lukker. Klikk chip → filter. Live tail kan stå på mens du feilsøker.</div>
-      <div class="muted">Filter matcher tekst (name/ip/OK/DOWN osv.)</div>
+    <div class="footer" style="border-top:1px solid var(--line); padding:10px 12px; margin-top:0;">
+      <div class="muted">Tips: ESC lukker. Klikk chip → filter. Live tail kan stå på mens du feilsøker.</div>
+      <div class="muted">interheart <code>{{ ui_version }}</code></div>
     </div>
   </div>
 </div>
-
-<div class="toast-wrap" id="toastWrap"></div>
 
 <div class="wrap">
   <div class="top">
     <div class="brand">
       <div class="title">interheart <span class="badge">targets</span></div>
-      <div class="subtitle">
-        Steg 7: Logg-popup med target-chips + live tail + follow bottom.
-      </div>
+      <div class="subtitle">SemVer: <code>{{ ui_version }}</code></div>
     </div>
 
     <div class="right-actions">
       <button class="btn btn-secondary btn-mini" id="openLogs" type="button"><span class="icon">🧾</span> Logg</button>
 
-      <div class="toggle" id="autoToggle" title="Auto refresh klient-side">
-        <div class="switch"><div class="knob"></div></div>
-        <div>
-          <div style="font-weight:900; font-size:12px;">Auto refresh</div>
-          <small>hver <span id="autoEvery">15</span>s</small>
-        </div>
-      </div>
-      <div class="autorefresh-info" id="autoStatus">off</div>
-
-      <form method="post" action="/run-now"
-            data-working-title="Kjører sjekk nå…"
-            data-working-body="Kaller interheart run. (timeren kjører også i bakgrunnen.)"
-            data-toast="Kjører sjekk…"
-            data-toast2="Dette går fort – du kan refreshe etterpå om du vil.">
+      <form method="post" action="/run-now">
         <button class="btn btn-primary btn-mini" type="submit">
           <span class="icon">⚡</span> Kjør nå
         </button>
@@ -547,16 +349,15 @@ TEMPLATE = r"""
 
   <div class="card">
     <h3>Targets</h3>
-    <div class="hint">UI teller ned lokalt. Status/last ping/sent kommer fra state.</div>
+    <div class="hint">Status/last ping/sent kommer fra state. (countdown kan vi legge inn igjen om du vil – dette er den “stabile” SemVer-migrasjonen).</div>
     <div class="sep"></div>
 
     <table>
       <thead>
         <tr>
-          <th style="width: 190px;">Name</th>
+          <th style="width: 200px;">Name</th>
           <th style="width: 120px;">IP</th>
           <th style="width: 120px;">Status</th>
-          <th style="width: 140px;">Next ping</th>
           <th style="width: 120px;">Intervall</th>
           <th style="width: 170px;">Last ping</th>
           <th style="width: 170px;">Last sent</th>
@@ -566,55 +367,33 @@ TEMPLATE = r"""
       </thead>
       <tbody>
       {% for t in targets %}
-        <tr data-due="{{ t.next_due_epoch }}">
+        <tr>
           <td><code>{{ t.name }}</code></td>
           <td><code>{{ t.ip }}</code></td>
-
           <td>
             <span class="chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
               <span class="dot"></span>
               <span style="font-weight:900; text-transform:uppercase;">{{ t.status }}</span>
             </span>
           </td>
-
-          <td>
-            <div class="countdown" data-due="{{ t.next_due_epoch }}">…</div>
-            <div class="small">due: <code>{{ t.next_due_epoch }}</code></div>
-          </td>
-
           <td><span class="chip nowrap">{{ t.interval }}s</span></td>
-
           <td><code>{{ t.last_ping_human }}</code></td>
           <td><code>{{ t.last_sent_human }}</code></td>
-
           <td><code>{{ t.endpoint_masked }}</code></td>
 
           <td class="row">
-            <form method="post" action="/set-target-interval" style="display:inline"
-                  data-working-title="Oppdaterer intervall…"
-                  data-working-body="{{ t.name }} — oppdaterer intervall og setter target “due” nå."
-                  data-toast="Oppdaterer intervall…"
-                  data-toast2="{{ t.name }}">
+            <form method="post" action="/set-target-interval" style="display:inline">
               <input type="hidden" name="name" value="{{ t.name }}">
               <input class="btn-mini" style="width:110px" name="seconds" type="number" min="10" max="86400" step="1" placeholder="sek" required>
               <button class="btn btn-secondary btn-mini" type="submit"><span class="icon">⏱</span> Intervall</button>
             </form>
 
-            <form method="post" action="/test" style="display:inline"
-                  data-working-title="Tester target…"
-                  data-working-body="{{ t.name }} ({{ t.ip }}) — ping + endpoint."
-                  data-toast="Tester target…"
-                  data-toast2="{{ t.name }} ({{ t.ip }})">
+            <form method="post" action="/test" style="display:inline">
               <input type="hidden" name="name" value="{{ t.name }}">
               <button class="btn btn-secondary btn-mini" type="submit"><span class="icon">🧪</span> Test</button>
             </form>
 
-            <form method="post" action="/remove" style="display:inline"
-                  data-working-title="Fjerner target…"
-                  data-working-body="{{ t.name }} — fjerner fra config og state."
-                  data-toast="Fjerner target…"
-                  data-toast2="{{ t.name }}"
-                  onsubmit="return confirm('Fjerne {{ t.name }}?');">
+            <form method="post" action="/remove" style="display:inline" onsubmit="return confirm('Fjerne {{ t.name }}?');">
               <input type="hidden" name="name" value="{{ t.name }}">
               <button class="btn btn-danger btn-mini" type="submit"><span class="icon">🗑</span> Fjern</button>
             </form>
@@ -627,11 +406,7 @@ TEMPLATE = r"""
     <div class="sep"></div>
 
     <h3>Legg til target</h3>
-    <form method="post" action="/add"
-          data-working-title="Legger til target…"
-          data-working-body="Skriver til config + initialiserer state (due nå)."
-          data-toast="Legger til target…"
-          data-toast2="Sjekk at endpoint er korrekt.">
+    <form method="post" action="/add">
       <div class="row">
         <input name="name" placeholder="name (f.eks anl-0161-core-gw)" required>
         <input name="ip" placeholder="ip (f.eks 10.5.0.1)" required>
@@ -647,7 +422,7 @@ TEMPLATE = r"""
     <div class="footer">
       <div class="muted">
         WebUI: <code>{{ bind_host }}:{{ bind_port }}</code>
-        <span class="hint">• UI {{ ui_version }}</span>
+        <span class="hint">• interheart <code>{{ ui_version }}</code></span>
       </div>
 
       <div>
@@ -660,115 +435,7 @@ TEMPLATE = r"""
 
 <script>
 (function(){
-  // Countdown ticker + row highlight
-  function fmt(sec){
-    if (sec <= 0) return "due now";
-    if (sec < 60) return sec + "s";
-    var m = Math.floor(sec/60);
-    var s = sec % 60;
-    return m + "m " + (s<10?("0"+s):s) + "s";
-  }
-
-  function tick(){
-    var now = Math.floor(Date.now()/1000);
-
-    document.querySelectorAll(".countdown[data-due]").forEach(function(n){
-      var due = parseInt(n.getAttribute("data-due") || "0", 10);
-      if (!due || due <= 0){ n.textContent = "due now"; return; }
-      n.textContent = fmt(due - now);
-    });
-
-    document.querySelectorAll("tr[data-due]").forEach(function(tr){
-      var due = parseInt(tr.getAttribute("data-due") || "0", 10);
-      tr.classList.remove("due-now","due-soon");
-      if (!due || due <= 0) return;
-
-      var left = due - now;
-      if (left <= 0){
-        tr.classList.add("due-now");
-      } else if (left <= 10){
-        tr.classList.add("due-soon");
-      }
-    });
-  }
-  tick();
-  setInterval(tick, 1000);
-
-  // Toasts
-  var wrap = document.getElementById("toastWrap");
-  function toast(title, body){
-    var el = document.createElement("div");
-    el.className = "toast";
-    el.innerHTML = '<div class="t-title"></div><div class="t-body"></div>';
-    el.querySelector(".t-title").textContent = title || "Jobber…";
-    el.querySelector(".t-body").textContent = body || "";
-    wrap.appendChild(el);
-
-    setTimeout(function(){
-      el.style.animation = "toastOut .22s ease forwards";
-      setTimeout(function(){ el.remove(); }, 260);
-    }, 1800);
-  }
-
-  // Working overlay
-  var overlay = document.getElementById("overlay");
-  var ovTitle = document.getElementById("ovTitle");
-  var ovBody = document.getElementById("ovBody");
-  function showOverlay(t, b){
-    ovTitle.textContent = t || "Jobber…";
-    ovBody.textContent = b || "Utfører handlingen.";
-    overlay.classList.add("show");
-  }
-
-  // Hook forms
-  document.querySelectorAll("form[data-toast], form[data-working-title]").forEach(function(f){
-    f.addEventListener("submit", function(){
-      var t = f.getAttribute("data-toast");
-      var b = f.getAttribute("data-toast2") || "";
-      if (t) toast(t, b);
-
-      var wt = f.getAttribute("data-working-title");
-      var wb = f.getAttribute("data-working-body");
-      if (wt || wb) showOverlay(wt || "Jobber…", wb || "");
-    });
-  });
-
-  // Auto refresh (client-side)
-  var toggle = document.getElementById("autoToggle");
-  var status = document.getElementById("autoStatus");
-  var every = document.getElementById("autoEvery");
-
-  var REFRESH_SEC = 15;
-  every.textContent = String(REFRESH_SEC);
-
-  var key = "interheart_autorefresh";
-  var enabled = (localStorage.getItem(key) === "1");
-  var timer = null;
-
-  function apply(){
-    if (enabled){
-      toggle.classList.add("on");
-      status.textContent = "on (" + REFRESH_SEC + "s)";
-      if (!timer){
-        timer = setInterval(function(){ window.location.reload(); }, REFRESH_SEC * 1000);
-      }
-    } else {
-      toggle.classList.remove("on");
-      status.textContent = "off";
-      if (timer){ clearInterval(timer); timer = null; }
-    }
-  }
-
-  toggle.addEventListener("click", function(){
-    enabled = !enabled;
-    localStorage.setItem(key, enabled ? "1" : "0");
-    apply();
-    toast("Auto refresh " + (enabled ? "på" : "av"), enabled ? ("Refresher hver " + REFRESH_SEC + "s") : "Ingen auto refresh");
-  });
-
-  apply();
-
-  // Logs modal (Step 7)
+  // Logs modal (Step 7 behavior retained)
   var modal = document.getElementById("logModal");
   var openBtn = document.getElementById("openLogs");
   var closeBtn = document.getElementById("btnCloseLogs");
@@ -789,7 +456,7 @@ TEMPLATE = r"""
   var liveTimer = null;
   var LIVE_INTERVAL_MS = 3000;
 
-  var activeChip = ""; // target name
+  var activeChip = "";
 
   function openModal(){
     modal.classList.add("show");
@@ -855,7 +522,6 @@ TEMPLATE = r"""
       filter.value = "";
       renderChips();
       applyFilter();
-      toast("Filter", "ALL");
     });
     chipsWrap.appendChild(allBtn);
 
@@ -869,7 +535,6 @@ TEMPLATE = r"""
         filter.value = t.name;
         renderChips();
         applyFilter();
-        toast("Filter", t.name);
       });
       chipsWrap.appendChild(btn);
     });
@@ -886,9 +551,7 @@ TEMPLATE = r"""
     if (liveTimer) return;
     liveOn = true;
     setLivePill();
-    liveTimer = setInterval(function(){
-      loadLogs(true);
-    }, LIVE_INTERVAL_MS);
+    liveTimer = setInterval(function(){ loadLogs(true); }, LIVE_INTERVAL_MS);
   }
 
   function stopLive(){
@@ -905,98 +568,58 @@ TEMPLATE = r"""
   }
 
   openBtn.addEventListener("click", async function(){
-    toast("Åpner logg…", "Henter siste linjer");
     openModal();
     renderChips();
     await loadLogs(false);
-    if (followBottom){
-      logBox.scrollTop = logBox.scrollHeight;
-    }
+    if (followBottom) logBox.scrollTop = logBox.scrollHeight;
   });
 
   closeBtn.addEventListener("click", function(){ closeModal(); });
 
-  reloadBtn.addEventListener("click", async function(){
-    toast("Oppdaterer logg…", "");
-    await loadLogs(false);
-  });
+  reloadBtn.addEventListener("click", async function(){ await loadLogs(false); });
 
   copyBtn.addEventListener("click", async function(){
-    try{
-      await navigator.clipboard.writeText(logBox.textContent || "");
-      toast("Kopiert!", "Logg er lagt på clipboard.");
-    }catch(e){
-      toast("Kunne ikke kopiere", "Nettleser blokkerer clipboard.");
-    }
+    try{ await navigator.clipboard.writeText(logBox.textContent || ""); }catch(e){}
   });
 
   filter.addEventListener("input", function(){
-    activeChip = ""; // typing overrides chip
+    activeChip = "";
     renderChips();
     applyFilter();
   });
 
-  // Live toggle
   liveToggle.addEventListener("click", function(){
     var newState = !liveOn;
     if (newState){
       setToggle(liveToggle, true);
       startLive();
-      toast("Live tail", "På (poll hver 3s)");
       loadLogs(true);
     } else {
       setToggle(liveToggle, false);
       stopLive();
-      toast("Live tail", "Av");
     }
   });
 
-  // Follow bottom toggle
   followToggle.addEventListener("click", function(){
     followBottom = !followBottom;
     setToggle(followToggle, followBottom);
-    toast("Follow bottom", followBottom ? "På" : "Av");
-    if (followBottom){
-      logBox.scrollTop = logBox.scrollHeight;
-    }
+    if (followBottom) logBox.scrollTop = logBox.scrollHeight;
   });
 
-  // Defaults
   setToggle(liveToggle, false);
   setToggle(followToggle, true);
   setLivePill();
 
-  // ESC closes
   document.addEventListener("keydown", function(e){
-    if (e.key === "Escape" && modal.classList.contains("show")){
-      closeModal();
-    }
+    if (e.key === "Escape" && modal.classList.contains("show")) closeModal();
   });
-
-  // Click outside closes
   modal.addEventListener("click", function(e){
-    if (e.target === modal){
-      closeModal();
-    }
-  });
-
-  // Scroll detection: if user scrolls up, disable follow bottom automatically (soft)
-  logBox.addEventListener("scroll", function(){
-    if (!modal.classList.contains("show")) return;
-    var nearBottom = (logBox.scrollTop + logBox.clientHeight) >= (logBox.scrollHeight - 30);
-    if (!nearBottom && followBottom){
-      followBottom = false;
-      setToggle(followToggle, false);
-      toast("Follow bottom", "Av (du scrollet opp)");
-    } else if (nearBottom && !followBottom){
-      // do nothing; user toggles back manually
-    }
+    if (e.target === modal) closeModal();
   });
 })();
 </script>
 
 <script>
-// expose targets to JS for chips
 window.__targets = {{ targets_json | safe }};
 </script>
 
@@ -1063,7 +686,6 @@ def parse_status(status_output: str):
     last_sent = parts[5]
     state[name] = {
       "status": status,
-      "next_due_epoch": int(next_due) if next_due.isdigit() else 0,
       "last_ping_epoch": int(last_ping) if last_ping.isdigit() else 0,
       "last_sent_epoch": int(last_sent) if last_sent.isdigit() else 0,
     }
@@ -1108,24 +730,19 @@ def index():
   for t in targets:
     st = state.get(t["name"], {})
     status = st.get("status", "unknown")
-    next_due_epoch = st.get("next_due_epoch", 0)
     last_ping_epoch = st.get("last_ping_epoch", 0)
     last_sent_epoch = st.get("last_sent_epoch", 0)
 
     merged.append({
       **t,
       "status": status,
-      "next_due_epoch": next_due_epoch,
       "last_ping_human": human_ts(last_ping_epoch),
       "last_sent_human": human_ts(last_sent_epoch),
     })
 
-  # For chips in JS
-  targets_json = []
-  for t in targets:
-    targets_json.append({"name": t["name"], "ip": t["ip"]})
-
+  targets_json = [{"name": t["name"], "ip": t["ip"]} for t in targets]
   import json
+
   return render_template_string(
     TEMPLATE,
     targets=merged,
