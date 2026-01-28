@@ -1,4 +1,5 @@
-from flask import Flask, request, render_template_string, redirect, url_for, jsonify
+from flask import Flask, request, render_template_string, jsonify
+from markupsafe import Markup
 import os
 import subprocess
 import time
@@ -31,7 +32,6 @@ BIND_PORT = int(os.environ.get("WEBUI_PORT", "8088"))
 LOG_LINES_DEFAULT = 200
 STATE_POLL_SECONDS = 2
 
-# ---- Helpers ----
 def run_cmd(args):
     cmd = ["sudo", CLI] + args
     p = subprocess.run(cmd, capture_output=True, text=True)
@@ -134,7 +134,26 @@ def merged_targets():
         })
     return merged
 
-# ---- UI Template ----
+def icon_svg(path_d: str):
+    return Markup(
+        f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+        xmlns="http://www.w3.org/2000/svg" style="opacity:.9">
+        <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>"""
+    )
+
+ICONS = {
+    "plus": icon_svg("M12 5v14M5 12h14"),
+    "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
+    "close": icon_svg("M18 6L6 18M6 6l12 12"),
+    "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
+    "copy": icon_svg("M8 8h12v12H8zM4 4h12v12"),
+    "play": icon_svg("M8 5v14l11-7z"),
+    "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
+    "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
+    "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
+}
+
 TEMPLATE = r"""
 <!doctype html>
 <html lang="en">
@@ -145,17 +164,13 @@ TEMPLATE = r"""
 
   <style>
     :root{
-      /* "5echo-ish": deeper navy + calm panels */
-      --bg:#070b12;
+      --bg:#091626;               /* requested */
       --panel:#0b1220;
       --panel2:#0c1526;
       --line:rgba(255,255,255,.10);
 
       --text:rgba(255,255,255,.92);
       --muted:rgba(255,255,255,.60);
-
-      --accent:rgba(255,255,255,.86);
-      --accentLine:rgba(255,255,255,.14);
 
       --good:#35d39f;
       --danger:#ff3b5c;
@@ -213,7 +228,7 @@ TEMPLATE = r"""
     .hint{color:rgba(255,255,255,.52);font-size:12px}
     .sep{height:1px;background:var(--line);margin:12px 0}
 
-    input, textarea{
+    input{
       border-radius:14px;
       border:1px solid var(--line);
       background:rgba(255,255,255,.03);
@@ -223,7 +238,7 @@ TEMPLATE = r"""
       transition: border-color .15s ease, filter .15s ease;
       font-family:var(--sans);
     }
-    input:focus, textarea:focus{
+    input:focus{
       border-color:rgba(255,255,255,.24);
       filter:brightness(1.03);
     }
@@ -339,7 +354,6 @@ TEMPLATE = r"""
       font-weight:850;
     }
     .menu-item:hover{background:rgba(255,255,255,.06)}
-    .menu-item.danger{color:rgba(255,255,255,.92)}
     .menu-item.danger:hover{background:rgba(255,59,92,.10)}
 
     /* Toasts */
@@ -383,7 +397,7 @@ TEMPLATE = r"""
       display:none;
       align-items:center;justify-content:center;
       z-index:9997;
-      padding:26px; /* more air */
+      padding:26px;
       background:rgba(0,0,0,.60);
       backdrop-filter: blur(12px);
     }
@@ -425,14 +439,8 @@ TEMPLATE = r"""
       position:relative;
     }
 
-    /* Small live “pulse” when values change */
-    .flash{
-      animation: flash .45s ease;
-    }
-    @keyframes flash{
-      from{background:rgba(255,255,255,.10)}
-      to{background:transparent}
-    }
+    .flash{animation: flash .45s ease}
+    @keyframes flash{from{background:rgba(255,255,255,.10)}to{background:transparent}}
 
     .footer{
       margin-top:14px;
@@ -452,7 +460,6 @@ TEMPLATE = r"""
     }
     .footer a:hover{border-bottom-color:rgba(255,255,255,.34)}
 
-    /* Run now spinner */
     .spin{animation: spin 0.9s linear infinite}
     @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 
@@ -478,13 +485,13 @@ TEMPLATE = r"""
       <div class="modal-actions">
         <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="min-width:220px;">
         <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">
-          <span class="ico" aria-hidden="true">{{ icons.refresh }}</span> Reload
+          <span class="ico" aria-hidden="true">{{ icons.refresh|safe }}</span> Reload
         </button>
         <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
-          <span class="ico" aria-hidden="true">{{ icons.copy }}</span> Copy
+          <span class="ico" aria-hidden="true">{{ icons.copy|safe }}</span> Copy
         </button>
         <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">
-          <span class="ico" aria-hidden="true">{{ icons.close }}</span> Close
+          <span class="ico" aria-hidden="true">{{ icons.close|safe }}</span> Close
         </button>
       </div>
     </div>
@@ -513,7 +520,7 @@ TEMPLATE = r"""
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost btn-mini" id="btnCloseAdd" type="button">
-          <span class="ico" aria-hidden="true">{{ icons.close }}</span> Close
+          <span class="ico" aria-hidden="true">{{ icons.close|safe }}</span> Close
         </button>
       </div>
     </div>
@@ -533,8 +540,8 @@ TEMPLATE = r"""
         <input name="endpoint" placeholder="https://..." required>
 
         <div style="display:flex; gap:10px; margin-top:14px;">
-          <button class="btn btn-primary" type="submit" id="btnAddSubmit">
-            <span class="ico" aria-hidden="true">{{ icons.plus }}</span>
+          <button class="btn btn-primary" type="submit" id="btnAddSubmit" data-default-html="">
+            <span class="ico" aria-hidden="true">{{ icons.plus|safe }}</span>
             Add target
           </button>
           <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
@@ -566,15 +573,15 @@ TEMPLATE = r"""
 
     <div class="right-actions">
       <button class="btn btn-ghost btn-mini" id="openLogs" type="button">
-        <span class="ico" aria-hidden="true">{{ icons.logs }}</span> Logs
+        <span class="ico" aria-hidden="true">{{ icons.logs|safe }}</span> Logs
       </button>
 
       <button class="btn btn-ghost btn-mini" id="openAdd" type="button">
-        <span class="ico" aria-hidden="true">{{ icons.plus }}</span> Add
+        <span class="ico" aria-hidden="true">{{ icons.plus|safe }}</span> Add
       </button>
 
-      <button class="btn btn-primary btn-mini" id="btnRunNow" type="button">
-        <span class="ico" id="runNowIcon" aria-hidden="true">{{ icons.play }}</span>
+      <button class="btn btn-primary btn-mini" id="btnRunNow" type="button" data-default-html="">
+        <span class="ico" id="runNowIcon" aria-hidden="true">{{ icons.play|safe }}</span>
         Run now
       </button>
     </div>
@@ -616,21 +623,21 @@ TEMPLATE = r"""
             </div>
           </td>
 
-          <td><code class="last-ping" data-epoch="{{ t.last_ping_epoch }}">{{ t.last_ping_human }}</code></td>
-          <td><code class="last-sent" data-epoch="{{ t.last_sent_epoch }}">{{ t.last_sent_human }}</code></td>
+          <td><code class="last-ping">{{ t.last_ping_human }}</code></td>
+          <td><code class="last-sent">{{ t.last_sent_human }}</code></td>
           <td><code class="endpoint">{{ t.endpoint_masked }}</code></td>
 
           <td style="text-align:right;">
             <div class="menu">
               <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">
-                <span class="ico" aria-hidden="true">{{ icons.more }}</span>
+                <span class="ico" aria-hidden="true">{{ icons.more|safe }}</span>
               </button>
               <div class="menu-dd" role="menu">
                 <button class="menu-item" data-action="test" type="button">
-                  <span class="ico" aria-hidden="true">{{ icons.test }}</span> Test
+                  <span class="ico" aria-hidden="true">{{ icons.test|safe }}</span> Test
                 </button>
                 <button class="menu-item danger" data-action="remove" type="button">
-                  <span class="ico" aria-hidden="true">{{ icons.trash }}</span> Remove
+                  <span class="ico" aria-hidden="true">{{ icons.trash|safe }}</span> Remove
                 </button>
               </div>
             </div>
@@ -680,9 +687,20 @@ TEMPLATE = r"""
       .replaceAll("'","&#039;");
   }
 
-  // ---- Modal helpers ----
   function show(el){ el.classList.add("show"); el.setAttribute("aria-hidden","false"); }
   function hide(el){ el.classList.remove("show"); el.setAttribute("aria-hidden","true"); }
+
+  // ---- Default button HTML snapshots (fixes “code snippet” / restore issues) ----
+  function captureDefaultHtml(btn){
+    if (!btn) return;
+    if (!btn.dataset.defaultHtml || btn.dataset.defaultHtml === ""){
+      btn.dataset.defaultHtml = btn.innerHTML;
+    }
+  }
+  const btnRunNow = document.getElementById("btnRunNow");
+  const btnAddSubmit = document.getElementById("btnAddSubmit");
+  captureDefaultHtml(btnRunNow);
+  captureDefaultHtml(btnAddSubmit);
 
   // ---- Logs modal ----
   const logModal = document.getElementById("logModal");
@@ -730,7 +748,6 @@ TEMPLATE = r"""
   const closeAdd = document.getElementById("btnCloseAdd");
   const addCancel = document.getElementById("btnAddCancel");
   const addForm = document.getElementById("addForm");
-  const addSubmit = document.getElementById("btnAddSubmit");
 
   openAdd.addEventListener("click", () => show(addModal));
   closeAdd.addEventListener("click", () => hide(addModal));
@@ -739,8 +756,8 @@ TEMPLATE = r"""
 
   addForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    addSubmit.disabled = true;
-    addSubmit.textContent = "Adding…";
+    btnAddSubmit.disabled = true;
+    btnAddSubmit.innerHTML = "Adding…";
     try{
       const fd = new FormData(addForm);
       const res = await fetch("/api/add", {method:"POST", body: fd});
@@ -756,12 +773,12 @@ TEMPLATE = r"""
     }catch(err){
       toast("Error", err && err.message ? err.message : "Failed to add");
     }finally{
-      addSubmit.disabled = false;
-      addSubmit.innerHTML = `{{ icons.plus }} Add target`;
+      btnAddSubmit.disabled = false;
+      btnAddSubmit.innerHTML = btnAddSubmit.dataset.defaultHtml || "Add target";
     }
   });
 
-  // ---- Actions dropdown menus ----
+  // ---- Actions dropdown ----
   function closeAllMenus(){
     document.querySelectorAll(".menu.show").forEach(m => m.classList.remove("show"));
   }
@@ -777,13 +794,11 @@ TEMPLATE = r"""
     if (!e.target.closest(".menu")) closeAllMenus();
   });
 
-  // ---- Run Now (visual feedback) ----
-  const btnRunNow = document.getElementById("btnRunNow");
+  // ---- Run Now ----
   const runNowIcon = document.getElementById("runNowIcon");
-
   btnRunNow.addEventListener("click", async () => {
     btnRunNow.disabled = true;
-    runNowIcon.classList.add("spin");
+    if (runNowIcon) runNowIcon.classList.add("spin");
     toast("Run started", "Running ping cycle…");
 
     try{
@@ -797,8 +812,9 @@ TEMPLATE = r"""
     }catch(e){
       toast("Run failed", e && e.message ? e.message : "Error");
     }finally{
-      runNowIcon.classList.remove("spin");
+      if (runNowIcon) runNowIcon.classList.remove("spin");
       btnRunNow.disabled = false;
+      btnRunNow.innerHTML = btnRunNow.dataset.defaultHtml || btnRunNow.innerHTML;
       await refreshState(true);
     }
   });
@@ -944,12 +960,9 @@ TEMPLATE = r"""
 
         setStatusChip(row, t.status);
 
-        const lp = row.querySelector(".last-ping");
-        const ls = row.querySelector(".last-sent");
-        flashIfChanged(lp, t.last_ping_human || "-");
-        flashIfChanged(ls, t.last_sent_human || "-");
+        flashIfChanged(row.querySelector(".last-ping"), t.last_ping_human || "-");
+        flashIfChanged(row.querySelector(".last-sent"), t.last_sent_human || "-");
 
-        // interval input should reflect backend if changed elsewhere
         const iv = row.querySelector(".interval-input");
         if (iv && force){
           iv.value = String(t.interval || 60);
@@ -963,7 +976,7 @@ TEMPLATE = r"""
       attachIntervalHandlers();
       attachMenuActions();
     }catch(e){
-      // keep quiet
+      // silent
     }
   }
 
@@ -987,26 +1000,6 @@ TEMPLATE = r"""
 </html>
 """
 
-def icon_svg(path_d: str):
-    # monochrome line icon
-    return f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-      xmlns="http://www.w3.org/2000/svg" style="opacity:.9">
-      <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>"""
-
-ICONS = {
-    "plus": icon_svg("M12 5v14M5 12h14"),
-    "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
-    "close": icon_svg("M18 6L6 18M6 6l12 12"),
-    "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
-    "copy": icon_svg("M8 8h12v12H8zM4 4h12v12"),
-    "play": icon_svg("M8 5v14l11-7z"),
-    "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
-    "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
-    "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
-}
-
-# ---- Routes ----
 @APP.get("/")
 def index():
     targets = merged_targets()
@@ -1024,10 +1017,7 @@ def index():
 
 @APP.get("/state")
 def state():
-    return jsonify({
-        "updated": int(time.time()),
-        "targets": merged_targets()
-    })
+    return jsonify({"updated": int(time.time()), "targets": merged_targets()})
 
 @APP.get("/logs")
 def logs():
@@ -1036,18 +1026,16 @@ def logs():
     except Exception:
         lines = LOG_LINES_DEFAULT
     lines = max(50, min(1000, lines))
-
     updated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(time.time())))
+
     try:
         text = sudo_journalctl(lines)
         src = "journalctl -t interheart"
         actual = len(text.splitlines()) if text else 0
         return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
     except Exception as e:
-        # If journalctl fails, still return something helpful
         return jsonify({"source": "journalctl (error)", "lines": 1, "updated": updated, "text": f"(journalctl error: {str(e)})"})
 
-# ---- API endpoints (used by JS) ----
 @APP.post("/api/run-now")
 def api_run_now():
     rc, out = run_cmd(["run"])
