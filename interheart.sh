@@ -7,6 +7,7 @@ CONFIG_FILE="/etc/5echo/interheart.conf"
 LOG_FILE="/var/log/interheart.log"
 STATE_DIR="/var/lib/interheart"
 STATE_FILE="${STATE_DIR}/state.db"
+RUNTIME_FILE="${STATE_DIR}/runtime.json"
 
 # Defaults
 DEFAULT_INTERVAL_SEC=60
@@ -15,13 +16,16 @@ PING_COUNT_DEFAULT=2
 PING_TIMEOUT_DEFAULT=2
 CURL_TIMEOUT_DEFAULT=6
 
+# Spread load (sequential + tiny sleep between due targets)
+SPREAD_DELAY_MS_DEFAULT=120  # 120ms between targets (only when due)
+
 BIN_PATH="/usr/local/bin/${APP_NAME}"
 SERVICE_PATH="/etc/systemd/system/${APP_NAME}.service"
 TIMER_PATH="/etc/systemd/system/${APP_NAME}.timer"
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    echo "Dette må kjøres som root. Bruk: sudo $0 $*" >&2
+    echo "Must run as root. Use: sudo $0 $*" >&2
     exit 1
   fi
 }
@@ -35,6 +39,9 @@ ensure_paths() {
   chmod 700 "$STATE_DIR"
   touch "$STATE_FILE"
   chmod 600 "$STATE_FILE"
+
+  touch "$RUNTIME_FILE"
+  chmod 600 "$RUNTIME_FILE"
 }
 
 log() {
@@ -81,7 +88,7 @@ EOF
 validate_name() {
   local name="$1"
   if [[ ! "$name" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-    echo "Ugyldig name '$name'. Bruk kun a-zA-Z0-9._-" >&2
+    echo "Invalid name '$name'. Use only a-zA-Z0-9._-" >&2
     exit 1
   fi
 }
@@ -89,13 +96,13 @@ validate_name() {
 validate_ip() {
   local ip="$1"
   if [[ ! "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    echo "Ugyldig IP '$ip'." >&2
+    echo "Invalid IP '$ip'." >&2
     exit 1
   fi
   IFS='.' read -r o1 o2 o3 o4 <<<"$ip"
   for o in "$o1" "$o2" "$o3" "$o4"; do
     if (( o < 0 || o > 255 )); then
-      echo "Ugyldig IP '$ip' (octet utenfor 0-255)." >&2
+      echo "Invalid IP '$ip' (octet out of range 0-255)." >&2
       exit 1
     fi
   done
@@ -104,15 +111,15 @@ validate_ip() {
 validate_url() {
   local url="$1"
   if [[ ! "$url" =~ ^https?:// ]]; then
-    echo "Ugyldig URL '$url'. Må starte med http:// eller https://." >&2
+    echo "Invalid URL '$url'. Must start with http:// or https://." >&2
     exit 1
   fi
 }
 
 validate_interval() {
   local sec="$1"
-  [[ "$sec" =~ ^[0-9]+$ ]] || { echo "Intervall må være heltall sekunder."; exit 1; }
-  (( sec >= 10 && sec <= 86400 )) || { echo "Intervall må være mellom 10 og 86400 sek."; exit 1; }
+  [[ "$sec" =~ ^[0-9]+$ ]] || { echo "Interval must be integer seconds."; exit 1; }
+  (( sec >= 10 && sec <= 86400 )) || { echo "Interval must be 10..86400 seconds."; exit 1; }
 }
 
 config_has_name() {
@@ -164,6 +171,22 @@ send_endpoint() {
   curl -fsS --max-time "$CURL_TIMEOUT_DEFAULT" "$url" > /dev/null
 }
 
+runtime_write() {
+  # Writes a small JSON file so WebUI can show "current / queued / done" later
+  local status="$1"       # idle|running
+  local current="${2:-}"
+  local done="${3:-0}"
+  local due="${4:-0}"
+  local ts
+  ts="$(date +%s)"
+
+  # naive JSON (safe enough for our values)
+  cat > "$RUNTIME_FILE" <<EOF
+{"status":"$status","current":"$current","done":$done,"due":$due,"updated":$ts}
+EOF
+  chmod 600 "$RUNTIME_FILE" || true
+}
+
 add_target() {
   require_root add
   ensure_paths
@@ -181,7 +204,7 @@ add_target() {
   validate_interval "$interval"
 
   if config_has_name "$name"; then
-    echo "Finnes allerede: $name. Fjern først med: sudo $0 remove $name" >&2
+    echo "Already exists: $name. Remove first: sudo $0 remove $name" >&2
     exit 1
   fi
 
@@ -193,7 +216,7 @@ add_target() {
   state_set_line "${name}|${now}|unknown|0|0"
 
   log "ADD name=$name ip=$ip interval=${interval}s"
-  echo "La til: $name ($ip) interval=${interval}s"
+  echo "Added: $name ($ip) interval=${interval}s"
 }
 
 remove_target() {
@@ -205,7 +228,7 @@ remove_target() {
   validate_name "$name"
 
   if ! config_has_name "$name"; then
-    echo "Fant ikke: $name" >&2
+    echo "Not found: $name" >&2
     exit 1
   fi
 
@@ -223,7 +246,7 @@ remove_target() {
   chmod 600 "$STATE_FILE"
 
   log "REMOVE name=$name"
-  echo "Fjernet: $name"
+  echo "Removed: $name"
 }
 
 set_target_interval() {
@@ -232,12 +255,12 @@ set_target_interval() {
 
   local name="${1:-}"
   local sec="${2:-}"
-  [[ -z "$name" || -z "$sec" ]] && { echo "Bruk: sudo $0 set-target-interval <name> <seconds>"; exit 1; }
+  [[ -z "$name" || -z "$sec" ]] && { echo "Usage: sudo $0 set-target-interval <name> <seconds>"; exit 1; }
   validate_name "$name"
   validate_interval "$sec"
 
   if ! config_has_name "$name"; then
-    echo "Fant ikke: $name" >&2
+    echo "Not found: $name" >&2
     exit 1
   fi
 
@@ -273,7 +296,7 @@ set_target_interval() {
   fi
 
   log "SET_INTERVAL name=$name interval=${sec}s"
-  echo "Oppdatert: $name interval=${sec}s"
+  echo "Updated: $name interval=${sec}s"
 }
 
 list_targets() {
@@ -281,7 +304,7 @@ list_targets() {
   ensure_paths
 
   if [[ ! -s "$CONFIG_FILE" ]]; then
-    echo "Ingen targets i $CONFIG_FILE"
+    echo "No targets in $CONFIG_FILE"
     exit 0
   fi
 
@@ -313,9 +336,8 @@ status_targets() {
   printf "  %-26s %-10s %-12s %-14s %-14s %-14s\n" "NAME" "STATUS" "NEXT_IN" "NEXT_DUE" "LAST_PING" "LAST_SENT"
   echo "--------------------------------------------------------------------------------------------------------------"
 
-  # Build a map of config names to keep output aligned with configured targets
   if [[ ! -s "$CONFIG_FILE" ]]; then
-    echo "  (ingen targets)"
+    echo "  (no targets)"
     exit 0
   fi
 
@@ -370,24 +392,24 @@ test_target() {
   validate_name "$name"
 
   line="$(grep -E "^${name}\|" "$CONFIG_FILE" || true)"
-  [[ -z "$line" ]] && { echo "Fant ikke: $name"; exit 1; }
+  [[ -z "$line" ]] && { echo "Not found: $name"; exit 1; }
 
   parsed="$(parse_config_line "$line")"
   IFS='|' read -r _name ip url interval <<<"$parsed"
 
-  echo "Tester: $name ($ip) interval=${interval}s"
+  echo "Testing: $name ($ip) interval=${interval}s"
   if ping_ok "$ip"; then
     echo "PING: OK"
-    echo "Sender til endpoint…"
+    echo "Sending endpoint…"
     if send_endpoint "$url"; then
       echo "ENDPOINT: OK"
       exit 0
     else
-      echo "ENDPOINT: FEIL (curl)"
+      echo "ENDPOINT: FAILED (curl)"
       exit 2
     fi
   else
-    echo "PING: FEIL"
+    echo "PING: FAILED"
     exit 3
   fi
 }
@@ -396,12 +418,18 @@ run_checks() {
   require_root run
   ensure_paths
 
-  [[ ! -s "$CONFIG_FILE" ]] && { log "RUN: no targets"; echo "No targets"; exit 0; }
+  [[ ! -s "$CONFIG_FILE" ]] && { log "RUN: no targets"; echo "No targets"; runtime_write "idle" "" 0 0; exit 0; }
 
   local now
   now="$(date +%s)"
 
   local total=0 due=0 skipped=0 ping_ok_count=0 ping_fail=0 sent=0 curl_fail=0
+
+  # Collect due targets first (so we can show correct due count + step-by-step)
+  declare -a DUE_NAMES=()
+  declare -a DUE_IPS=()
+  declare -a DUE_URLS=()
+  declare -a DUE_INTERVALS=()
 
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
@@ -413,15 +441,12 @@ run_checks() {
     IFS='|' read -r name ip url interval <<<"$parsed"
 
     st="$(state_get_line "$name")"
-    local next_due last_status last_ping last_sent
+    local next_due
     if [[ -n "$st" ]]; then
-      IFS='|' read -r _n next_due last_status last_ping last_sent <<<"$st"
+      IFS='|' read -r _n next_due _last_status _last_ping _last_sent <<<"$st"
       next_due="${next_due:-0}"
     else
       next_due="0"
-      last_status="unknown"
-      last_ping="0"
-      last_sent="0"
     fi
 
     if (( now < next_due )); then
@@ -430,6 +455,43 @@ run_checks() {
     fi
 
     due=$((due+1))
+    DUE_NAMES+=("$name")
+    DUE_IPS+=("$ip")
+    DUE_URLS+=("$url")
+    DUE_INTERVALS+=("$interval")
+  done < "$CONFIG_FILE"
+
+  runtime_write "running" "" 0 "$due"
+
+  # Delay between targets to avoid burst
+  local spread_ms="${SPREAD_DELAY_MS:-$SPREAD_DELAY_MS_DEFAULT}"
+  if ! [[ "$spread_ms" =~ ^[0-9]+$ ]]; then
+    spread_ms="$SPREAD_DELAY_MS_DEFAULT"
+  fi
+  local spread_sec
+  spread_sec="$(awk -v ms="$spread_ms" 'BEGIN{printf "%.3f", ms/1000}')"
+
+  local i=0
+  local done_count=0
+
+  while (( i < ${#DUE_NAMES[@]} )); do
+    local name="${DUE_NAMES[$i]}"
+    local ip="${DUE_IPS[$i]}"
+    local url="${DUE_URLS[$i]}"
+    local interval="${DUE_INTERVALS[$i]}"
+
+    runtime_write "running" "$name" "$done_count" "$due"
+
+    st="$(state_get_line "$name")"
+    local next_due last_status last_ping last_sent
+    if [[ -n "$st" ]]; then
+      IFS='|' read -r _n next_due last_status last_ping last_sent <<<"$st"
+    else
+      next_due="0"
+      last_status="unknown"
+      last_ping="0"
+      last_sent="0"
+    fi
 
     if ping_ok "$ip"; then
       ping_ok_count=$((ping_ok_count+1))
@@ -453,7 +515,18 @@ run_checks() {
 
     next_due=$(( now + interval ))
     state_set_line "${name}|${next_due}|${last_status}|${last_ping}|${last_sent}"
-  done < "$CONFIG_FILE"
+
+    done_count=$((done_count+1))
+
+    # micro pause to prevent spikes
+    if (( i < ${#DUE_NAMES[@]} - 1 )); then
+      sleep "$spread_sec" || true
+    fi
+
+    i=$((i+1))
+  done
+
+  runtime_write "idle" "" "$done_count" "$due"
 
   log "RUN summary total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail"
   echo "OK: total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail"
@@ -462,7 +535,7 @@ run_checks() {
 install_systemd() {
   require_root install
   ensure_paths
-  command -v systemctl >/dev/null 2>&1 || { echo "systemd ikke tilgjengelig"; exit 1; }
+  command -v systemctl >/dev/null 2>&1 || { echo "systemd not available"; exit 1; }
 
   cp -f "$0" "$BIN_PATH"
   chmod 755 "$BIN_PATH"
@@ -494,8 +567,8 @@ WantedBy=timers.target
 EOF
 
   systemctl daemon-reload
-  echo "Installert systemd: $APP_NAME.service + $APP_NAME.timer"
-  echo "Neste: sudo $BIN_PATH enable"
+  echo "Installed systemd: $APP_NAME.service + $APP_NAME.timer"
+  echo "Next: sudo $BIN_PATH enable"
 }
 
 uninstall_systemd() {
@@ -506,19 +579,19 @@ uninstall_systemd() {
     systemctl daemon-reload || true
   fi
   rm -f "$BIN_PATH"
-  echo "Avinstallert. Config beholdes: $CONFIG_FILE"
+  echo "Uninstalled. Config kept: $CONFIG_FILE"
 }
 
 enable_timer() {
   require_root enable
   systemctl enable --now "${APP_NAME}.timer"
-  echo "Aktivert: ${APP_NAME}.timer"
+  echo "Enabled: ${APP_NAME}.timer"
 }
 
 disable_timer() {
   require_root disable
   systemctl disable --now "${APP_NAME}.timer"
-  echo "Deaktivert: ${APP_NAME}.timer"
+  echo "Disabled: ${APP_NAME}.timer"
 }
 
 sys_status() {
@@ -546,7 +619,7 @@ main() {
     disable) disable_timer ;;
     sys-status) sys_status ;;
     ""|help|-h|--help) usage ;;
-    *) echo "Ukjent kommando: $cmd"; usage; exit 1 ;;
+    *) echo "Unknown command: $cmd"; usage; exit 1 ;;
   esac
 }
 
