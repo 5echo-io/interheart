@@ -33,7 +33,8 @@ BIND_PORT = int(os.environ.get("WEBUI_PORT", "8088"))
 LOG_LINES_DEFAULT = 200
 STATE_POLL_SECONDS = 2
 
-RUNTIME_FILE = "/var/lib/interheart/runtime.json"
+STATE_DIR = "/var/lib/interheart"
+RUNTIME_FILE = os.path.join(STATE_DIR, "runtime.json")
 
 def run_cmd(args):
     cmd = ["sudo", CLI] + args
@@ -136,27 +137,6 @@ def merged_targets():
             "last_response_epoch": last_sent_epoch,
         })
     return merged
-
-def icon_svg(path_d: str, opacity: float = 0.95):
-    return Markup(
-        f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-        xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">
-        <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>"""
-    )
-
-ICONS = {
-    "plus": icon_svg("M12 5v14M5 12h14"),
-    "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
-    "close": icon_svg("M18 6L6 18M6 6l12 12"),
-    "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
-    # robust copy icon (overlapping rectangles)
-    "copy": icon_svg("M9 9h11v11H9zM4 4h11v11H4z", opacity=0.98),
-    "play": icon_svg("M8 5v14l11-7z"),
-    "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
-    "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
-    "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
-}
 
 SUMMARY_RE = re.compile(
     r"total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)"
@@ -286,6 +266,14 @@ TEMPLATE = r"""
     .btn-ghost{background:transparent;border-color:rgba(255,255,255,.12)}
     .btn-ghost:hover{border-color:rgba(255,255,255,.22)}
     .btn-primary{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.06)}
+    .btn-danger{
+      border-color:rgba(255,59,92,.28);
+      background:rgba(255,59,92,.10);
+    }
+    .btn-danger:hover{
+      border-color:rgba(255,59,92,.40);
+      background:rgba(255,59,92,.14);
+    }
 
     .right-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
@@ -377,6 +365,10 @@ TEMPLATE = r"""
       box-shadow: 0 26px 70px rgba(0,0,0,.72);
       overflow:hidden;
     }
+    .modal-card.small{
+      width:min(560px, calc(100vw - 40px));
+      max-height:none;
+    }
     .modal-head{
       padding:14px 14px;border-bottom:1px solid rgba(255,255,255,.10);
       display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:nowrap;
@@ -417,16 +409,13 @@ TEMPLATE = r"""
     .footer a{color:rgba(255,255,255,.82);text-decoration:none;border-bottom:1px solid rgba(255,255,255,.18)}
     .footer a:hover{border-bottom-color:rgba(255,255,255,.34)}
 
-    .spin{animation: spin 0.9s linear infinite}
-    @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-
     .grid3{display:grid;grid-template-columns: 1.2fr 1fr .7fr;gap:12px}
     .field label{display:block;font-size:12px;color:rgba(255,255,255,.55);margin:0 0 6px 2px}
     .field input{width:100%}
 
     .modal-foot-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
 
-    .summary-wrap{display:grid;grid-template-columns: repeat(4, 1fr);gap:12px}
+    .summary-wrap{display:grid;grid-template-columns: repeat(5, 1fr);gap:12px}
     .metric{border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);border-radius:16px;padding:12px}
     .metric b{font-size:12px;color:rgba(255,255,255,.65);display:block;margin-bottom:6px}
     .metric .v{font-size:18px;font-weight:900;letter-spacing:.2px}
@@ -453,6 +442,15 @@ TEMPLATE = r"""
       100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}
     }
 
+    /* Small confirm modal */
+    .danger-box{
+      border:1px solid rgba(255,59,92,.22);
+      background:rgba(255,59,92,.08);
+      border-radius:16px;
+      padding:12px;
+      color:rgba(255,255,255,.86);
+    }
+
     @media (max-width: 940px){
       .footer{flex-direction:column;align-items:flex-start}
       .modal-head{flex-direction:column;align-items:stretch;gap:10px}
@@ -466,6 +464,7 @@ TEMPLATE = r"""
 <body>
 <div class="toasts" id="toasts"></div>
 
+<!-- Logs modal -->
 <div class="modal" id="logModal" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logs">
     <div class="modal-head">
@@ -475,12 +474,21 @@ TEMPLATE = r"""
       </div>
       <div class="modal-actions">
         <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="height:34px; padding:0 12px; border-radius:12px; min-width:220px;">
+
         <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">
           {{ icons.refresh|safe }} Reload
         </button>
+
+        <!-- Guaranteed inline icon (fix #1) -->
         <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
-          {{ icons.copy|safe }} Copy
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+               xmlns="http://www.w3.org/2000/svg" style="opacity:.98">
+            <path d="M9 9h11v11H9z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M4 4h11v11H4z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+          Copy
         </button>
+
         <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">
           {{ icons.close|safe }} Close
         </button>
@@ -499,6 +507,7 @@ TEMPLATE = r"""
   </div>
 </div>
 
+<!-- Run summary modal -->
 <div class="modal" id="runModal" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-label="Run summary">
     <div class="modal-head">
@@ -519,8 +528,9 @@ TEMPLATE = r"""
 
     <div class="modal-body">
       <div class="summary-wrap">
-        <div class="metric"><b>Total targets</b><div class="v" id="mTotal">-</div></div>
-        <div class="metric"><b>Due</b><div class="v" id="mDue">-</div></div>
+        <div class="metric"><b>Total</b><div class="v" id="mTotal">-</div></div>
+        <div class="metric"><b>Checked</b><div class="v" id="mDue">-</div></div>
+        <div class="metric"><b>Skipped</b><div class="v" id="mSkipped">-</div></div>
         <div class="metric"><b>Ping OK</b><div class="v" id="mOk">-</div></div>
         <div class="metric"><b>Ping fail</b><div class="v" id="mFail">-</div></div>
       </div>
@@ -537,11 +547,16 @@ TEMPLATE = r"""
       <div class="metric">
         <b>Endpoint</b>
         <div class="summary-sub" style="margin-top:0;">
-          <span>Responses sent</span><span id="mSent">-</span>
+          <span>Responses</span><span id="mSent">-</span>
         </div>
         <div class="summary-sub" style="margin-top:4px;">
           <span>Endpoint failures</span><span id="mCurlFail">-</span>
         </div>
+      </div>
+
+      <div class="danger-box" id="runHintBox" style="display:none;">
+        <b style="display:block; margin-bottom:6px;">Note</b>
+        <div class="hint" id="runHintText" style="color:rgba(255,255,255,.80)"></div>
       </div>
 
       <div class="hint" id="runRaw" style="display:none;"></div>
@@ -554,6 +569,7 @@ TEMPLATE = r"""
   </div>
 </div>
 
+<!-- Add modal -->
 <div class="modal" id="addModal" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
     <div class="modal-head">
@@ -589,7 +605,6 @@ TEMPLATE = r"""
         </div>
 
         <div class="modal-foot-actions">
-          <!-- swapped order (requested) -->
           <button class="btn btn-primary" type="submit" id="btnAddSubmit" data-default-html="">
             {{ icons.plus|safe }} Add target
           </button>
@@ -600,6 +615,42 @@ TEMPLATE = r"""
           Tip: critical targets 30–120s • less critical 300–900s
         </div>
       </form>
+    </div>
+
+    <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
+      <div class="hint">interheart <code>{{ ui_version }}</code></div>
+      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm remove modal (fix #2) -->
+<div class="modal" id="confirmModal" aria-hidden="true">
+  <div class="modal-card small" role="dialog" aria-modal="true" aria-label="Confirm remove">
+    <div class="modal-head">
+      <div class="modal-title">
+        <b>Confirm remove</b>
+        <span>This cannot be undone</span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-mini" id="btnCloseConfirm" type="button">
+          {{ icons.close|safe }} Close
+        </button>
+      </div>
+    </div>
+
+    <div class="modal-body">
+      <div class="danger-box">
+        You are about to remove:
+        <div style="margin-top:8px;">
+          <code id="confirmName" style="font-family:var(--mono); font-size:13px;"></code>
+        </div>
+      </div>
+
+      <div class="modal-foot-actions" style="margin-top:14px;">
+        <button class="btn btn-danger" id="btnConfirmRemove" type="button">Remove</button>
+        <button class="btn btn-ghost" id="btnCancelRemove" type="button">Cancel</button>
+      </div>
     </div>
 
     <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
@@ -797,6 +848,52 @@ TEMPLATE = r"""
     }
   });
 
+  // ---- Confirm remove modal (fix #2) ----
+  const confirmModal = document.getElementById("confirmModal");
+  const btnCloseConfirm = document.getElementById("btnCloseConfirm");
+  const btnCancelRemove = document.getElementById("btnCancelRemove");
+  const btnConfirmRemove = document.getElementById("btnConfirmRemove");
+  const confirmName = document.getElementById("confirmName");
+  let pendingRemoveName = null;
+
+  function openConfirmRemove(name){
+    pendingRemoveName = name;
+    confirmName.textContent = name;
+    show(confirmModal);
+  }
+  function closeConfirmRemove(){
+    pendingRemoveName = null;
+    hide(confirmModal);
+  }
+  btnCloseConfirm.addEventListener("click", closeConfirmRemove);
+  btnCancelRemove.addEventListener("click", closeConfirmRemove);
+  confirmModal.addEventListener("click", (e) => { if (e.target === confirmModal) closeConfirmRemove(); });
+
+  async function removeTarget(name){
+    const fd = new FormData();
+    fd.set("name", name);
+    const res = await fetch("/api/remove", {method:"POST", body: fd});
+    return await res.json();
+  }
+
+  btnConfirmRemove.addEventListener("click", async () => {
+    const name = pendingRemoveName;
+    if (!name) return;
+    btnConfirmRemove.disabled = true;
+    btnConfirmRemove.textContent = "Removing…";
+    try{
+      const data = await removeTarget(name);
+      toast(data.ok ? "Removed" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+      closeConfirmRemove();
+    }catch(e){
+      toast("Error", e && e.message ? e.message : "Failed");
+    }finally{
+      btnConfirmRemove.disabled = false;
+      btnConfirmRemove.textContent = "Remove";
+      await refreshState(true);
+    }
+  });
+
   // ---- Actions dropdown ----
   function closeAllMenus(){
     document.querySelectorAll(".menu.show").forEach(m => m.classList.remove("show"));
@@ -822,6 +919,7 @@ TEMPLATE = r"""
 
   const mTotal = document.getElementById("mTotal");
   const mDue = document.getElementById("mDue");
+  const mSkipped = document.getElementById("mSkipped");
   const mOk = document.getElementById("mOk");
   const mFail = document.getElementById("mFail");
   const mSent = document.getElementById("mSent");
@@ -830,6 +928,8 @@ TEMPLATE = r"""
   const runNowLine = document.getElementById("runNowLine");
   const runDoneLine = document.getElementById("runDoneLine");
   const runRaw = document.getElementById("runRaw");
+  const runHintBox = document.getElementById("runHintBox");
+  const runHintText = document.getElementById("runHintText");
 
   btnCloseRun.addEventListener("click", () => hide(runModal));
   runModal.addEventListener("click", (e) => { if (e.target === runModal) hide(runModal); });
@@ -839,7 +939,7 @@ TEMPLATE = r"""
     runBar.style.width = pct + "%";
   }
 
-  // runtime poll (optional)
+  // runtime poll
   let runtimePoll = null;
   let lastRuntimeUpdated = 0;
 
@@ -869,13 +969,13 @@ TEMPLATE = r"""
       const rt = await fetchRuntime();
       if (!rt) return;
 
-      // only update if changed
       const upd = Number(rt.updated || 0);
       if (upd && upd === lastRuntimeUpdated) return;
       if (upd) lastRuntimeUpdated = upd;
 
       if (rt.status === "running"){
         runLive.style.display = "inline-flex";
+        runLiveText.textContent = "Running…";
         const cur = (rt.current || "").trim();
         if (cur){
           highlightWorking(cur);
@@ -883,6 +983,7 @@ TEMPLATE = r"""
         }else{
           runNowLine.textContent = "Running…";
         }
+
         const done = Number(rt.done || 0);
         const due = Number(rt.due || 0);
         runDoneLine.textContent = `done: ${done} / ${due}`;
@@ -890,7 +991,7 @@ TEMPLATE = r"""
       }else{
         runLive.style.display = "none";
       }
-    }, 350);
+    }, 250);
   }
   function stopRuntimePoll(){
     if (runtimePoll){
@@ -899,16 +1000,13 @@ TEMPLATE = r"""
     }
   }
 
-  // ---- Run Now (robust) ----
-  const btnRunNow = document.getElementById("btnRunNow");
-  captureDefaultHtml(btnRunNow);
-
-  function setRunningUi(){
+  function setRunModalInitial(){
     runTitleMeta.textContent = "running…";
     runLive.style.display = "inline-flex";
     runLiveText.textContent = "Running…";
     mTotal.textContent = "-";
     mDue.textContent = "-";
+    mSkipped.textContent = "-";
     mOk.textContent = "-";
     mFail.textContent = "-";
     mSent.textContent = "-";
@@ -916,20 +1014,24 @@ TEMPLATE = r"""
     runNowLine.textContent = "Starting…";
     runDoneLine.textContent = "done: 0 / 0";
     runRaw.style.display = "none";
+    runHintBox.style.display = "none";
     setBar(0, 0);
   }
+
+  // ---- Run Now ----
+  const btnRunNow = document.getElementById("btnRunNow");
+  captureDefaultHtml(btnRunNow);
 
   btnRunNow.addEventListener("click", async () => {
     btnRunNow.disabled = true;
 
-    // always show modal and visible running state (fix #1)
-    setRunningUi();
+    // show modal immediately
+    setRunModalInitial();
     show(runModal);
-
-    // runtime poll is best-effort (works if engine writes runtime.json)
     startRuntimePoll();
 
     try{
+      // IMPORTANT: force-run all targets (fix #3)
       const res = await fetch("/api/run-now", {method:"POST"});
       const data = await res.json();
 
@@ -940,23 +1042,29 @@ TEMPLATE = r"""
       const ts = new Date().toLocaleString();
       runTitleMeta.textContent = ts;
 
-      // Prefer parsed JSON summary if present
       const summary = data.summary || null;
 
       if (summary){
         mTotal.textContent = String(summary.total ?? "-");
         mDue.textContent = String(summary.due ?? "-");
+        mSkipped.textContent = String(summary.skipped ?? "-");
         mOk.textContent = String(summary.ping_ok ?? "-");
         mFail.textContent = String(summary.ping_fail ?? "-");
         mSent.textContent = String(summary.sent ?? "-");
         mCurlFail.textContent = String(summary.curl_fail ?? "-");
 
-        // “Due” might be 0 if not due; still show progress as completed state
-        setBar(summary.due || 0, summary.due || 0);
-        runNowLine.textContent = "Completed";
-        runDoneLine.textContent = `done: ${summary.due || 0} / ${summary.due || 0}`;
+        // progress should reflect "checked" count (due)
+        const due = Number(summary.due || 0);
+        setBar(due, due);
+        runNowLine.textContent = data.ok ? "Completed" : "Failed";
+        runDoneLine.textContent = `done: ${due} / ${due}`;
+
+        // helpful hint when nothing happened
+        if (due === 0 && Number(summary.total || 0) > 0){
+          runHintBox.style.display = "block";
+          runHintText.textContent = "No targets were checked. If this happens, verify interheart permissions and runtime directory access.";
+        }
       }else{
-        // fallback: show message
         runRaw.textContent = data.message || "-";
         runRaw.style.display = "block";
         runNowLine.textContent = data.ok ? "Completed" : "Failed";
@@ -1050,7 +1158,8 @@ TEMPLATE = r"""
           fd.set("name", name);
 
           if (action === "remove"){
-            if (!confirm(`Remove "${name}"?\n\nThis cannot be undone.`)) return;
+            openConfirmRemove(name);
+            return;
           }
 
           try{
@@ -1058,13 +1167,9 @@ TEMPLATE = r"""
             if (action === "test"){
               toast("Testing", `Running test for ${name}…`);
               data = await apiPost("/api/test", fd);
-            } else if (action === "remove"){
-              toast("Removing", `${name}…`);
-              data = await apiPost("/api/remove", fd);
             } else {
               return;
             }
-
             toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
           }catch(e){
             toast("Error", e && e.message ? e.message : "Failed");
@@ -1163,6 +1268,7 @@ TEMPLATE = r"""
       if (logModal.classList.contains("show")) hide(logModal);
       if (addModal.classList.contains("show")) hide(addModal);
       if (runModal.classList.contains("show")) hide(runModal);
+      if (confirmModal.classList.contains("show")) hide(confirmModal);
       closeAllMenus();
     }
   });
@@ -1172,6 +1278,25 @@ TEMPLATE = r"""
 </body>
 </html>
 """
+
+def icon_svg(path_d: str, opacity: float = 0.95):
+    return Markup(
+        f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+        xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">
+        <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>"""
+    )
+
+ICONS = {
+    "plus": icon_svg("M12 5v14M5 12h14"),
+    "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
+    "close": icon_svg("M18 6L6 18M6 6l12 12"),
+    "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
+    "play": icon_svg("M8 5v14l11-7z"),
+    "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
+    "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
+    "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
+}
 
 @APP.get("/")
 def index():
@@ -1226,7 +1351,8 @@ def logs():
 
 @APP.post("/api/run-now")
 def api_run_now():
-    rc, out = run_cmd(["run"])
+    # IMPORTANT: run-now forces checking all targets
+    rc, out = run_cmd(["run-now"])
     summary = parse_run_summary(out)
     return jsonify({
         "ok": rc == 0,
