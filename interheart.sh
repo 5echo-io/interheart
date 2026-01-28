@@ -16,16 +16,13 @@ PING_COUNT_DEFAULT=2
 PING_TIMEOUT_DEFAULT=2
 CURL_TIMEOUT_DEFAULT=6
 
-# Spread load (sequential + tiny sleep between due targets)
-SPREAD_DELAY_MS_DEFAULT=120  # 120ms between targets (only when due)
-
 BIN_PATH="/usr/local/bin/${APP_NAME}"
 SERVICE_PATH="/etc/systemd/system/${APP_NAME}.service"
 TIMER_PATH="/etc/systemd/system/${APP_NAME}.timer"
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    echo "Must run as root. Use: sudo $0 $*" >&2
+    echo "This must run as root. Use: sudo $0 $*" >&2
     exit 1
   fi
 }
@@ -40,8 +37,9 @@ ensure_paths() {
   touch "$STATE_FILE"
   chmod 600 "$STATE_FILE"
 
+  # runtime is safe to be readable by webui service user (www-data)
   touch "$RUNTIME_FILE"
-  chmod 600 "$RUNTIME_FILE"
+  chmod 644 "$RUNTIME_FILE"
 }
 
 log() {
@@ -56,7 +54,7 @@ log() {
 
 usage() {
   cat <<EOF
-5echo $APP_NAME
+5echo ${APP_NAME}
 
 Config format:
   NAME|IP|ENDPOINT_URL|INTERVAL_SEC
@@ -72,8 +70,9 @@ Targets:
   $0 set-target-interval <name> <seconds>
 
 Runtime:
-  $0 run
-  $0 status         (prints state for all targets)
+  $0 run              (scheduled run, checks only due targets)
+  $0 run-now          (force run, checks ALL targets immediately)
+  $0 status           (prints state for all targets)
 
 Systemd:
   $0 install
@@ -102,7 +101,7 @@ validate_ip() {
   IFS='.' read -r o1 o2 o3 o4 <<<"$ip"
   for o in "$o1" "$o2" "$o3" "$o4"; do
     if (( o < 0 || o > 255 )); then
-      echo "Invalid IP '$ip' (octet out of range 0-255)." >&2
+      echo "Invalid IP '$ip' (octet out of 0-255)." >&2
       exit 1
     fi
   done
@@ -118,8 +117,8 @@ validate_url() {
 
 validate_interval() {
   local sec="$1"
-  [[ "$sec" =~ ^[0-9]+$ ]] || { echo "Interval must be integer seconds."; exit 1; }
-  (( sec >= 10 && sec <= 86400 )) || { echo "Interval must be 10..86400 seconds."; exit 1; }
+  [[ "$sec" =~ ^[0-9]+$ ]] || { echo "Interval must be an integer (seconds)."; exit 1; }
+  (( sec >= 10 && sec <= 86400 )) || { echo "Interval must be between 10 and 86400 seconds."; exit 1; }
 }
 
 config_has_name() {
@@ -172,19 +171,20 @@ send_endpoint() {
 }
 
 runtime_write() {
-  # Writes a small JSON file so WebUI can show "current / queued / done" later
-  local status="$1"       # idle|running
-  local current="${2:-}"
-  local done="${3:-0}"
-  local due="${4:-0}"
-  local ts
-  ts="$(date +%s)"
+  # writes a small json file used by webui for progress
+  # args: status current done due updated
+  local status="$1"
+  local current="$2"
+  local done="$3"
+  local due="$4"
+  local updated
+  updated="$(date +%s)"
 
-  # naive JSON (safe enough for our values)
+  # keep it simple (no jq dependency)
   cat > "$RUNTIME_FILE" <<EOF
-{"status":"$status","current":"$current","done":$done,"due":$due,"updated":$ts}
+{"status":"${status}","current":"${current}","done":${done},"due":${due},"updated":${updated}}
 EOF
-  chmod 600 "$RUNTIME_FILE" || true
+  chmod 644 "$RUNTIME_FILE" || true
 }
 
 add_target() {
@@ -270,6 +270,7 @@ set_target_interval() {
     [[ -z "$line" ]] && continue
     [[ "$line" =~ ^# ]] && { echo "$line" >> "$tmp"; continue; }
 
+    local parsed n ip url interval
     parsed="$(parse_config_line "$line")"
     IFS='|' read -r n ip url interval <<<"$parsed"
 
@@ -289,6 +290,7 @@ set_target_interval() {
   local old
   old="$(state_get_line "$name")"
   if [[ -n "$old" ]]; then
+    local _n _due last_status last_ping last_sent
     IFS='|' read -r _n _due last_status last_ping last_sent <<<"$old"
     state_set_line "${name}|${now}|${last_status:-unknown}|${last_ping:-0}|${last_sent:-0}"
   else
@@ -316,6 +318,7 @@ list_targets() {
     [[ -z "$line" ]] && continue
     [[ "$line" =~ ^# ]] && continue
 
+    local parsed name ip url interval
     parsed="$(parse_config_line "$line")"
     IFS='|' read -r name ip url interval <<<"$parsed"
 
@@ -345,11 +348,12 @@ status_targets() {
     [[ -z "$line" ]] && continue
     [[ "$line" =~ ^# ]] && continue
 
+    local parsed name
     parsed="$(parse_config_line "$line")"
     IFS='|' read -r name _ip _url _interval <<<"$parsed"
 
+    local st next_due last_status last_ping last_sent
     st="$(state_get_line "$name")"
-    local next_due last_status last_ping last_sent
     if [[ -n "$st" ]]; then
       IFS='|' read -r _n next_due last_status last_ping last_sent <<<"$st"
     else
@@ -391,6 +395,7 @@ test_target() {
   [[ -z "$name" ]] && { usage; exit 1; }
   validate_name "$name"
 
+  local line parsed ip url interval
   line="$(grep -E "^${name}\|" "$CONFIG_FILE" || true)"
   [[ -z "$line" ]] && { echo "Not found: $name"; exit 1; }
 
@@ -400,7 +405,7 @@ test_target() {
   echo "Testing: $name ($ip) interval=${interval}s"
   if ping_ok "$ip"; then
     echo "PING: OK"
-    echo "Sending endpoint…"
+    echo "Calling endpoint…"
     if send_endpoint "$url"; then
       echo "ENDPOINT: OK"
       exit 0
@@ -415,6 +420,11 @@ test_target() {
 }
 
 run_checks() {
+  # Usage:
+  #   run_checks 0   => scheduled mode (only due)
+  #   run_checks 1   => force mode (all)
+  local force="${1:-0}"
+
   require_root run
   ensure_paths
 
@@ -424,74 +434,66 @@ run_checks() {
   now="$(date +%s)"
 
   local total=0 due=0 skipped=0 ping_ok_count=0 ping_fail=0 sent=0 curl_fail=0
+  local done=0
 
-  # Collect due targets first (so we can show correct due count + step-by-step)
-  declare -a DUE_NAMES=()
-  declare -a DUE_IPS=()
-  declare -a DUE_URLS=()
-  declare -a DUE_INTERVALS=()
-
+  # First pass: count totals and due
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     [[ "$line" =~ ^# ]] && continue
-
     total=$((total+1))
 
-    parsed="$(parse_config_line "$line")"
-    IFS='|' read -r name ip url interval <<<"$parsed"
+    if [[ "$force" == "1" ]]; then
+      due=$((due+1))
+      continue
+    fi
 
+    local parsed name
+    parsed="$(parse_config_line "$line")"
+    IFS='|' read -r name _ip _url _interval <<<"$parsed"
+
+    local st next_due
     st="$(state_get_line "$name")"
-    local next_due
     if [[ -n "$st" ]]; then
-      IFS='|' read -r _n next_due _last_status _last_ping _last_sent <<<"$st"
+      IFS='|' read -r _n next_due _ls _lp _lsent <<<"$st"
       next_due="${next_due:-0}"
     else
       next_due="0"
     fi
 
-    if (( now < next_due )); then
-      skipped=$((skipped+1))
-      continue
+    if (( now >= next_due )); then
+      due=$((due+1))
     fi
-
-    due=$((due+1))
-    DUE_NAMES+=("$name")
-    DUE_IPS+=("$ip")
-    DUE_URLS+=("$url")
-    DUE_INTERVALS+=("$interval")
   done < "$CONFIG_FILE"
 
   runtime_write "running" "" 0 "$due"
 
-  # Delay between targets to avoid burst
-  local spread_ms="${SPREAD_DELAY_MS:-$SPREAD_DELAY_MS_DEFAULT}"
-  if ! [[ "$spread_ms" =~ ^[0-9]+$ ]]; then
-    spread_ms="$SPREAD_DELAY_MS_DEFAULT"
-  fi
-  local spread_sec
-  spread_sec="$(awk -v ms="$spread_ms" 'BEGIN{printf "%.3f", ms/1000}')"
+  # Second pass: execute
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
 
-  local i=0
-  local done_count=0
+    local parsed name ip url interval
+    parsed="$(parse_config_line "$line")"
+    IFS='|' read -r name ip url interval <<<"$parsed"
 
-  while (( i < ${#DUE_NAMES[@]} )); do
-    local name="${DUE_NAMES[$i]}"
-    local ip="${DUE_IPS[$i]}"
-    local url="${DUE_URLS[$i]}"
-    local interval="${DUE_INTERVALS[$i]}"
-
-    runtime_write "running" "$name" "$done_count" "$due"
-
+    local st next_due last_status last_ping last_sent
     st="$(state_get_line "$name")"
-    local next_due last_status last_ping last_sent
     if [[ -n "$st" ]]; then
       IFS='|' read -r _n next_due last_status last_ping last_sent <<<"$st"
+      next_due="${next_due:-0}"
     else
       next_due="0"
       last_status="unknown"
       last_ping="0"
       last_sent="0"
     fi
+
+    if [[ "$force" != "1" ]] && (( now < next_due )); then
+      skipped=$((skipped+1))
+      continue
+    fi
+
+    runtime_write "running" "$name" "$done" "$due"
 
     if ping_ok "$ip"; then
       ping_ok_count=$((ping_ok_count+1))
@@ -513,22 +515,16 @@ run_checks() {
       log "DOWN name=$name ip=$ip interval=${interval}s ping=failed endpoint=not_sent"
     fi
 
+    done=$((done+1))
+
     next_due=$(( now + interval ))
     state_set_line "${name}|${next_due}|${last_status}|${last_ping}|${last_sent}"
+    runtime_write "running" "$name" "$done" "$due"
+  done < "$CONFIG_FILE"
 
-    done_count=$((done_count+1))
+  runtime_write "idle" "" "$done" "$due"
 
-    # micro pause to prevent spikes
-    if (( i < ${#DUE_NAMES[@]} - 1 )); then
-      sleep "$spread_sec" || true
-    fi
-
-    i=$((i+1))
-  done
-
-  runtime_write "idle" "" "$done_count" "$due"
-
-  log "RUN summary total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail"
+  log "RUN summary total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail force=$force"
   echo "OK: total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail"
 }
 
@@ -609,7 +605,8 @@ main() {
     add) add_target "${1:-}" "${2:-}" "${3:-}" "${4:-$DEFAULT_INTERVAL_SEC}" ;;
     remove) remove_target "${1:-}" ;;
     list) list_targets ;;
-    run) run_checks ;;
+    run) run_checks 0 ;;
+    run-now) run_checks 1 ;;
     test) test_target "${1:-}" ;;
     set-target-interval) set_target_interval "${1:-}" "${2:-}" ;;
     status) status_targets ;;
