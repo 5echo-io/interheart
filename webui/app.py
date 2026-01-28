@@ -5,6 +5,7 @@ import subprocess
 import time
 import json
 import re
+import signal
 
 APP = Flask(__name__)
 
@@ -35,6 +36,27 @@ STATE_POLL_SECONDS = 2
 
 STATE_DIR = "/var/lib/interheart"
 RUNTIME_FILE = os.path.join(STATE_DIR, "runtime.json")
+RUN_META_FILE = os.path.join(STATE_DIR, "run_meta.json")
+RUN_OUT_FILE = os.path.join(STATE_DIR, "run_last_output.txt")
+
+def ensure_state_dir():
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        # readable by webui process user
+        for p in [RUNTIME_FILE, RUN_META_FILE, RUN_OUT_FILE]:
+            if not os.path.exists(p):
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write("")
+        try:
+            os.chmod(RUNTIME_FILE, 0o644)
+            os.chmod(RUN_META_FILE, 0o644)
+            os.chmod(RUN_OUT_FILE, 0o644)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+ensure_state_dir()
 
 def run_cmd(args):
     cmd = ["sudo", CLI] + args
@@ -108,7 +130,12 @@ def human_ts(epoch: int):
         return "-"
 
 def sudo_journalctl(lines: int) -> str:
-    cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=short-iso"]
+    """
+    IMPORTANT: Use `--output=cat` so logs don't include syslog prefixes like:
+    2026-... host interheart[pid]:
+    We want clean interheart log lines only.
+    """
+    cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=cat"]
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         raise RuntimeError((p.stderr or "journalctl failed").strip())
@@ -156,6 +183,58 @@ def parse_run_summary(text: str):
         "curl_fail": int(m.group(7)),
     }
 
+def icon_svg(path_d: str, opacity: float = 0.95):
+    return Markup(
+        f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+        xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">
+        <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>"""
+    )
+
+ICONS = {
+    "plus": icon_svg("M12 5v14M5 12h14"),
+    "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
+    "close": icon_svg("M18 6L6 18M6 6l12 12"),
+    "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
+    "play": icon_svg("M8 5v14l11-7z"),
+    "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
+    "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
+    "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
+}
+
+def load_run_meta():
+    try:
+        if os.path.exists(RUN_META_FILE):
+            with open(RUN_META_FILE, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            if not raw:
+                return {}
+            return json.loads(raw)
+    except Exception:
+        return {}
+    return {}
+
+def save_run_meta(meta: dict):
+    ensure_state_dir()
+    try:
+        with open(RUN_META_FILE, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        try:
+            os.chmod(RUN_META_FILE, 0o644)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def pid_is_running(pid: int):
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
 TEMPLATE = r"""
 <!doctype html>
 <html lang="en">
@@ -186,12 +265,7 @@ TEMPLATE = r"""
     }
 
     *{box-sizing:border-box}
-    body{
-      margin:0;
-      font-family:var(--sans);
-      color:var(--text);
-      background: var(--bg);
-    }
+    body{ margin:0; font-family:var(--sans); color:var(--text); background: var(--bg); }
 
     .wrap{max-width:1280px;margin:34px auto;padding:0 18px}
     .top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px}
@@ -231,11 +305,7 @@ TEMPLATE = r"""
       transition: border-color .15s ease, filter .15s ease, background .15s ease;
       font-family:var(--sans);
     }
-    input:focus{
-      border-color:rgba(255,255,255,.24);
-      filter:brightness(1.03);
-      background:rgba(255,255,255,.04);
-    }
+    input:focus{ border-color:rgba(255,255,255,.24); filter:brightness(1.03); background:rgba(255,255,255,.04); }
     input::placeholder{color:rgba(255,255,255,.30)}
 
     .btn{
@@ -255,25 +325,14 @@ TEMPLATE = r"""
       height:36px;
       line-height:1;
     }
-    .btn:hover{
-      transform: translateY(-1px);
-      border-color: rgba(255,255,255,.20);
-      background:rgba(255,255,255,.04);
-      filter:brightness(1.03);
-    }
+    .btn:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.20); background:rgba(255,255,255,.04); filter:brightness(1.03); }
     .btn:active{transform: translateY(0px)}
     .btn-mini{font-size:12px;padding:0 12px;border-radius:12px;height:34px}
     .btn-ghost{background:transparent;border-color:rgba(255,255,255,.12)}
     .btn-ghost:hover{border-color:rgba(255,255,255,.22)}
     .btn-primary{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.06)}
-    .btn-danger{
-      border-color:rgba(255,59,92,.28);
-      background:rgba(255,59,92,.10);
-    }
-    .btn-danger:hover{
-      border-color:rgba(255,59,92,.40);
-      background:rgba(255,59,92,.14);
-    }
+    .btn-danger{ border-color:rgba(255,59,92,.28); background:rgba(255,59,92,.10); }
+    .btn-danger:hover{ border-color:rgba(255,59,92,.40); background:rgba(255,59,92,.14); }
 
     .right-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
@@ -365,10 +424,7 @@ TEMPLATE = r"""
       box-shadow: 0 26px 70px rgba(0,0,0,.72);
       overflow:hidden;
     }
-    .modal-card.small{
-      width:min(560px, calc(100vw - 40px));
-      max-height:none;
-    }
+    .modal-card.small{ width:min(560px, calc(100vw - 40px)); max-height:none; }
     .modal-head{
       padding:14px 14px;border-bottom:1px solid rgba(255,255,255,.10);
       display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:nowrap;
@@ -377,7 +433,6 @@ TEMPLATE = r"""
     .modal-title b{font-size:14px}
     .modal-title span{font-size:12px;color:rgba(255,255,255,.62)}
     .modal-actions{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:nowrap}
-
     .modal-body{padding:16px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:12px}
 
     .logbox{
@@ -442,7 +497,6 @@ TEMPLATE = r"""
       100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}
     }
 
-    /* Small confirm modal */
     .danger-box{
       border:1px solid rgba(255,59,92,.22);
       background:rgba(255,59,92,.08);
@@ -479,7 +533,7 @@ TEMPLATE = r"""
           {{ icons.refresh|safe }} Reload
         </button>
 
-        <!-- Guaranteed inline icon (fix #1) -->
+        <!-- inline SVG for Copy (always shows) -->
         <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                xmlns="http://www.w3.org/2000/svg" style="opacity:.98">
@@ -624,7 +678,7 @@ TEMPLATE = r"""
   </div>
 </div>
 
-<!-- Confirm remove modal (fix #2) -->
+<!-- Confirm remove modal -->
 <div class="modal" id="confirmModal" aria-hidden="true">
   <div class="modal-card small" role="dialog" aria-modal="true" aria-label="Confirm remove">
     <div class="modal-head">
@@ -848,7 +902,7 @@ TEMPLATE = r"""
     }
   });
 
-  // ---- Confirm remove modal (fix #2) ----
+  // ---- Confirm remove modal ----
   const confirmModal = document.getElementById("confirmModal");
   const btnCloseConfirm = document.getElementById("btnCloseConfirm");
   const btnCancelRemove = document.getElementById("btnCancelRemove");
@@ -941,11 +995,30 @@ TEMPLATE = r"""
 
   // runtime poll
   let runtimePoll = null;
+  let statusPoll = null;
   let lastRuntimeUpdated = 0;
 
   async function fetchRuntime(){
     try{
       const res = await fetch("/runtime", {cache:"no-store"});
+      return await res.json();
+    }catch(e){
+      return null;
+    }
+  }
+
+  async function fetchRunStatus(){
+    try{
+      const res = await fetch("/api/run-status", {cache:"no-store"});
+      return await res.json();
+    }catch(e){
+      return null;
+    }
+  }
+
+  async function fetchRunResult(){
+    try{
+      const res = await fetch("/api/run-result", {cache:"no-store"});
       return await res.json();
     }catch(e){
       return null;
@@ -988,15 +1061,44 @@ TEMPLATE = r"""
         const due = Number(rt.due || 0);
         runDoneLine.textContent = `done: ${done} / ${due}`;
         setBar(done, due);
-      }else{
-        runLive.style.display = "none";
       }
     }, 250);
   }
+
+  function startStatusPoll(){
+    stopStatusPoll();
+    statusPoll = setInterval(async () => {
+      const st = await fetchRunStatus();
+      if (!st) return;
+      if (st.running){
+        // still running
+        runTitleMeta.textContent = "running…";
+        runLive.style.display = "inline-flex";
+      } else if (st.finished){
+        // stop polling and fetch result once
+        stopStatusPoll();
+        stopRuntimePoll();
+        clearWorking();
+        runLive.style.display = "none";
+        const result = await fetchRunResult();
+        if (result){
+          applyRunResult(result);
+        }
+      }
+    }, 300);
+  }
+
   function stopRuntimePoll(){
     if (runtimePoll){
       clearInterval(runtimePoll);
       runtimePoll = null;
+    }
+  }
+
+  function stopStatusPoll(){
+    if (statusPoll){
+      clearInterval(statusPoll);
+      statusPoll = null;
     }
   }
 
@@ -1018,60 +1120,71 @@ TEMPLATE = r"""
     setBar(0, 0);
   }
 
-  // ---- Run Now ----
+  function applyRunResult(data){
+    const ts = new Date().toLocaleString();
+    runTitleMeta.textContent = ts;
+
+    const summary = data.summary || null;
+
+    if (summary){
+      mTotal.textContent = String(summary.total ?? "-");
+      mDue.textContent = String(summary.due ?? "-");
+      mSkipped.textContent = String(summary.skipped ?? "-");
+      mOk.textContent = String(summary.ping_ok ?? "-");
+      mFail.textContent = String(summary.ping_fail ?? "-");
+      mSent.textContent = String(summary.sent ?? "-");
+      mCurlFail.textContent = String(summary.curl_fail ?? "-");
+
+      const due = Number(summary.due || 0);
+      setBar(due, due);
+      runNowLine.textContent = data.ok ? "Completed" : "Failed";
+      runDoneLine.textContent = `done: ${due} / ${due}`;
+
+      if (due === 0 && Number(summary.total || 0) > 0){
+        runHintBox.style.display = "block";
+        runHintText.textContent = "Nothing was checked. If this keeps happening, verify permissions and systemd timer state.";
+      }
+    }else{
+      runRaw.textContent = data.message || "-";
+      runRaw.style.display = "block";
+      runNowLine.textContent = data.ok ? "Completed" : "Failed";
+    }
+
+    toast(data.ok ? "Run completed" : "Run failed", data.ok ? "Done" : (data.message || "Error"));
+  }
+
+  // ---- Run Now (REAL-TIME) ----
   const btnRunNow = document.getElementById("btnRunNow");
   captureDefaultHtml(btnRunNow);
 
   btnRunNow.addEventListener("click", async () => {
     btnRunNow.disabled = true;
 
-    // show modal immediately
     setRunModalInitial();
     show(runModal);
+
+    // start both polls BEFORE starting run, so UI feels alive instantly
     startRuntimePoll();
+    startStatusPoll();
 
     try{
-      // IMPORTANT: force-run all targets (fix #3)
+      // Start the run as background process (non-blocking)
       const res = await fetch("/api/run-now", {method:"POST"});
       const data = await res.json();
-
-      stopRuntimePoll();
-      clearWorking();
-      runLive.style.display = "none";
-
-      const ts = new Date().toLocaleString();
-      runTitleMeta.textContent = ts;
-
-      const summary = data.summary || null;
-
-      if (summary){
-        mTotal.textContent = String(summary.total ?? "-");
-        mDue.textContent = String(summary.due ?? "-");
-        mSkipped.textContent = String(summary.skipped ?? "-");
-        mOk.textContent = String(summary.ping_ok ?? "-");
-        mFail.textContent = String(summary.ping_fail ?? "-");
-        mSent.textContent = String(summary.sent ?? "-");
-        mCurlFail.textContent = String(summary.curl_fail ?? "-");
-
-        // progress should reflect "checked" count (due)
-        const due = Number(summary.due || 0);
-        setBar(due, due);
-        runNowLine.textContent = data.ok ? "Completed" : "Failed";
-        runDoneLine.textContent = `done: ${due} / ${due}`;
-
-        // helpful hint when nothing happened
-        if (due === 0 && Number(summary.total || 0) > 0){
-          runHintBox.style.display = "block";
-          runHintText.textContent = "No targets were checked. If this happens, verify interheart permissions and runtime directory access.";
-        }
-      }else{
-        runRaw.textContent = data.message || "-";
+      if (!data.ok){
+        stopStatusPoll();
+        stopRuntimePoll();
+        clearWorking();
+        runLive.style.display = "none";
+        toast("Run failed", data.message || "Failed to start run");
+        runRaw.textContent = data.message || "Failed to start run";
         runRaw.style.display = "block";
-        runNowLine.textContent = data.ok ? "Completed" : "Failed";
+        runNowLine.textContent = "Failed";
+      }else{
+        runNowLine.textContent = "Started…";
       }
-
-      toast(data.ok ? "Run completed" : "Run failed", data.ok ? "Done" : (data.message || "Error"));
     }catch(e){
+      stopStatusPoll();
       stopRuntimePoll();
       clearWorking();
       runLive.style.display = "none";
@@ -1139,7 +1252,7 @@ TEMPLATE = r"""
     });
   }
 
-  // ---- Menu actions (Test / Remove) ----
+  // ---- Menu actions ----
   async function apiPost(url, fd){
     const res = await fetch(url, {method:"POST", body: fd});
     return await res.json();
@@ -1279,25 +1392,6 @@ TEMPLATE = r"""
 </html>
 """
 
-def icon_svg(path_d: str, opacity: float = 0.95):
-    return Markup(
-        f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-        xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">
-        <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>"""
-    )
-
-ICONS = {
-    "plus": icon_svg("M12 5v14M5 12h14"),
-    "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
-    "close": icon_svg("M18 6L6 18M6 6l12 12"),
-    "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
-    "play": icon_svg("M8 5v14l11-7z"),
-    "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
-    "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
-    "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
-}
-
 @APP.get("/")
 def index():
     return render_template_string(
@@ -1321,13 +1415,15 @@ def runtime():
     try:
         if os.path.exists(RUNTIME_FILE):
             with open(RUNTIME_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            data.setdefault("status", "idle")
-            data.setdefault("current", "")
-            data.setdefault("done", 0)
-            data.setdefault("due", 0)
-            data.setdefault("updated", int(time.time()))
-            return jsonify(data)
+                raw = f.read().strip()
+            if raw:
+                data = json.loads(raw)
+                data.setdefault("status", "idle")
+                data.setdefault("current", "")
+                data.setdefault("done", 0)
+                data.setdefault("due", 0)
+                data.setdefault("updated", int(time.time()))
+                return jsonify(data)
     except Exception:
         pass
     return jsonify({"status": "idle", "current": "", "done": 0, "due": 0, "updated": int(time.time())})
@@ -1343,7 +1439,7 @@ def logs():
 
     try:
         text = sudo_journalctl(lines)
-        src = "journalctl -t interheart"
+        src = "journalctl -t interheart -o cat"
         actual = len(text.splitlines()) if text else 0
         return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
     except Exception as e:
@@ -1351,13 +1447,85 @@ def logs():
 
 @APP.post("/api/run-now")
 def api_run_now():
-    # IMPORTANT: run-now forces checking all targets
-    rc, out = run_cmd(["run-now"])
+    """
+    Start run-now as background process so UI can poll /runtime while it runs.
+    """
+    ensure_state_dir()
+
+    meta = load_run_meta()
+    existing_pid = int(meta.get("pid") or 0)
+    if existing_pid and pid_is_running(existing_pid):
+        return jsonify({"ok": True, "message": "Already running", "pid": existing_pid})
+
+    # mark runtime as running quickly (UI will show movement immediately)
+    try:
+        with open(RUNTIME_FILE, "w", encoding="utf-8") as f:
+            json.dump({"status":"running","current":"","done":0,"due":0,"updated":int(time.time())}, f)
+        try:
+            os.chmod(RUNTIME_FILE, 0o644)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # start process
+    cmd = ["sudo", CLI, "run-now"]
+    try:
+        out_f = open(RUN_OUT_FILE, "w", encoding="utf-8")
+        p = subprocess.Popen(cmd, stdout=out_f, stderr=subprocess.STDOUT, text=True)
+        save_run_meta({
+            "pid": p.pid,
+            "started": int(time.time()),
+            "finished": 0,
+            "rc": None
+        })
+        return jsonify({"ok": True, "message": "Started", "pid": p.pid})
+    except Exception as e:
+        save_run_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1})
+        return jsonify({"ok": False, "message": f"Failed to start run-now: {str(e)}"})
+
+@APP.get("/api/run-status")
+def api_run_status():
+    meta = load_run_meta()
+    pid = int(meta.get("pid") or 0)
+    started = int(meta.get("started") or 0)
+    finished = int(meta.get("finished") or 0)
+
+    if pid and pid_is_running(pid):
+        return jsonify({"running": True, "finished": False, "pid": pid, "started": started})
+
+    # if not running, consider finished if we have a started timestamp
+    if started and not finished:
+        meta["finished"] = int(time.time())
+        meta["pid"] = 0
+        save_run_meta(meta)
+
+    return jsonify({"running": False, "finished": bool(started), "pid": pid, "started": started, "finished_at": int(meta.get("finished") or 0)})
+
+@APP.get("/api/run-result")
+def api_run_result():
+    meta = load_run_meta()
+    # read last output file
+    try:
+        if os.path.exists(RUN_OUT_FILE):
+            with open(RUN_OUT_FILE, "r", encoding="utf-8") as f:
+                out = f.read().strip()
+        else:
+            out = ""
+    except Exception:
+        out = ""
+
     summary = parse_run_summary(out)
+    ok = True
+    # If output contains obvious failure markers, mark ok false
+    if "Unknown command" in out or "Failed" in out and not out.startswith("OK:"):
+        ok = False
+
     return jsonify({
-        "ok": rc == 0,
-        "message": out or ("OK" if rc == 0 else "Failed"),
-        "summary": summary
+        "ok": ok,
+        "message": out or ("OK" if ok else "Failed"),
+        "summary": summary,
+        "meta": meta
     })
 
 @APP.post("/api/test")
@@ -1389,4 +1557,5 @@ def api_set_target_interval():
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
 if __name__ == "__main__":
-    APP.run(host=BIND_HOST, port=BIND_PORT)
+    # threaded=True helps if multiple users poll /runtime while other requests happen
+    APP.run(host=BIND_HOST, port=BIND_PORT, threaded=True)
