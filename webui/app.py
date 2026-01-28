@@ -2,6 +2,7 @@ from flask import Flask, request, render_template_string, redirect, url_for, jso
 import os
 import subprocess
 import time
+import json
 
 APP = Flask(__name__)
 
@@ -31,24 +32,26 @@ BIND_PORT = int(os.environ.get("WEBUI_PORT", "8088"))
 LOG_LINES_DEFAULT = 200
 LOG_FILE_FALLBACK = "/var/log/interheart.log"
 
+STATE_POLL_SECONDS = 2
+
 TEMPLATE = r"""
 <!doctype html>
-<html lang="no">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>interheart</title>
   <style>
     :root{
-      --bg:#060a12;
-      --line:rgba(255,255,255,.085);
+      --bg:#012746;               /* solid dark navy */
+      --panel:#071528;
+      --panel2:#081a31;
+      --line:rgba(255,255,255,.10);
       --text:rgba(255,255,255,.92);
       --muted:rgba(255,255,255,.62);
 
-      --navy:#012746;
       --accent:#2a74ff;
       --danger:#ff3b5c;
-
       --good:#38d39f;
       --warn:#ffd34d;
 
@@ -62,12 +65,10 @@ TEMPLATE = r"""
 
     *{box-sizing:border-box}
     body{
-      margin:0; font-family:var(--sans); color:var(--text);
-      background:
-        radial-gradient(1200px 700px at 20% 8%, rgba(42,116,255,.20), transparent 55%),
-        radial-gradient(900px 600px at 85% 15%, rgba(1,39,70,.38), transparent 62%),
-        radial-gradient(700px 500px at 70% 80%, rgba(255,59,92,.08), transparent 55%),
-        var(--bg);
+      margin:0;
+      font-family:var(--sans);
+      color:var(--text);
+      background: var(--bg);      /* ✅ no gradient */
     }
 
     .wrap{max-width:1280px; margin:34px auto; padding:0 18px;}
@@ -76,13 +77,13 @@ TEMPLATE = r"""
     .title{display:flex; align-items:center; gap:10px; font-size:22px; font-weight:900; letter-spacing:.2px;}
     .badge{
       font-size:12px; padding:6px 10px; border-radius:999px;
-      background:linear-gradient(180deg, rgba(42,116,255,.18), rgba(42,116,255,.06));
+      background:rgba(255,255,255,.05);
       border:1px solid var(--line); color:var(--muted);
     }
     .subtitle{color:var(--muted); font-size:13px; line-height:1.45}
 
     .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
+      background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
       border:1px solid var(--line);
       border-radius:var(--radius);
       box-shadow: var(--shadow);
@@ -90,19 +91,13 @@ TEMPLATE = r"""
       position:relative;
       overflow:hidden;
     }
-    .card:before{
-      content:"";
-      position:absolute; inset:-2px;
-      background: radial-gradient(900px 220px at 30% 0%, rgba(42,116,255,.12), transparent 55%);
-      pointer-events:none;
-    }
     .card > *{position:relative;}
 
     .card h3{margin:0 0 10px 0; font-size:14px; color:rgba(255,255,255,.86)}
     .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
 
     input{
-      border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.20);
+      border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.18);
       color:var(--text); padding:10px 12px; outline:none;
       transition: border-color .15s ease, transform .12s ease, filter .12s ease;
     }
@@ -185,23 +180,20 @@ TEMPLATE = r"""
 
     .hint{color:rgba(255,255,255,.55); font-size:12px}
     .right-actions{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
-    .countdown{font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.80)}
-    .small{font-size:12px; color:rgba(255,255,255,.62)}
-    .muted{color:rgba(255,255,255,.62)}
     .nowrap{white-space:nowrap}
 
-    /* Modal + chips + live tail styles kept from v7 */
+    /* Modal */
     .modal{
       position:fixed; inset:0; display:none; align-items:center; justify-content:center;
-      z-index:9997; padding:18px; background:rgba(0,0,0,.52); backdrop-filter: blur(10px);
+      z-index:9997; padding:18px; background:rgba(0,0,0,.58); backdrop-filter: blur(10px);
     }
     .modal.show{display:flex;}
     .modal-card{
-      width:min(1100px, calc(100vw - 24px));
+      width:min(1000px, calc(100vw - 24px));
       max-height: min(80vh, 820px);
       display:flex; flex-direction:column;
       border:1px solid var(--line); border-radius:22px;
-      background:rgba(10,14,24,.86);
+      background:rgba(7,21,40,.92);
       box-shadow: 0 26px 70px rgba(0,0,0,.70);
       overflow:hidden;
     }
@@ -214,58 +206,20 @@ TEMPLATE = r"""
     .modal-title span{font-size:12px; color:rgba(255,255,255,.62)}
     .modal-actions{display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-end;}
     .modal-body{padding:12px; overflow:auto; flex:1; display:flex; flex-direction:column; gap:10px;}
-    .chips{
-      display:flex; flex-wrap:wrap; gap:8px; padding:10px;
-      border:1px solid var(--line); background:rgba(0,0,0,.18); border-radius:18px;
-    }
-    .chip-btn{
-      cursor:pointer; user-select:none; padding:7px 10px; border-radius:999px;
-      border:1px solid var(--line); background:rgba(255,255,255,.04);
-      color:rgba(255,255,255,.74); font-size:12px; font-weight:850;
-      transition: transform .12s ease, border-color .12s ease, filter .12s ease, background .12s ease;
-      display:inline-flex; align-items:center; gap:8px;
-    }
-    .chip-btn:hover{transform: translateY(-1px); filter:brightness(1.03); border-color:rgba(42,116,255,.35);}
-    .chip-btn:active{transform: translateY(0px); filter:brightness(.98);}
-    .chip-btn.active{
-      border-color:rgba(42,116,255,.55);
-      background:linear-gradient(180deg, rgba(42,116,255,.20), rgba(42,116,255,.06));
-      color:rgba(255,255,255,.90);
-    }
+
     .logbox{
       width:100%; min-height: 360px;
-      background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:16px;
+      background:rgba(0,0,0,.22); border:1px solid var(--line); border-radius:16px;
       padding:12px; font-family:var(--mono); font-size:12px; line-height:1.45;
       color:rgba(255,255,255,.84); white-space:pre; overflow:auto; position:relative;
     }
     .logbox.loading:after{
-      content:"Oppdaterer…"; position:absolute; top:12px; right:12px;
+      content:"Refreshing…"; position:absolute; top:12px; right:12px;
       font-family:var(--sans); font-size:12px; font-weight:900;
       color:rgba(255,255,255,.70);
       background:rgba(10,14,24,.60); border:1px solid var(--line);
       padding:6px 10px; border-radius:999px; backdrop-filter: blur(10px);
     }
-    .pill{
-      display:inline-flex; align-items:center; gap:8px;
-      border:1px solid var(--line); background:rgba(0,0,0,.18);
-      padding:7px 10px; border-radius:999px; font-family:var(--mono);
-      font-size:11px; color:rgba(255,255,255,.70);
-    }
-    .live-dot{width:8px; height:8px; border-radius:99px; background:rgba(255,255,255,.25);}
-    .pill.on{border-color:rgba(56,211,159,.25); background:rgba(56,211,159,.09);}
-    .pill.on .live-dot{background:var(--good); box-shadow:0 0 0 0 rgba(56,211,159,.35); animation:pulse 1.4s infinite;}
-
-    .toggle{
-      display:inline-flex; align-items:center; gap:8px;
-      border:1px solid var(--line); background:rgba(0,0,0,.18);
-      padding:7px 10px; border-radius:14px; cursor:pointer; user-select:none;
-      transition: border-color .12s ease, filter .12s ease;
-    }
-    .toggle:hover{border-color:rgba(42,116,255,.35); filter:brightness(1.03);}
-    .switch{width:34px; height:18px; border-radius:999px; background:rgba(255,255,255,.12); border:1px solid var(--line); position:relative;}
-    .knob{position:absolute; top:1px; left:1px; width:14px; height:14px; border-radius:99px; background:rgba(255,255,255,.70); transition: transform .14s ease, background .14s ease;}
-    .toggle.on .switch{background:rgba(42,116,255,.22); border-color:rgba(42,116,255,.30);}
-    .toggle.on .knob{transform: translateX(16px); background:rgba(255,255,255,.92);}
 
     @media (max-width: 940px){
       .footer{flex-direction:column; align-items:flex-start;}
@@ -276,50 +230,62 @@ TEMPLATE = r"""
 </head>
 <body>
 
+<!-- Logs modal -->
 <div class="modal" id="logModal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logg">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logs">
     <div class="modal-head">
       <div class="modal-title">
-        <b>Logg</b>
-        <span>Siste <span id="logLinesLbl">{{ log_lines }}</span> linjer • target-chips • live tail</span>
+        <b>Logs</b>
+        <span>Last <span id="logLinesLbl">{{ log_lines }}</span> lines</span>
       </div>
       <div class="modal-actions">
-        <input id="logFilter" placeholder="filter (f.eks. anl-0161)" style="min-width:220px;">
-        <button class="btn btn-secondary btn-mini" id="btnReloadLogs" type="button"><span class="icon">⟳</span> Last på nytt</button>
+        <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="min-width:220px;">
+        <button class="btn btn-secondary btn-mini" id="btnReloadLogs" type="button"><span class="icon">⟳</span> Reload</button>
         <button class="btn btn-secondary btn-mini" id="btnCopyLogs" type="button"><span class="icon">⧉</span> Copy</button>
-
-        <div class="toggle" id="liveToggle" title="Live tail (poll hver 3s)">
-          <div class="switch"><div class="knob"></div></div>
-          <div>
-            <div style="font-weight:900; font-size:12px;">Live tail</div>
-            <small>3s</small>
-          </div>
-        </div>
-
-        <div class="toggle" id="followToggle" title="Hold scroller i bunn ved nye linjer">
-          <div class="switch"><div class="knob"></div></div>
-          <div>
-            <div style="font-weight:900; font-size:12px;">Follow</div>
-            <small>bottom</small>
-          </div>
-        </div>
-
-        <button class="btn btn-danger btn-mini" id="btnCloseLogs" type="button"><span class="icon">✕</span> Lukk</button>
+        <button class="btn btn-danger btn-mini" id="btnCloseLogs" type="button"><span class="icon">✕</span> Close</button>
       </div>
     </div>
 
     <div class="modal-body">
-      <div class="chips" id="targetChips"><span class="hint">Laster targets…</span></div>
-      <div class="logbox" id="logBox">Laster logg…</div>
-
+      <div class="logbox" id="logBox">Loading logs…</div>
       <div class="row" style="justify-content:space-between;">
-        <div class="pill" id="livePill"><span class="live-dot"></span> LIVE: OFF</div>
         <div class="muted" id="logMeta">-</div>
+        <div class="muted">interheart <code>{{ ui_version }}</code></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add target modal -->
+<div class="modal" id="addModal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
+    <div class="modal-head">
+      <div class="modal-title">
+        <b>Add target</b>
+        <span>Define IP, interval and webhook endpoint</span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-danger btn-mini" id="btnCloseAdd" type="button"><span class="icon">✕</span> Close</button>
       </div>
     </div>
 
+    <div class="modal-body">
+      <form method="post" action="/add">
+        <div class="row">
+          <input name="name" placeholder="name (e.g. anl-0161-core-gw)" required>
+          <input name="ip" placeholder="ip (e.g. 10.5.0.1)" required>
+          <input name="interval" type="number" min="10" max="86400" step="1" placeholder="interval (seconds)" required>
+        </div>
+        <div class="row">
+          <input name="endpoint" placeholder="endpoint url (https://...)" required>
+          <button class="btn btn-primary" type="submit"><span class="icon">＋</span> Add</button>
+        </div>
+        <div class="hint">Critical: 30–120s. Less critical: 300–900s.</div>
+      </form>
+    </div>
+
     <div class="footer" style="border-top:1px solid var(--line); padding:10px 12px; margin-top:0;">
-      <div class="muted">Tips: ESC lukker. Klikk chip → filter. Live tail kan stå på mens du feilsøker.</div>
+      <div class="muted">Tip: You can edit interval later per target.</div>
       <div class="muted">interheart <code>{{ ui_version }}</code></div>
     </div>
   </div>
@@ -329,15 +295,16 @@ TEMPLATE = r"""
   <div class="top">
     <div class="brand">
       <div class="title">interheart <span class="badge">targets</span></div>
-      <div class="subtitle">SemVer: <code>{{ ui_version }}</code></div>
+      <div class="subtitle">SemVer: <code>{{ ui_version }}</code> • State refresh: {{ poll_seconds }}s</div>
     </div>
 
     <div class="right-actions">
-      <button class="btn btn-secondary btn-mini" id="openLogs" type="button"><span class="icon">🧾</span> Logg</button>
+      <button class="btn btn-secondary btn-mini" id="openLogs" type="button"><span class="icon">🧾</span> Logs</button>
+      <button class="btn btn-secondary btn-mini" id="openAdd" type="button"><span class="icon">＋</span> Add target</button>
 
       <form method="post" action="/run-now">
         <button class="btn btn-primary btn-mini" type="submit">
-          <span class="icon">⚡</span> Kjør nå
+          <span class="icon">⚡</span> Run now
         </button>
       </form>
     </div>
@@ -349,43 +316,43 @@ TEMPLATE = r"""
 
   <div class="card">
     <h3>Targets</h3>
-    <div class="hint">Status/last ping/sent kommer fra state. (countdown kan vi legge inn igjen om du vil – dette er den “stabile” SemVer-migrasjonen).</div>
+    <div class="hint">Last ping / last sent update automatically in real time.</div>
     <div class="sep"></div>
 
     <table>
       <thead>
         <tr>
-          <th style="width: 200px;">Name</th>
-          <th style="width: 120px;">IP</th>
-          <th style="width: 120px;">Status</th>
-          <th style="width: 120px;">Intervall</th>
-          <th style="width: 170px;">Last ping</th>
-          <th style="width: 170px;">Last sent</th>
+          <th style="width: 210px;">Name</th>
+          <th style="width: 130px;">IP</th>
+          <th style="width: 140px;">Status</th>
+          <th style="width: 120px;">Interval</th>
+          <th style="width: 190px;">Last ping</th>
+          <th style="width: 190px;">Last sent</th>
           <th>Endpoint</th>
-          <th style="width: 260px;">Handling</th>
+          <th style="width: 280px;">Actions</th>
         </tr>
       </thead>
       <tbody>
       {% for t in targets %}
-        <tr>
+        <tr data-name="{{ t.name }}">
           <td><code>{{ t.name }}</code></td>
           <td><code>{{ t.ip }}</code></td>
           <td>
-            <span class="chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
+            <span class="chip status-chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
               <span class="dot"></span>
-              <span style="font-weight:900; text-transform:uppercase;">{{ t.status }}</span>
+              <span class="status-text" style="font-weight:900; text-transform:uppercase;">{{ t.status }}</span>
             </span>
           </td>
-          <td><span class="chip nowrap">{{ t.interval }}s</span></td>
-          <td><code>{{ t.last_ping_human }}</code></td>
-          <td><code>{{ t.last_sent_human }}</code></td>
-          <td><code>{{ t.endpoint_masked }}</code></td>
+          <td><span class="chip nowrap interval-chip">{{ t.interval }}s</span></td>
+          <td><code class="last-ping">{{ t.last_ping_human }}</code></td>
+          <td><code class="last-sent">{{ t.last_sent_human }}</code></td>
+          <td><code class="endpoint">{{ t.endpoint_masked }}</code></td>
 
           <td class="row">
             <form method="post" action="/set-target-interval" style="display:inline">
               <input type="hidden" name="name" value="{{ t.name }}">
-              <input class="btn-mini" style="width:110px" name="seconds" type="number" min="10" max="86400" step="1" placeholder="sek" required>
-              <button class="btn btn-secondary btn-mini" type="submit"><span class="icon">⏱</span> Intervall</button>
+              <input class="btn-mini" style="width:110px" name="seconds" type="number" min="10" max="86400" step="1" placeholder="sec" required>
+              <button class="btn btn-secondary btn-mini" type="submit"><span class="icon">⏱</span> Interval</button>
             </form>
 
             <form method="post" action="/test" style="display:inline">
@@ -393,31 +360,15 @@ TEMPLATE = r"""
               <button class="btn btn-secondary btn-mini" type="submit"><span class="icon">🧪</span> Test</button>
             </form>
 
-            <form method="post" action="/remove" style="display:inline" onsubmit="return confirm('Fjerne {{ t.name }}?');">
+            <form method="post" action="/remove" style="display:inline" onsubmit="return confirm('Remove {{ t.name }}?');">
               <input type="hidden" name="name" value="{{ t.name }}">
-              <button class="btn btn-danger btn-mini" type="submit"><span class="icon">🗑</span> Fjern</button>
+              <button class="btn btn-danger btn-mini" type="submit"><span class="icon">🗑</span> Remove</button>
             </form>
           </td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
-
-    <div class="sep"></div>
-
-    <h3>Legg til target</h3>
-    <form method="post" action="/add">
-      <div class="row">
-        <input name="name" placeholder="name (f.eks anl-0161-core-gw)" required>
-        <input name="ip" placeholder="ip (f.eks 10.5.0.1)" required>
-        <input name="interval" type="number" min="10" max="86400" step="1" placeholder="intervall (sek)" required>
-      </div>
-      <div class="row">
-        <input name="endpoint" placeholder="endpoint url (https://...)" required>
-        <button class="btn btn-primary" type="submit"><span class="icon">＋</span> Legg til</button>
-      </div>
-      <div class="hint">Kritisk = 30–120s. Mindre kritisk = 300–900s.</div>
-    </form>
 
     <div class="footer">
       <div class="muted">
@@ -435,192 +386,110 @@ TEMPLATE = r"""
 
 <script>
 (function(){
-  // Logs modal (Step 7 behavior retained)
-  var modal = document.getElementById("logModal");
-  var openBtn = document.getElementById("openLogs");
-  var closeBtn = document.getElementById("btnCloseLogs");
-  var reloadBtn = document.getElementById("btnReloadLogs");
-  var copyBtn = document.getElementById("btnCopyLogs");
-  var logBox = document.getElementById("logBox");
-  var logMeta = document.getElementById("logMeta");
-  var filter = document.getElementById("logFilter");
-  var chipsWrap = document.getElementById("targetChips");
+  // ---- Logs modal (simple) ----
+  const logModal = document.getElementById("logModal");
+  const openLogs = document.getElementById("openLogs");
+  const closeLogs = document.getElementById("btnCloseLogs");
+  const reloadLogs = document.getElementById("btnReloadLogs");
+  const copyLogs = document.getElementById("btnCopyLogs");
+  const logBox = document.getElementById("logBox");
+  const logMeta = document.getElementById("logMeta");
+  const logFilter = document.getElementById("logFilter");
 
-  var liveToggle = document.getElementById("liveToggle");
-  var followToggle = document.getElementById("followToggle");
-  var livePill = document.getElementById("livePill");
+  let rawLog = "";
 
-  var rawLog = "";
-  var liveOn = false;
-  var followBottom = true;
-  var liveTimer = null;
-  var LIVE_INTERVAL_MS = 3000;
+  function show(el){ el.classList.add("show"); el.setAttribute("aria-hidden","false"); }
+  function hide(el){ el.classList.remove("show"); el.setAttribute("aria-hidden","true"); }
 
-  var activeChip = "";
-
-  function openModal(){
-    modal.classList.add("show");
-    modal.setAttribute("aria-hidden","false");
-    filter.focus();
-  }
-  function closeModal(){
-    stopLive();
-    modal.classList.remove("show");
-    modal.setAttribute("aria-hidden","true");
-  }
-
-  function setLivePill(){
-    if (liveOn){
-      livePill.classList.add("on");
-      livePill.innerHTML = '<span class="live-dot"></span> LIVE: ON';
-    } else {
-      livePill.classList.remove("on");
-      livePill.innerHTML = '<span class="live-dot"></span> LIVE: OFF';
-    }
-  }
-
-  async function loadLogs(silent){
-    if (!silent) logBox.classList.add("loading");
+  async function loadLogs(){
+    logBox.classList.add("loading");
     try{
       const res = await fetch("/logs?lines={{ log_lines }}", {cache:"no-store"});
       const data = await res.json();
       rawLog = data.text || "";
-      logMeta.textContent = (data.source || "log") + " • " + (data.lines || 0) + " linjer • " + (data.updated || "");
-      applyFilter();
-      if (followBottom){
-        logBox.scrollTop = logBox.scrollHeight;
-      }
+      logMeta.textContent = (data.source || "log") + " • " + (data.lines || 0) + " lines • " + (data.updated || "");
+      applyLogFilter();
+      logBox.scrollTop = logBox.scrollHeight;
     }catch(e){
       rawLog = "";
-      logBox.textContent = "Kunne ikke hente logg: " + (e && e.message ? e.message : "ukjent feil");
+      logBox.textContent = "Failed to fetch logs: " + (e && e.message ? e.message : "unknown");
       logMeta.textContent = "error";
     }finally{
       logBox.classList.remove("loading");
     }
   }
 
-  function applyFilter(){
-    var q = (filter.value || "").trim().toLowerCase();
-    if (!q){
-      logBox.textContent = rawLog || "(tom logg)";
-      return;
-    }
-    var lines = (rawLog || "").split("\n").filter(function(l){
-      return l.toLowerCase().indexOf(q) !== -1;
-    });
-    logBox.textContent = lines.join("\n") || "(ingen treff)";
+  function applyLogFilter(){
+    const q = (logFilter.value || "").trim().toLowerCase();
+    if (!q){ logBox.textContent = rawLog || "(empty)"; return; }
+    const lines = (rawLog || "").split("\n").filter(l => l.toLowerCase().includes(q));
+    logBox.textContent = lines.join("\n") || "(no matches)";
   }
 
-  function renderChips(){
-    chipsWrap.innerHTML = "";
-    var allBtn = document.createElement("button");
-    allBtn.type = "button";
-    allBtn.className = "chip-btn" + (activeChip === "" ? " active" : "");
-    allBtn.textContent = "ALL";
-    allBtn.addEventListener("click", function(){
-      activeChip = "";
-      filter.value = "";
-      renderChips();
-      applyFilter();
-    });
-    chipsWrap.appendChild(allBtn);
+  openLogs.addEventListener("click", async () => { show(logModal); logFilter.focus(); await loadLogs(); });
+  closeLogs.addEventListener("click", () => hide(logModal));
+  reloadLogs.addEventListener("click", async () => await loadLogs());
+  copyLogs.addEventListener("click", async () => { try{ await navigator.clipboard.writeText(logBox.textContent || ""); }catch(e){} });
+  logFilter.addEventListener("input", applyLogFilter);
+  logModal.addEventListener("click", (e) => { if (e.target === logModal) hide(logModal); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape"){ if (logModal.classList.contains("show")) hide(logModal); if (addModal.classList.contains("show")) hide(addModal);} });
 
-    (window.__targets || []).forEach(function(t){
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "chip-btn" + (activeChip === t.name ? " active" : "");
-      btn.textContent = t.name;
-      btn.addEventListener("click", function(){
-        activeChip = t.name;
-        filter.value = t.name;
-        renderChips();
-        applyFilter();
+  // ---- Add modal ----
+  const addModal = document.getElementById("addModal");
+  const openAdd = document.getElementById("openAdd");
+  const closeAdd = document.getElementById("btnCloseAdd");
+
+  openAdd.addEventListener("click", () => show(addModal));
+  closeAdd.addEventListener("click", () => hide(addModal));
+  addModal.addEventListener("click", (e) => { if (e.target === addModal) hide(addModal); });
+
+  // ---- Real-time state updates ----
+  function setStatusChip(row, status){
+    const chip = row.querySelector(".status-chip");
+    const text = row.querySelector(".status-text");
+    if (!chip || !text) return;
+
+    chip.classList.remove("status-up","status-down","status-unknown");
+    if (status === "up") chip.classList.add("status-up");
+    else if (status === "down") chip.classList.add("status-down");
+    else chip.classList.add("status-unknown");
+
+    text.textContent = (status || "unknown").toUpperCase();
+  }
+
+  async function refreshState(){
+    try{
+      const res = await fetch("/state", {cache:"no-store"});
+      const data = await res.json();
+
+      // data.targets: [{name,status,last_ping_human,last_sent_human,interval,endpoint_masked,ip}, ...]
+      const map = new Map();
+      (data.targets || []).forEach(t => map.set(t.name, t));
+
+      document.querySelectorAll('tr[data-name]').forEach(row => {
+        const name = row.getAttribute("data-name");
+        const t = map.get(name);
+        if (!t) return;
+
+        setStatusChip(row, t.status);
+
+        const lp = row.querySelector(".last-ping");
+        const ls = row.querySelector(".last-sent");
+        const iv = row.querySelector(".interval-chip");
+        const ep = row.querySelector(".endpoint");
+
+        if (lp) lp.textContent = t.last_ping_human || "-";
+        if (ls) ls.textContent = t.last_sent_human || "-";
+        if (iv) iv.textContent = (t.interval || "-") + "s";
+        if (ep) ep.textContent = t.endpoint_masked || "-";
       });
-      chipsWrap.appendChild(btn);
-    });
-
-    if ((window.__targets || []).length === 0){
-      var s = document.createElement("span");
-      s.className = "hint";
-      s.textContent = "Ingen targets funnet.";
-      chipsWrap.appendChild(s);
+    }catch(e){
+      // keep silent; UI should not flicker
     }
   }
 
-  function startLive(){
-    if (liveTimer) return;
-    liveOn = true;
-    setLivePill();
-    liveTimer = setInterval(function(){ loadLogs(true); }, LIVE_INTERVAL_MS);
-  }
-
-  function stopLive(){
-    liveOn = false;
-    setLivePill();
-    if (liveTimer){
-      clearInterval(liveTimer);
-      liveTimer = null;
-    }
-  }
-
-  function setToggle(el, on){
-    if (on) el.classList.add("on"); else el.classList.remove("on");
-  }
-
-  openBtn.addEventListener("click", async function(){
-    openModal();
-    renderChips();
-    await loadLogs(false);
-    if (followBottom) logBox.scrollTop = logBox.scrollHeight;
-  });
-
-  closeBtn.addEventListener("click", function(){ closeModal(); });
-
-  reloadBtn.addEventListener("click", async function(){ await loadLogs(false); });
-
-  copyBtn.addEventListener("click", async function(){
-    try{ await navigator.clipboard.writeText(logBox.textContent || ""); }catch(e){}
-  });
-
-  filter.addEventListener("input", function(){
-    activeChip = "";
-    renderChips();
-    applyFilter();
-  });
-
-  liveToggle.addEventListener("click", function(){
-    var newState = !liveOn;
-    if (newState){
-      setToggle(liveToggle, true);
-      startLive();
-      loadLogs(true);
-    } else {
-      setToggle(liveToggle, false);
-      stopLive();
-    }
-  });
-
-  followToggle.addEventListener("click", function(){
-    followBottom = !followBottom;
-    setToggle(followToggle, followBottom);
-    if (followBottom) logBox.scrollTop = logBox.scrollHeight;
-  });
-
-  setToggle(liveToggle, false);
-  setToggle(followToggle, true);
-  setLivePill();
-
-  document.addEventListener("keydown", function(e){
-    if (e.key === "Escape" && modal.classList.contains("show")) closeModal();
-  });
-  modal.addEventListener("click", function(e){
-    if (e.target === modal) closeModal();
-  });
+  setInterval(refreshState, {{ poll_seconds }} * 1000);
 })();
-</script>
-
-<script>
-window.__targets = {{ targets_json | safe }};
 </script>
 
 </body>
@@ -671,7 +540,7 @@ def parse_status(status_output: str):
       continue
     if not in_table:
       continue
-    if line.strip().startswith("NAME") or line.strip().startswith("State:") or line.strip().startswith("(ingen"):
+    if line.strip().startswith("NAME") or line.strip().startswith("State:") or line.strip().startswith("(no"):
       continue
     if not line.strip():
       continue
@@ -681,7 +550,6 @@ def parse_status(status_output: str):
       continue
     name = parts[0]
     status = parts[1]
-    next_due = parts[3]
     last_ping = parts[4]
     last_sent = parts[5]
     state[name] = {
@@ -703,7 +571,7 @@ def sudo_journalctl(lines: int) -> str:
   cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=short-iso"]
   p = subprocess.run(cmd, capture_output=True, text=True)
   if p.returncode != 0:
-    raise RuntimeError((p.stderr or "journalctl feilet").strip())
+    raise RuntimeError((p.stderr or "journalctl failed").strip())
   return (p.stdout or "").strip()
 
 def read_log_file(lines: int) -> str:
@@ -716,10 +584,7 @@ def read_log_file(lines: int) -> str:
   except Exception:
     return ""
 
-@APP.get("/")
-def index():
-  message = request.args.get("message", "")
-
+def merged_targets():
   _, list_out = run_cmd(["list"])
   targets = parse_list_targets(list_out)
 
@@ -739,21 +604,32 @@ def index():
       "last_ping_human": human_ts(last_ping_epoch),
       "last_sent_human": human_ts(last_sent_epoch),
     })
+  return merged
 
-  targets_json = [{"name": t["name"], "ip": t["ip"]} for t in targets]
-  import json
+@APP.get("/")
+def index():
+  message = request.args.get("message", "")
+  targets = merged_targets()
 
   return render_template_string(
     TEMPLATE,
-    targets=merged,
+    targets=targets,
     bind_host=BIND_HOST,
     bind_port=BIND_PORT,
     message=message,
     ui_version=UI_VERSION,
     copyright_year=COPYRIGHT_YEAR,
     log_lines=LOG_LINES_DEFAULT,
-    targets_json=json.dumps(targets_json)
+    poll_seconds=STATE_POLL_SECONDS
   )
+
+@APP.get("/state")
+def state():
+  # Used by front-end polling for real-time updates
+  return jsonify({
+    "updated": int(time.time()),
+    "targets": merged_targets()
+  })
 
 @APP.get("/logs")
 def logs():
@@ -775,7 +651,7 @@ def logs():
     src = "file: /var/log/interheart.log (fallback)"
     actual = len(text.splitlines()) if text else 0
     if not text:
-      text = f"(ingen logg funnet)\n(journalctl-feil: {str(e)})"
+      text = f"(no logs found)\n(journalctl error: {str(e)})"
       actual = len(text.splitlines())
     return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
 
@@ -786,20 +662,20 @@ def add():
   endpoint = request.form.get("endpoint", "")
   interval = request.form.get("interval", "60")
   rc, out = run_cmd(["add", name, ip, endpoint, interval])
-  msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
+  msg = ("OK: " + out) if rc == 0 else ("ERROR: " + out)
   return redirect(url_for("index", message=msg))
 
 @APP.post("/remove")
 def remove():
   name = request.form.get("name", "")
   rc, out = run_cmd(["remove", name])
-  msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
+  msg = ("OK: " + out) if rc == 0 else ("ERROR: " + out)
   return redirect(url_for("index", message=msg))
 
 @APP.post("/run-now")
 def run_now():
   rc, out = run_cmd(["run"])
-  msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
+  msg = ("OK: " + out) if rc == 0 else ("ERROR: " + out)
   return redirect(url_for("index", message=msg))
 
 @APP.post("/test")
@@ -814,7 +690,7 @@ def set_target_interval():
   name = request.form.get("name", "")
   sec = request.form.get("seconds", "")
   rc, out = run_cmd(["set-target-interval", name, sec])
-  msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
+  msg = ("OK: " + out) if rc == 0 else ("ERROR: " + out)
   return redirect(url_for("index", message=msg))
 
 if __name__ == "__main__":
