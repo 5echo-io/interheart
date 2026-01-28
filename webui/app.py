@@ -3,6 +3,7 @@ from markupsafe import Markup
 import os
 import subprocess
 import time
+import json
 
 APP = Flask(__name__)
 
@@ -32,11 +33,15 @@ BIND_PORT = int(os.environ.get("WEBUI_PORT", "8088"))
 LOG_LINES_DEFAULT = 200
 STATE_POLL_SECONDS = 2
 
+RUNTIME_FILE = "/var/lib/interheart/runtime.json"
+
+
 def run_cmd(args):
     cmd = ["sudo", CLI] + args
     p = subprocess.run(cmd, capture_output=True, text=True)
     out = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
     return p.returncode, out.strip()
+
 
 def parse_list_targets(list_output: str):
     targets = []
@@ -67,6 +72,7 @@ def parse_list_targets(list_output: str):
         })
     return targets
 
+
 def parse_status(status_output: str):
     state = {}
     in_table = False
@@ -95,6 +101,7 @@ def parse_status(status_output: str):
         }
     return state
 
+
 def human_ts(epoch: int):
     if not epoch or epoch <= 0:
         return "-"
@@ -103,12 +110,14 @@ def human_ts(epoch: int):
     except Exception:
         return "-"
 
+
 def sudo_journalctl(lines: int) -> str:
     cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=short-iso"]
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         raise RuntimeError((p.stderr or "journalctl failed").strip())
     return (p.stdout or "").strip()
+
 
 def merged_targets():
     _, list_out = run_cmd(["list"])
@@ -128,19 +137,21 @@ def merged_targets():
             **t,
             "status": status,
             "last_ping_human": human_ts(last_ping_epoch),
-            "last_sent_human": human_ts(last_sent_epoch),
+            "last_response_human": human_ts(last_sent_epoch),  # UI rename
             "last_ping_epoch": last_ping_epoch,
-            "last_sent_epoch": last_sent_epoch,
+            "last_response_epoch": last_sent_epoch,
         })
     return merged
+
 
 def icon_svg(path_d: str):
     return Markup(
         f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-        xmlns="http://www.w3.org/2000/svg" style="opacity:.9">
+        xmlns="http://www.w3.org/2000/svg" style="opacity:.92">
         <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>"""
     )
+
 
 ICONS = {
     "plus": icon_svg("M12 5v14M5 12h14"),
@@ -152,6 +163,9 @@ ICONS = {
     "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
     "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
     "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
+    "spinner": icon_svg("M12 2a10 10 0 1 0 10 10"),
+    "check": icon_svg("M20 6 9 17l-5-5"),
+    "warn": icon_svg("M12 9v4m0 4h.01M10.29 3.86l-8.2 14.2A2 2 0 0 0 3.8 21h16.4a2 2 0 0 0 1.71-2.94l-8.2-14.2a2 2 0 0 0-3.42 0z"),
 }
 
 TEMPLATE = r"""
@@ -164,7 +178,7 @@ TEMPLATE = r"""
 
   <style>
     :root{
-      --bg:#091626;               /* requested */
+      --bg:#091626;
       --panel:#0b1220;
       --panel2:#0c1526;
       --line:rgba(255,255,255,.10);
@@ -256,8 +270,11 @@ TEMPLATE = r"""
       transition: transform .12s ease, border-color .12s ease, background .12s ease;
       display:inline-flex;
       align-items:center;
+      justify-content:center;
       gap:8px;
       user-select:none;
+      height:36px;            /* unify height */
+      line-height:1;
     }
     .btn:hover{
       transform: translateY(-1px);
@@ -265,7 +282,7 @@ TEMPLATE = r"""
       background:rgba(255,255,255,.04);
     }
     .btn:active{transform: translateY(0px)}
-    .btn-mini{font-size:12px;padding:8px 10px;border-radius:12px}
+    .btn-mini{font-size:12px;padding:0 12px;border-radius:12px;height:34px}
     .btn-ghost{
       background:transparent;
       border-color:rgba(255,255,255,.12);
@@ -292,6 +309,7 @@ TEMPLATE = r"""
       border:1px solid var(--line);
       color:var(--muted);
       font-size:12px;
+      white-space:nowrap;
     }
     .dot{width:8px;height:8px;border-radius:99px;background:rgba(255,255,255,.35)}
     .status-up{border-color:rgba(53,211,159,.26);background:rgba(53,211,159,.09)}
@@ -310,6 +328,7 @@ TEMPLATE = r"""
     .interval-wrap{display:flex;align-items:center;gap:8px}
     .interval-input{
       width:86px;
+      height:34px;
       padding:8px 10px;
       border-radius:12px;
       font-weight:850;
@@ -352,6 +371,7 @@ TEMPLATE = r"""
       cursor:pointer;
       display:flex;align-items:center;gap:10px;
       font-weight:850;
+      height:38px;
     }
     .menu-item:hover{background:rgba(255,255,255,.06)}
     .menu-item.danger:hover{background:rgba(255,59,92,.10)}
@@ -364,7 +384,7 @@ TEMPLATE = r"""
       flex-direction:column;
       gap:10px;
       z-index:9999;
-      width:min(420px, calc(100vw - 24px));
+      width:min(460px, calc(100vw - 24px));
       pointer-events:none;
     }
     .toast{
@@ -416,11 +436,32 @@ TEMPLATE = r"""
     .modal-head{
       padding:14px 14px;
       border-bottom:1px solid rgba(255,255,255,.10);
-      display:flex;gap:12px;align-items:flex-start;justify-content:space-between;
+      display:flex;
+      gap:12px;
+      align-items:center;          /* align better */
+      justify-content:space-between;
+      flex-wrap:nowrap;           /* prevent awkward wrapping */
+    }
+    .modal-title{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      min-width:0;
+      white-space:nowrap;         /* keep “Last 200 lines” on one line */
     }
     .modal-title b{font-size:14px}
-    .modal-title span{display:block;font-size:12px;color:rgba(255,255,255,.62);margin-top:2px}
-    .modal-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
+    .modal-title span{
+      font-size:12px;
+      color:rgba(255,255,255,.62);
+    }
+    .modal-actions{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:flex-end;
+      flex-wrap:nowrap;
+    }
+
     .modal-body{padding:16px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:12px}
 
     .logbox{
@@ -439,8 +480,35 @@ TEMPLATE = r"""
       position:relative;
     }
 
-    .flash{animation: flash .45s ease}
-    @keyframes flash{from{background:rgba(255,255,255,.10)}to{background:transparent}}
+    /* Larger/smoother update flash */
+    .flash{
+      animation: flash .80s ease;
+      border-radius:10px;
+      padding:2px 6px;
+    }
+    @keyframes flash{
+      0%{background:rgba(255,255,255,.18)}
+      100%{background:transparent}
+    }
+
+    /* Run-now row visualization */
+    tr.working td{
+      background:rgba(255,255,255,.03);
+    }
+    tr.blink-ok td{
+      animation: rowOk .9s ease;
+    }
+    tr.blink-bad td{
+      animation: rowBad .9s ease;
+    }
+    @keyframes rowOk{
+      0%{background:rgba(53,211,159,.16)}
+      100%{background:transparent}
+    }
+    @keyframes rowBad{
+      0%{background:rgba(255,59,92,.14)}
+      100%{background:transparent}
+    }
 
     .footer{
       margin-top:14px;
@@ -463,10 +531,81 @@ TEMPLATE = r"""
     .spin{animation: spin 0.9s linear infinite}
     @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 
+    /* Add modal layout (row fields) */
+    .grid3{
+      display:grid;
+      grid-template-columns: 1.2fr 1fr .7fr;
+      gap:12px;
+    }
+    .field label{
+      display:block;
+      font-size:12px;
+      color:rgba(255,255,255,.55);
+      margin:0 0 6px 2px;
+    }
+    .field input{width:100%}
+
+    .modal-foot-actions{
+      display:flex;
+      justify-content:flex-end; /* right side */
+      gap:10px;
+      margin-top:12px;
+    }
+
+    /* Run summary modal */
+    .summary-wrap{
+      display:grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap:12px;
+    }
+    .metric{
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.03);
+      border-radius:16px;
+      padding:12px;
+    }
+    .metric b{
+      font-size:12px;
+      color:rgba(255,255,255,.65);
+      display:block;
+      margin-bottom:6px;
+    }
+    .metric .v{
+      font-size:18px;
+      font-weight:900;
+      letter-spacing:.2px;
+    }
+    .bar{
+      height:10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.08);
+      overflow:hidden;
+      margin-top:10px;
+    }
+    .bar > div{
+      height:100%;
+      width:0%;
+      background:rgba(255,255,255,.28);
+      transition: width .25s ease;
+    }
+    .summary-sub{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin-top:10px;
+      color:rgba(255,255,255,.60);
+      font-size:12px;
+      font-family:var(--mono);
+    }
+
     @media (max-width: 940px){
       .footer{flex-direction:column;align-items:flex-start}
-      .modal-head{flex-direction:column;align-items:stretch}
-      .modal-actions{justify-content:flex-start}
+      .modal-head{flex-direction:column;align-items:stretch;gap:10px}
+      .modal-actions{justify-content:flex-start;flex-wrap:wrap}
+      .grid3{grid-template-columns:1fr}
+      .summary-wrap{grid-template-columns:1fr 1fr}
     }
   </style>
 </head>
@@ -483,7 +622,7 @@ TEMPLATE = r"""
         <span>Last <span id="logLinesLbl">{{ log_lines }}</span> lines</span>
       </div>
       <div class="modal-actions">
-        <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="min-width:220px;">
+        <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="height:34px; padding:0 12px; border-radius:12px; min-width:220px;">
         <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">
           <span class="ico" aria-hidden="true">{{ icons.refresh|safe }}</span> Reload
         </button>
@@ -510,45 +649,107 @@ TEMPLATE = r"""
   </div>
 </div>
 
-<!-- Add target modal -->
-<div class="modal" id="addModal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
+<!-- Run summary modal -->
+<div class="modal" id="runModal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Run summary">
     <div class="modal-head">
       <div class="modal-title">
-        <b>Add target</b>
-        <span>Define target and where to send a heartbeat when ping succeeds</span>
+        <b>Run summary</b>
+        <span id="runTitleMeta">-</span>
       </div>
       <div class="modal-actions">
-        <button class="btn btn-ghost btn-mini" id="btnCloseAdd" type="button">
+        <button class="btn btn-ghost btn-mini" id="btnCloseRun" type="button">
           <span class="ico" aria-hidden="true">{{ icons.close|safe }}</span> Close
         </button>
       </div>
     </div>
 
     <div class="modal-body">
+      <div class="summary-wrap">
+        <div class="metric"><b>Total targets</b><div class="v" id="mTotal">-</div></div>
+        <div class="metric"><b>Due</b><div class="v" id="mDue">-</div></div>
+        <div class="metric"><b>Ping OK</b><div class="v" id="mOk">-</div></div>
+        <div class="metric"><b>Ping fail</b><div class="v" id="mFail">-</div></div>
+      </div>
+
+      <div class="metric">
+        <b>Progress</b>
+        <div class="bar"><div id="runBar"></div></div>
+        <div class="summary-sub">
+          <span id="runNowLine">Idle</span>
+          <span id="runDoneLine">done: 0 / 0</span>
+        </div>
+      </div>
+
+      <div class="metric">
+        <b>Endpoint</b>
+        <div class="summary-sub" style="margin-top:0;">
+          <span>Responses sent</span><span id="mSent">-</span>
+        </div>
+        <div class="summary-sub" style="margin-top:4px;">
+          <span>Endpoint failures</span><span id="mCurlFail">-</span>
+        </div>
+      </div>
+
+      <div class="hint" id="runRaw" style="display:none;"></div>
+    </div>
+
+    <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
+      <div class="hint">interheart <code>{{ ui_version }}</code></div>
+      <div>
+        <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add target modal -->
+<div class="modal" id="addModal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
+    <div class="modal-head">
+      <div class="modal-title">
+        <b>Add target</b>
+        <span>Ping target, then call endpoint on success</span>
+      </div>
+      <div class="modal-actions">
+        <!-- removed Close button (requested) -->
+      </div>
+    </div>
+
+    <div class="modal-body">
       <form id="addForm">
-        <div class="hint" style="margin-bottom:4px;">Name</div>
-        <input name="name" placeholder="e.g. anl-0161-core-gw" required>
+        <div class="grid3">
+          <div class="field">
+            <label>Name</label>
+            <input name="name" placeholder="e.g. anl-0161-core-gw" required>
+          </div>
 
-        <div class="hint" style="margin-top:10px;margin-bottom:4px;">IP address</div>
-        <input name="ip" placeholder="e.g. 10.5.0.1" required>
+          <div class="field">
+            <label>IP address</label>
+            <input name="ip" placeholder="e.g. 10.5.0.1" required>
+          </div>
 
-        <div class="hint" style="margin-top:10px;margin-bottom:4px;">Interval (seconds)</div>
-        <input name="interval" type="number" min="10" max="86400" step="1" placeholder="e.g. 60" required>
+          <div class="field">
+            <label>Interval (sec)</label>
+            <input name="interval" type="number" min="10" max="86400" step="1" placeholder="60" required>
+          </div>
+        </div>
 
-        <div class="hint" style="margin-top:10px;margin-bottom:4px;">Endpoint URL</div>
-        <input name="endpoint" placeholder="https://..." required>
+        <div class="field" style="margin-top:12px;">
+          <label>Endpoint URL</label>
+          <input name="endpoint" placeholder="https://..." required>
+        </div>
 
-        <div style="display:flex; gap:10px; margin-top:14px;">
+        <div class="modal-foot-actions">
+          <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
           <button class="btn btn-primary" type="submit" id="btnAddSubmit" data-default-html="">
             <span class="ico" aria-hidden="true">{{ icons.plus|safe }}</span>
             Add target
           </button>
-          <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
         </div>
 
         <div class="hint" style="margin-top:10px;">
-          Tip: Critical targets: 30–120s. Less critical: 300–900s.
+          Tip: critical targets 30–120s • less critical 300–900s
         </div>
       </form>
     </div>
@@ -588,7 +789,7 @@ TEMPLATE = r"""
   </div>
 
   <div class="card">
-    <div class="hint">Last ping / last sent update in real-time ({{ poll_seconds }}s refresh)</div>
+    <div class="hint">“Last ping” / “Last response” updates live ({{ poll_seconds }}s refresh)</div>
     <div class="sep"></div>
 
     <table>
@@ -598,15 +799,15 @@ TEMPLATE = r"""
           <th style="width: 130px;">IP</th>
           <th style="width: 140px;">Status</th>
           <th style="width: 150px;">Interval</th>
-          <th style="width: 190px;">Last ping</th>
-          <th style="width: 190px;">Last sent</th>
+          <th style="width: 200px;">Last ping</th>
+          <th style="width: 200px;">Last response</th>
           <th>Endpoint</th>
           <th style="width: 90px;">Actions</th>
         </tr>
       </thead>
       <tbody>
       {% for t in targets %}
-        <tr data-name="{{ t.name }}">
+        <tr data-name="{{ t.name }}" data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
           <td><code>{{ t.name }}</code></td>
           <td><code>{{ t.ip }}</code></td>
           <td>
@@ -624,7 +825,7 @@ TEMPLATE = r"""
           </td>
 
           <td><code class="last-ping">{{ t.last_ping_human }}</code></td>
-          <td><code class="last-sent">{{ t.last_sent_human }}</code></td>
+          <td><code class="last-resp">{{ t.last_response_human }}</code></td>
           <td><code class="endpoint">{{ t.endpoint_masked }}</code></td>
 
           <td style="text-align:right;">
@@ -690,7 +891,7 @@ TEMPLATE = r"""
   function show(el){ el.classList.add("show"); el.setAttribute("aria-hidden","false"); }
   function hide(el){ el.classList.remove("show"); el.setAttribute("aria-hidden","true"); }
 
-  // ---- Default button HTML snapshots (fixes “code snippet” / restore issues) ----
+  // ---- Default button HTML snapshots ----
   function captureDefaultHtml(btn){
     if (!btn) return;
     if (!btn.dataset.defaultHtml || btn.dataset.defaultHtml === ""){
@@ -745,12 +946,10 @@ TEMPLATE = r"""
   // ---- Add modal ----
   const addModal = document.getElementById("addModal");
   const openAdd = document.getElementById("openAdd");
-  const closeAdd = document.getElementById("btnCloseAdd");
   const addCancel = document.getElementById("btnAddCancel");
   const addForm = document.getElementById("addForm");
 
   openAdd.addEventListener("click", () => show(addModal));
-  closeAdd.addEventListener("click", () => hide(addModal));
   addCancel.addEventListener("click", () => hide(addModal));
   addModal.addEventListener("click", (e) => { if (e.target === addModal) hide(addModal); });
 
@@ -794,27 +993,155 @@ TEMPLATE = r"""
     if (!e.target.closest(".menu")) closeAllMenus();
   });
 
+  // ---- Run summary modal ----
+  const runModal = document.getElementById("runModal");
+  const btnCloseRun = document.getElementById("btnCloseRun");
+  const runTitleMeta = document.getElementById("runTitleMeta");
+  const mTotal = document.getElementById("mTotal");
+  const mDue = document.getElementById("mDue");
+  const mOk = document.getElementById("mOk");
+  const mFail = document.getElementById("mFail");
+  const mSent = document.getElementById("mSent");
+  const mCurlFail = document.getElementById("mCurlFail");
+  const runBar = document.getElementById("runBar");
+  const runNowLine = document.getElementById("runNowLine");
+  const runDoneLine = document.getElementById("runDoneLine");
+  const runRaw = document.getElementById("runRaw");
+
+  btnCloseRun.addEventListener("click", () => hide(runModal));
+  runModal.addEventListener("click", (e) => { if (e.target === runModal) hide(runModal); });
+
+  function setBar(done, due){
+    const pct = (!due || due <= 0) ? 0 : Math.max(0, Math.min(100, Math.round((done / due) * 100)));
+    runBar.style.width = pct + "%";
+  }
+
+  function parseSummaryLine(text){
+    // Example: OK: total=7 due=0 skipped=7 ping_ok=0 ping_fail=0 sent=0 curl_fail=0
+    const m = /total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)/.exec(text || "");
+    if (!m) return null;
+    return {
+      total: Number(m[1]),
+      due: Number(m[2]),
+      skipped: Number(m[3]),
+      ok: Number(m[4]),
+      fail: Number(m[5]),
+      sent: Number(m[6]),
+      curl_fail: Number(m[7]),
+    };
+  }
+
+  // ---- Runtime polling (current target / progress) ----
+  let runtimePoll = null;
+  let lastRuntime = null;
+
+  async function fetchRuntime(){
+    try{
+      const res = await fetch("/runtime", {cache:"no-store"});
+      return await res.json();
+    }catch(e){
+      return null;
+    }
+  }
+
+  function highlightWorking(name){
+    document.querySelectorAll("tr[data-name]").forEach(r => {
+      if (r.getAttribute("data-name") === name) r.classList.add("working");
+      else r.classList.remove("working");
+    });
+  }
+
+  function clearWorking(){
+    document.querySelectorAll("tr[data-name]").forEach(r => r.classList.remove("working"));
+  }
+
+  async function startRuntimePoll(){
+    stopRuntimePoll();
+    lastRuntime = null;
+    runtimePoll = setInterval(async () => {
+      const rt = await fetchRuntime();
+      if (!rt) return;
+
+      if (!lastRuntime || rt.updated !== lastRuntime.updated || rt.current !== lastRuntime.current || rt.done !== lastRuntime.done){
+        const cur = rt.current || "";
+        if (rt.status === "running" && cur) {
+          highlightWorking(cur);
+          runNowLine.textContent = "Now checking: " + cur;
+        } else {
+          clearWorking();
+          runNowLine.textContent = "Idle";
+        }
+        runDoneLine.textContent = `done: ${rt.done || 0} / ${rt.due || 0}`;
+        setBar(rt.done || 0, rt.due || 0);
+        lastRuntime = rt;
+      }
+    }, 350);
+  }
+
+  function stopRuntimePoll(){
+    if (runtimePoll){
+      clearInterval(runtimePoll);
+      runtimePoll = null;
+    }
+  }
+
   // ---- Run Now ----
   const runNowIcon = document.getElementById("runNowIcon");
   btnRunNow.addEventListener("click", async () => {
     btnRunNow.disabled = true;
     if (runNowIcon) runNowIcon.classList.add("spin");
-    toast("Run started", "Running ping cycle…");
+
+    // open run modal + start runtime poll
+    runTitleMeta.textContent = "running…";
+    mTotal.textContent = "-";
+    mDue.textContent = "-";
+    mOk.textContent = "-";
+    mFail.textContent = "-";
+    mSent.textContent = "-";
+    mCurlFail.textContent = "-";
+    runNowLine.textContent = "Starting…";
+    runDoneLine.textContent = "done: 0 / 0";
+    setBar(0, 0);
+    runRaw.textContent = "";
+    show(runModal);
+
+    await startRuntimePoll();
 
     try{
       const res = await fetch("/api/run-now", {method:"POST"});
       const data = await res.json();
+
+      const summary = parseSummaryLine(data.message || "");
+      const ts = new Date().toLocaleString();
+      runTitleMeta.textContent = ts;
+
+      if (summary){
+        mTotal.textContent = String(summary.total);
+        mDue.textContent = String(summary.due);
+        mOk.textContent = String(summary.ok);
+        mFail.textContent = String(summary.fail);
+        mSent.textContent = String(summary.sent);
+        mCurlFail.textContent = String(summary.curl_fail);
+      }else{
+        // fallback
+        runRaw.textContent = data.message || "-";
+        runRaw.style.display = "block";
+      }
+
       if (data.ok){
-        toast("Run completed", data.message || "Done");
+        toast("Run completed", "Done");
       }else{
         toast("Run failed", data.message || "Error");
       }
     }catch(e){
       toast("Run failed", e && e.message ? e.message : "Error");
     }finally{
+      stopRuntimePoll();
+      clearWorking();
       if (runNowIcon) runNowIcon.classList.remove("spin");
       btnRunNow.disabled = false;
       btnRunNow.innerHTML = btnRunNow.dataset.defaultHtml || btnRunNow.innerHTML;
+
       await refreshState(true);
     }
   });
@@ -892,7 +1219,8 @@ TEMPLATE = r"""
           fd.set("name", name);
 
           if (action === "remove"){
-            if (!confirm(`Remove ${name}?`)) return;
+            // confirm (requested)
+            if (!confirm(`Remove "${name}"?\n\nThis cannot be undone.`)) return;
           }
 
           try{
@@ -922,7 +1250,7 @@ TEMPLATE = r"""
     });
   }
 
-  // ---- Real-time refresh ----
+  // ---- Real-time refresh + row blink ----
   function setStatusChip(row, status){
     const chip = row.querySelector(".status-chip");
     const text = row.querySelector(".status-text");
@@ -937,13 +1265,23 @@ TEMPLATE = r"""
   }
 
   function flashIfChanged(el, newText){
-    if (!el) return;
+    if (!el) return false;
     if (el.textContent !== newText){
       el.textContent = newText;
       el.classList.remove("flash");
       void el.offsetWidth;
       el.classList.add("flash");
+      return true;
     }
+    return false;
+  }
+
+  function blinkRow(row, ok){
+    if (!row) return;
+    row.classList.remove("blink-ok","blink-bad");
+    void row.offsetWidth;
+    row.classList.add(ok ? "blink-ok" : "blink-bad");
+    setTimeout(() => row.classList.remove("blink-ok","blink-bad"), 1000);
   }
 
   async function refreshState(force=false){
@@ -960,8 +1298,18 @@ TEMPLATE = r"""
 
         setStatusChip(row, t.status);
 
+        // detect last_ping change to blink row green/red
+        const prevPing = parseInt(row.getAttribute("data-last-ping") || "0", 10);
+        const newPing = parseInt(String(t.last_ping_epoch || 0), 10);
+
+        const pingChanged = (newPing && newPing !== prevPing);
+        if (pingChanged){
+          row.setAttribute("data-last-ping", String(newPing));
+          blinkRow(row, t.status === "up");
+        }
+
         flashIfChanged(row.querySelector(".last-ping"), t.last_ping_human || "-");
-        flashIfChanged(row.querySelector(".last-sent"), t.last_sent_human || "-");
+        flashIfChanged(row.querySelector(".last-resp"), t.last_response_human || "-");
 
         const iv = row.querySelector(".interval-input");
         if (iv && force){
@@ -990,6 +1338,7 @@ TEMPLATE = r"""
     if (e.key === "Escape"){
       if (logModal.classList.contains("show")) hide(logModal);
       if (addModal.classList.contains("show")) hide(addModal);
+      if (runModal.classList.contains("show")) hide(runModal);
       closeAllMenus();
     }
   });
@@ -999,6 +1348,7 @@ TEMPLATE = r"""
 </body>
 </html>
 """
+
 
 @APP.get("/")
 def index():
@@ -1015,9 +1365,29 @@ def index():
         icons=ICONS
     )
 
+
 @APP.get("/state")
 def state():
     return jsonify({"updated": int(time.time()), "targets": merged_targets()})
+
+
+@APP.get("/runtime")
+def runtime():
+    try:
+        if os.path.exists(RUNTIME_FILE):
+            with open(RUNTIME_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # ensure keys exist
+            data.setdefault("status", "idle")
+            data.setdefault("current", "")
+            data.setdefault("done", 0)
+            data.setdefault("due", 0)
+            data.setdefault("updated", int(time.time()))
+            return jsonify(data)
+    except Exception:
+        pass
+    return jsonify({"status": "idle", "current": "", "done": 0, "due": 0, "updated": int(time.time())})
+
 
 @APP.get("/logs")
 def logs():
@@ -1036,10 +1406,12 @@ def logs():
     except Exception as e:
         return jsonify({"source": "journalctl (error)", "lines": 1, "updated": updated, "text": f"(journalctl error: {str(e)})"})
 
+
 @APP.post("/api/run-now")
 def api_run_now():
     rc, out = run_cmd(["run"])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
 
 @APP.post("/api/test")
 def api_test():
@@ -1047,11 +1419,13 @@ def api_test():
     rc, out = run_cmd(["test", name])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
+
 @APP.post("/api/remove")
 def api_remove():
     name = request.form.get("name", "")
     rc, out = run_cmd(["remove", name])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
 
 @APP.post("/api/add")
 def api_add():
@@ -1062,12 +1436,14 @@ def api_add():
     rc, out = run_cmd(["add", name, ip, endpoint, interval])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
+
 @APP.post("/api/set-target-interval")
 def api_set_target_interval():
     name = request.form.get("name", "")
     sec = request.form.get("seconds", "")
     rc, out = run_cmd(["set-target-interval", name, sec])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
 
 if __name__ == "__main__":
     APP.run(host=BIND_HOST, port=BIND_PORT)
