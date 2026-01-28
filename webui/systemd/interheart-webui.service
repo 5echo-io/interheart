@@ -1,0 +1,20 @@
+[Unit]
+Description=5echo interheart Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/uptimerobot-heartbeat/webui
+
+# Env settes i override.conf av install.sh (WEBUI_BIND + WEBUI_PORT)
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/opt/uptimerobot-heartbeat/webui/.venv/bin/python /opt/uptimerobot-heartbeat/webui/app.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
