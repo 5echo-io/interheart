@@ -22,7 +22,6 @@ TEMPLATE = r"""
   <style>
     :root{
       --bg:#070b14;
-      --panel:#0b1326;
       --line:rgba(255,255,255,.08);
       --text:rgba(255,255,255,.92);
       --muted:rgba(255,255,255,.62);
@@ -51,7 +50,7 @@ TEMPLATE = r"""
       border:1px solid var(--line); color:var(--muted);
     }
     .subtitle{color:var(--muted); font-size:13px; line-height:1.4}
-    .grid{display:grid; grid-template-columns: 1.15fr .85fr; gap:16px;}
+    .grid{display:grid; grid-template-columns: 1fr; gap:16px;}
     .card{
       background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
       border:1px solid var(--line);
@@ -65,7 +64,7 @@ TEMPLATE = r"""
       border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.18);
       color:var(--text); padding:10px 12px; outline:none;
     }
-    input{flex:1; min-width:180px;}
+    input{flex:1; min-width:160px;}
     input::placeholder{color:rgba(255,255,255,.35)}
     button{
       cursor:pointer; font-weight:750;
@@ -77,7 +76,7 @@ TEMPLATE = r"""
     .mini{font-size:12px; padding:8px 10px; border-radius:12px;}
     .sep{height:1px; background:var(--line); margin:12px 0;}
     table{width:100%; border-collapse:collapse; overflow:hidden; border-radius:14px;}
-    th, td{padding:10px 10px; border-bottom:1px solid var(--line); font-size:13px;}
+    th, td{padding:10px 10px; border-bottom:1px solid var(--line); font-size:13px; vertical-align:top;}
     th{color:var(--muted); font-weight:750; text-align:left}
     td code{font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.85)}
     .chip{
@@ -89,11 +88,6 @@ TEMPLATE = r"""
       border:1px solid var(--line); background:rgba(255,255,255,.03);
       border-radius:14px; padding:12px; color:var(--muted); font-size:13px;
       margin-bottom:14px;
-    }
-    .logs{
-      font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.75);
-      background:rgba(0,0,0,.18); border:1px solid var(--line);
-      border-radius:14px; padding:12px; white-space:pre-wrap; max-height:340px; overflow:auto;
     }
 
     /* v3 footer */
@@ -119,7 +113,7 @@ TEMPLATE = r"""
     }
 
     .hint{color:rgba(255,255,255,.55); font-size:12px}
-    @media (max-width: 940px){ .grid{grid-template-columns:1fr;} .footer{flex-direction:column; align-items:flex-start;} }
+    @media (max-width: 940px){ .footer{flex-direction:column; align-items:flex-start;} }
   </style>
 </head>
 <body>
@@ -128,8 +122,8 @@ TEMPLATE = r"""
     <div class="brand">
       <div class="title">interheart <span class="pill">ping → endpoint</span></div>
       <div class="subtitle">
-        Pinger interne targets og sender request til valgt endpoint når ping er OK.<br/>
-        Endpoint kan være UptimeRobot, Kuma Push, webhook, intern API – you name it.
+        Hver target har sitt eget ping-intervall. Interheart sjekker ofte, men pinger kun når target er “due”.<br/>
+        Ping OK → sender endpoint. Ping feiler → sender ikke.
       </div>
     </div>
 
@@ -145,16 +139,17 @@ TEMPLATE = r"""
   <div class="grid">
     <div class="card">
       <h3>Targets</h3>
-      <div class="hint">Hver target har egen endpoint-URL. Ping OK → request sendes. Ping feiler → sendes ikke.</div>
+      <div class="hint">Intervall settes per target. (10–86400 sek)</div>
       <div class="sep"></div>
 
       <table>
         <thead>
           <tr>
-            <th>Name</th>
-            <th>IP</th>
+            <th style="width: 180px;">Name</th>
+            <th style="width: 120px;">IP</th>
+            <th style="width: 120px;">Intervall</th>
             <th>Endpoint</th>
-            <th>Handling</th>
+            <th style="width: 220px;">Handling</th>
           </tr>
         </thead>
         <tbody>
@@ -162,6 +157,16 @@ TEMPLATE = r"""
           <tr>
             <td><code>{{ t.name }}</code></td>
             <td><code>{{ t.ip }}</code></td>
+            <td>
+              <div class="row">
+                <span class="chip">{{ t.interval }}s</span>
+                <form method="post" action="/set-target-interval" style="display:inline">
+                  <input type="hidden" name="name" value="{{ t.name }}">
+                  <input class="mini" style="width:110px" name="seconds" type="number" min="10" max="86400" step="1" placeholder="sek" required>
+                  <button class="mini btn-ghost" type="submit">Sett</button>
+                </form>
+              </div>
+            </td>
             <td><code>{{ t.endpoint_masked }}</code></td>
             <td class="row">
               <form method="post" action="/test" style="display:inline">
@@ -185,29 +190,14 @@ TEMPLATE = r"""
         <div class="row">
           <input name="name" placeholder="name (f.eks anl-0161-core-gw)" required>
           <input name="ip" placeholder="ip (f.eks 10.5.0.1)" required>
+          <input name="interval" type="number" min="10" max="86400" step="1" placeholder="intervall (sek)" required>
         </div>
         <div class="row">
           <input name="endpoint" placeholder="endpoint url (https://...)" required>
           <button type="submit">Legg til</button>
         </div>
+        <div class="hint">Tips: Bruk 30–120 sek på “kritiske” targets. 300–900 sek på ting som tåler litt slack.</div>
       </form>
-    </div>
-
-    <div class="card">
-      <h3>Schedule</h3>
-      <div class="row"><span class="chip">Intervall: <b>{{ interval }}</b></span></div>
-      <div class="sep"></div>
-      <form method="post" action="/set-interval">
-        <div class="row">
-          <input name="seconds" type="number" min="10" max="3600" step="1" placeholder="sekunder (10–3600)" required>
-          <button type="submit">Sett intervall</button>
-        </div>
-        <div class="hint">Tips: 60 sek er ofte sweetspot. Juster etter hvor raskt du vil varsles.</div>
-      </form>
-
-      <div class="sep"></div>
-      <h3>Siste logs</h3>
-      <div class="logs">{{ logs }}</div>
 
       <div class="footer">
         <div>
@@ -235,32 +225,45 @@ def run_cmd(args):
 
 def parse_targets(list_output: str):
   targets = []
+  in_table = False
   for line in list_output.splitlines():
-    line = line.strip()
-    if line.startswith("- "):
-      parts = line.replace("-", "", 1).strip().split()
-      name = parts[0] if len(parts) > 0 else ""
-      ip = parts[1] if len(parts) > 1 else ""
-      endpoint_masked = parts[2] if len(parts) > 2 else ""
-      targets.append({"name": name, "ip": ip, "endpoint_masked": endpoint_masked})
-  return targets
+    line = line.rstrip()
+    if line.startswith("--------------------------------------------------------------------------------"):
+      in_table = True
+      continue
+    if not in_table:
+      continue
+    if line.strip().startswith("NAME") or line.strip().startswith("Targets:"):
+      continue
+    if not line.strip():
+      continue
 
-def get_logs():
-  p = subprocess.run(["journalctl", "-t", "interheart", "-n", "80", "--no-pager"], capture_output=True, text=True)
-  return (p.stdout or "").strip() or "(ingen logs ennå)"
+    # Format: name ip interval endpoint
+    parts = line.split()
+    if len(parts) < 4:
+      continue
+
+    name = parts[0]
+    ip = parts[1]
+    interval = parts[2].replace("s", "").strip()
+    endpoint_masked = parts[3]
+
+    targets.append({
+      "name": name,
+      "ip": ip,
+      "interval": interval,
+      "endpoint_masked": endpoint_masked
+    })
+  return targets
 
 @APP.get("/")
 def index():
   message = request.args.get("message", "")
   _, out = run_cmd(["list"])
-  interval = run_cmd(["get-interval"])[1]
   targets = parse_targets(out)
-  logs = get_logs()
   return render_template_string(
     TEMPLATE,
     targets=targets,
-    logs=logs,
-    interval=interval,
     bind_host=BIND_HOST,
     bind_port=BIND_PORT,
     message=message,
@@ -273,7 +276,8 @@ def add():
   name = request.form.get("name", "")
   ip = request.form.get("ip", "")
   endpoint = request.form.get("endpoint", "")
-  rc, out = run_cmd(["add", name, ip, endpoint])
+  interval = request.form.get("interval", "60")
+  rc, out = run_cmd(["add", name, ip, endpoint, interval])
   msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
   return redirect(url_for("index", message=msg))
 
@@ -297,10 +301,11 @@ def test():
   msg = ("TEST OK: " + out) if rc == 0 else ("TEST: " + out)
   return redirect(url_for("index", message=msg))
 
-@APP.post("/set-interval")
-def set_interval():
+@APP.post("/set-target-interval")
+def set_target_interval():
+  name = request.form.get("name", "")
   sec = request.form.get("seconds", "")
-  rc, out = run_cmd(["set-interval", sec])
+  rc, out = run_cmd(["set-target-interval", name, sec])
   msg = ("OK: " + out) if rc == 0 else ("FEIL: " + out)
   return redirect(url_for("index", message=msg))
 
