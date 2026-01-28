@@ -5,7 +5,7 @@ import time
 
 APP = Flask(__name__)
 
-UI_VERSION = "v4"
+UI_VERSION = "v5"
 COPYRIGHT_YEAR = "2026"
 
 CLI = "/usr/local/bin/interheart"
@@ -22,16 +22,12 @@ TEMPLATE = r"""
   <style>
     :root{
       --bg:#060a12;
-      --panel:#0b1326;
-      --panel2:#091022;
       --line:rgba(255,255,255,.085);
       --text:rgba(255,255,255,.92);
       --muted:rgba(255,255,255,.62);
 
-      /* AU-ish vibe */
       --navy:#012746;
-      --accent:#2a74ff; /* primary action */
-      --accent2:#58a6ff;
+      --accent:#2a74ff;
       --danger:#ff3b5c;
 
       --good:#38d39f;
@@ -98,7 +94,6 @@ TEMPLATE = r"""
       filter:brightness(1.03);
     }
 
-    /* Buttons (modern) */
     .btn{
       border-radius:14px;
       border:1px solid var(--line);
@@ -132,14 +127,8 @@ TEMPLATE = r"""
     }
     .btn-danger:hover{border-color:rgba(255,59,92,.50);}
 
-    .btn-mini{
-      font-size:12px; padding:8px 10px; border-radius:12px;
-    }
-
-    .icon{
-      width:14px; height:14px; display:inline-block;
-      opacity:.9;
-    }
+    .btn-mini{font-size:12px; padding:8px 10px; border-radius:12px;}
+    .icon{width:14px; height:14px; display:inline-block; opacity:.9;}
 
     .sep{height:1px; background:var(--line); margin:12px 0;}
 
@@ -165,6 +154,19 @@ TEMPLATE = r"""
       0%{box-shadow:0 0 0 0 rgba(56,211,159,.35)}
       70%{box-shadow:0 0 0 10px rgba(56,211,159,0)}
       100%{box-shadow:0 0 0 0 rgba(56,211,159,0)}
+    }
+
+    /* Due highlight */
+    tr.due-soon{
+      background: linear-gradient(90deg, rgba(42,116,255,.10), transparent 60%);
+    }
+    tr.due-now{
+      background: linear-gradient(90deg, rgba(255,211,77,.12), transparent 65%);
+      animation: dueFlash 1.2s ease-in-out infinite;
+    }
+    @keyframes dueFlash{
+      0%,100%{filter:brightness(1.00)}
+      50%{filter:brightness(1.08)}
     }
 
     .msg{
@@ -197,7 +199,7 @@ TEMPLATE = r"""
     .hint{color:rgba(255,255,255,.55); font-size:12px}
     .right-actions{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
     .kbd{font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.68); padding:6px 8px; border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,.18);}
-    .countdown{font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.78)}
+    .countdown{font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.80)}
     .small{font-size:12px; color:rgba(255,255,255,.62)}
     .muted{color:rgba(255,255,255,.62)}
     .nowrap{white-space:nowrap}
@@ -236,6 +238,74 @@ TEMPLATE = r"""
       to{transform: translateY(8px); opacity:0;}
     }
 
+    /* Working overlay */
+    .overlay{
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.45);
+      backdrop-filter: blur(8px);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:9998;
+    }
+    .overlay.show{display:flex;}
+    .overlay-card{
+      width:min(560px, calc(100vw - 24px));
+      border:1px solid var(--line);
+      border-radius:20px;
+      background:rgba(10,14,24,.78);
+      box-shadow: 0 22px 60px rgba(0,0,0,.65);
+      padding:16px 16px;
+    }
+    .overlay-top{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .spinner{
+      width:18px; height:18px; border-radius:999px;
+      border:2px solid rgba(255,255,255,.22);
+      border-top-color: rgba(42,116,255,.85);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .overlay-title{display:flex; align-items:center; gap:10px; font-weight:950;}
+    .overlay-body{margin-top:10px; color:rgba(255,255,255,.70); font-size:13px; line-height:1.45}
+
+    /* Auto refresh toggle */
+    .toggle{
+      display:inline-flex; align-items:center; gap:8px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      padding:7px 10px;
+      border-radius:14px;
+      cursor:pointer;
+      user-select:none;
+      transition: border-color .12s ease, filter .12s ease;
+    }
+    .toggle:hover{border-color:rgba(42,116,255,.35); filter:brightness(1.03);}
+    .switch{
+      width:34px; height:18px;
+      border-radius:999px;
+      background:rgba(255,255,255,.12);
+      border:1px solid var(--line);
+      position:relative;
+    }
+    .knob{
+      position:absolute;
+      top:1px; left:1px;
+      width:14px; height:14px;
+      border-radius:99px;
+      background:rgba(255,255,255,.70);
+      transition: transform .14s ease, background .14s ease;
+    }
+    .toggle.on .switch{background:rgba(42,116,255,.22); border-color:rgba(42,116,255,.30);}
+    .toggle.on .knob{transform: translateX(16px); background:rgba(255,255,255,.92);}
+    .toggle small{color:rgba(255,255,255,.62); font-size:12px}
+    .autorefresh-info{font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.66);}
+
     @media (max-width: 940px){
       .footer{flex-direction:column; align-items:flex-start;}
       .toast-wrap{right:12px; left:12px}
@@ -245,6 +315,16 @@ TEMPLATE = r"""
 </head>
 <body>
 
+<div class="overlay" id="overlay">
+  <div class="overlay-card">
+    <div class="overlay-top">
+      <div class="overlay-title"><span class="spinner"></span> <span id="ovTitle">Jobber…</span></div>
+      <div class="kbd">venter</div>
+    </div>
+    <div class="overlay-body" id="ovBody">Utfører handlingen. Dette tar som regel bare noen sekunder.</div>
+  </div>
+</div>
+
 <div class="toast-wrap" id="toastWrap"></div>
 
 <div class="wrap">
@@ -252,13 +332,25 @@ TEMPLATE = r"""
     <div class="brand">
       <div class="title">interheart <span class="badge">targets</span></div>
       <div class="subtitle">
-        Per target: status + next ping + intervall. Ping OK → sender endpoint.
+        Steg 5: overlay/spinner + “due now” highlight + valgfri auto-refresh (client-side).
       </div>
     </div>
 
     <div class="right-actions">
-      <div class="kbd">local: <b>{{ bind_host }}:{{ bind_port }}</b></div>
-      <form method="post" action="/run-now" data-toast="Kjører sjekk…" data-toast2="Dette går fort – refresher ikke siden automatisk.">
+      <div class="toggle" id="autoToggle" title="Auto refresh klient-side">
+        <div class="switch"><div class="knob"></div></div>
+        <div>
+          <div style="font-weight:900; font-size:12px;">Auto refresh</div>
+          <small>hver <span id="autoEvery">15</span>s</small>
+        </div>
+      </div>
+      <div class="autorefresh-info" id="autoStatus">off</div>
+
+      <form method="post" action="/run-now"
+            data-working-title="Kjører sjekk nå…"
+            data-working-body="Kaller interheart run. (timeren kjører også i bakgrunnen.)"
+            data-toast="Kjører sjekk…"
+            data-toast2="Dette går fort – du kan refreshe etterpå om du vil.">
         <button class="btn btn-primary btn-mini" type="submit">
           <span class="icon">⚡</span> Kjør nå
         </button>
@@ -291,7 +383,7 @@ TEMPLATE = r"""
       </thead>
       <tbody>
       {% for t in targets %}
-        <tr>
+        <tr data-due="{{ t.next_due_epoch }}">
           <td><code>{{ t.name }}</code></td>
           <td><code>{{ t.ip }}</code></td>
 
@@ -303,10 +395,7 @@ TEMPLATE = r"""
           </td>
 
           <td>
-            <div class="countdown"
-                 data-due="{{ t.next_due_epoch }}">
-              …
-            </div>
+            <div class="countdown" data-due="{{ t.next_due_epoch }}">…</div>
             <div class="small">due: <code>{{ t.next_due_epoch }}</code></div>
           </td>
 
@@ -319,6 +408,8 @@ TEMPLATE = r"""
 
           <td class="row">
             <form method="post" action="/set-target-interval" style="display:inline"
+                  data-working-title="Oppdaterer intervall…"
+                  data-working-body="{{ t.name }} — oppdaterer intervall og setter target “due” nå."
                   data-toast="Oppdaterer intervall…"
                   data-toast2="{{ t.name }}">
               <input type="hidden" name="name" value="{{ t.name }}">
@@ -327,6 +418,8 @@ TEMPLATE = r"""
             </form>
 
             <form method="post" action="/test" style="display:inline"
+                  data-working-title="Tester target…"
+                  data-working-body="{{ t.name }} ({{ t.ip }}) — ping + endpoint."
                   data-toast="Tester target…"
                   data-toast2="{{ t.name }} ({{ t.ip }})">
               <input type="hidden" name="name" value="{{ t.name }}">
@@ -334,6 +427,8 @@ TEMPLATE = r"""
             </form>
 
             <form method="post" action="/remove" style="display:inline"
+                  data-working-title="Fjerner target…"
+                  data-working-body="{{ t.name }} — fjerner fra config og state."
                   data-toast="Fjerner target…"
                   data-toast2="{{ t.name }}"
                   onsubmit="return confirm('Fjerne {{ t.name }}?');">
@@ -349,7 +444,11 @@ TEMPLATE = r"""
     <div class="sep"></div>
 
     <h3>Legg til target</h3>
-    <form method="post" action="/add" data-toast="Legger til target…" data-toast2="Sjekk at endpoint er korrekt.">
+    <form method="post" action="/add"
+          data-working-title="Legger til target…"
+          data-working-body="Skriver til config + initialiserer state (due nå)."
+          data-toast="Legger til target…"
+          data-toast2="Sjekk at endpoint er korrekt.">
       <div class="row">
         <input name="name" placeholder="name (f.eks anl-0161-core-gw)" required>
         <input name="ip" placeholder="ip (f.eks 10.5.0.1)" required>
@@ -378,7 +477,7 @@ TEMPLATE = r"""
 
 <script>
 (function(){
-  // Countdown ticker
+  // Countdown ticker + row highlight
   function fmt(sec){
     if (sec <= 0) return "due now";
     if (sec < 60) return sec + "s";
@@ -386,19 +485,33 @@ TEMPLATE = r"""
     var s = sec % 60;
     return m + "m " + (s<10?("0"+s):s) + "s";
   }
+
   function tick(){
-    var nodes = document.querySelectorAll(".countdown[data-due]");
     var now = Math.floor(Date.now()/1000);
-    nodes.forEach(function(n){
+
+    document.querySelectorAll(".countdown[data-due]").forEach(function(n){
       var due = parseInt(n.getAttribute("data-due") || "0", 10);
       if (!due || due <= 0){ n.textContent = "due now"; return; }
       n.textContent = fmt(due - now);
+    });
+
+    document.querySelectorAll("tr[data-due]").forEach(function(tr){
+      var due = parseInt(tr.getAttribute("data-due") || "0", 10);
+      tr.classList.remove("due-now","due-soon");
+      if (!due || due <= 0) return;
+
+      var left = due - now;
+      if (left <= 0){
+        tr.classList.add("due-now");
+      } else if (left <= 10){
+        tr.classList.add("due-soon");
+      }
     });
   }
   tick();
   setInterval(tick, 1000);
 
-  // Toasts (local UI feedback)
+  // Toasts
   var wrap = document.getElementById("toastWrap");
   function toast(title, body){
     var el = document.createElement("div");
@@ -414,11 +527,68 @@ TEMPLATE = r"""
     }, 1800);
   }
 
-  document.querySelectorAll("form[data-toast]").forEach(function(f){
+  // Working overlay
+  var overlay = document.getElementById("overlay");
+  var ovTitle = document.getElementById("ovTitle");
+  var ovBody = document.getElementById("ovBody");
+  function showOverlay(t, b){
+    ovTitle.textContent = t || "Jobber…";
+    ovBody.textContent = b || "Utfører handlingen.";
+    overlay.classList.add("show");
+  }
+
+  // Hook forms
+  document.querySelectorAll("form[data-toast], form[data-working-title]").forEach(function(f){
     f.addEventListener("submit", function(){
-      toast(f.getAttribute("data-toast"), f.getAttribute("data-toast2") || "");
+      var t = f.getAttribute("data-toast");
+      var b = f.getAttribute("data-toast2") || "";
+      if (t) toast(t, b);
+
+      var wt = f.getAttribute("data-working-title");
+      var wb = f.getAttribute("data-working-body");
+      if (wt || wb) showOverlay(wt || "Jobber…", wb || "");
     });
   });
+
+  // Auto refresh (client-side)
+  var toggle = document.getElementById("autoToggle");
+  var status = document.getElementById("autoStatus");
+  var every = document.getElementById("autoEvery");
+
+  var REFRESH_SEC = 15;
+  every.textContent = String(REFRESH_SEC);
+
+  var key = "interheart_autorefresh";
+  var enabled = (localStorage.getItem(key) === "1");
+  var timer = null;
+
+  function apply(){
+    if (enabled){
+      toggle.classList.add("on");
+      status.textContent = "on (" + REFRESH_SEC + "s)";
+      if (!timer){
+        timer = setInterval(function(){
+          window.location.reload();
+        }, REFRESH_SEC * 1000);
+      }
+    } else {
+      toggle.classList.remove("on");
+      status.textContent = "off";
+      if (timer){
+        clearInterval(timer);
+        timer = null;
+      }
+    }
+  }
+
+  toggle.addEventListener("click", function(){
+    enabled = !enabled;
+    localStorage.setItem(key, enabled ? "1" : "0");
+    apply();
+    toast("Auto refresh " + (enabled ? "på" : "av"), enabled ? ("Refresher hver " + REFRESH_SEC + "s") : "Ingen auto refresh");
+  });
+
+  apply();
 })();
 </script>
 
