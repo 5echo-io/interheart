@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 5echo UpTimeRobot Heartbeat Bridge
+# 5echo - UpTimeRobot Heartbeat Bridge
 # - Maintains a list of internal IP targets
 # - If a target responds to ping -> send its own UpTimeRobot heartbeat
-# - Runs via systemd timer (recommended), but can be run manually too
+# - If ping fails -> do NOT send heartbeat (UpTimeRobot will alert when missing)
 #
 # Config format (pipe-delimited):
 # NAME|IP|HEARTBEAT_URL
@@ -36,11 +36,9 @@ log() {
   local msg="$1"
   local line
   line="$(date '+%Y-%m-%d %H:%M:%S') - ${msg}"
-  # journald (systemd)
   if command -v systemd-cat >/dev/null 2>&1; then
     echo "$line" | systemd-cat -t "$APP_NAME" || true
   fi
-  # optional file log
   echo "$line" >> "$LOG_FILE" 2>/dev/null || true
 }
 
@@ -61,8 +59,8 @@ Bruk:
 
 Eksempel:
   sudo $0 install
-  sudo $0 add core-gw 10.5.0.1 https://heartbeat.uptimerobot.com/XXXX
-  sudo $0 add core-switch 10.5.10.2 https://heartbeat.uptimerobot.com/YYYY
+  sudo $0 add anl-0161-core-gw 10.5.0.1 https://heartbeat.uptimerobot.com/XXXX
+  sudo $0 add anl-0161-core-switch 10.5.10.2 https://heartbeat.uptimerobot.com/YYYY
   sudo $0 list
   sudo $0 enable
 
@@ -73,7 +71,6 @@ EOF
 
 validate_name() {
   local name="$1"
-  # allow a-zA-Z0-9._- (no spaces)
   if [[ ! "$name" =~ ^[a-zA-Z0-9._-]+$ ]]; then
     echo "Ugyldig name '$name'. Bruk kun a-zA-Z0-9._-" >&2
     exit 1
@@ -82,12 +79,10 @@ validate_name() {
 
 validate_ip() {
   local ip="$1"
-  # simple IPv4 check
   if [[ ! "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
     echo "Ugyldig IP '$ip'." >&2
     exit 1
   fi
-  # range check 0-255 per octet
   IFS='.' read -r o1 o2 o3 o4 <<<"$ip"
   for o in "$o1" "$o2" "$o3" "$o4"; do
     if (( o < 0 || o > 255 )); then
@@ -156,7 +151,6 @@ remove_target() {
     exit 1
   fi
 
-  # remove line
   tmp="$(mktemp)"
   grep -vE "^${name}\|" "$CONFIG_FILE" > "$tmp"
   cat "$tmp" > "$CONFIG_FILE"
@@ -178,13 +172,11 @@ list_targets() {
 
   echo "Targets:"
   echo "------------------------------------------------------------"
-  # NAME | IP | URL (masked a bit)
   while IFS='|' read -r name ip url; do
     [[ -z "$name" ]] && continue
     masked="$url"
-    # mask token-ish tail a bit (best-effort)
     masked="$(echo "$masked" | sed -E 's#(https?://[^/]+/).{4,}#\1***#')"
-    printf "  - %-20s %-15s %s\n" "$name" "$ip" "$masked"
+    printf "  - %-24s %-15s %s\n" "$name" "$ip" "$masked"
   done < "$CONFIG_FILE"
   echo "------------------------------------------------------------"
 }
@@ -193,7 +185,6 @@ ping_ok() {
   local ip="$1"
   local count="${2:-$PING_COUNT_DEFAULT}"
   local timeout="${3:-$PING_TIMEOUT_DEFAULT}"
-
   ping -c "$count" -W "$timeout" "$ip" > /dev/null 2>&1
 }
 
@@ -220,10 +211,9 @@ run_checks() {
 
     if ping_ok "$ip"; then
       ok=$((ok+1))
-      # If ping OK, try send heartbeat. If curl fails (WAN down), we count and move on.
       if send_heartbeat "$url"; then
         sent=$((sent+1))
-        log "OK  name=$name ip=$ip heartbeat=sent"
+        log "OK   name=$name ip=$ip heartbeat=sent"
       else
         curl_fail=$((curl_fail+1))
         log "WARN name=$name ip=$ip ping=ok heartbeat=FAILED(curl)"
@@ -250,7 +240,6 @@ install_systemd() {
   local service_path="/etc/systemd/system/${APP_NAME}.service"
   local timer_path="/etc/systemd/system/${APP_NAME}.timer"
 
-  # install script as a stable command
   cp -f "$0" "$bin_path"
   chmod 755 "$bin_path"
 
@@ -286,7 +275,7 @@ EOF
   echo "  - $service_path"
   echo "  - $timer_path"
   echo ""
-  echo "Neste:"
+  echo "Neste steg:"
   echo "  sudo $bin_path enable"
 }
 
@@ -299,7 +288,6 @@ uninstall_systemd() {
 
   if command -v systemctl >/dev/null 2>&1; then
     systemctl disable --now "${APP_NAME}.timer" >/dev/null 2>&1 || true
-    systemctl disable --now "${APP_NAME}.service" >/dev/null 2>&1 || true
     rm -f "$service_path" "$timer_path"
     systemctl daemon-reload || true
   fi
@@ -311,20 +299,14 @@ uninstall_systemd() {
 
 enable_timer() {
   require_root enable
-  if ! command -v systemctl >/dev/null 2>&1; then
-    echo "systemd ikke tilgjengelig." >&2
-    exit 1
-  fi
+  command -v systemctl >/dev/null 2>&1 || { echo "systemd ikke tilgjengelig." >&2; exit 1; }
   systemctl enable --now "${APP_NAME}.timer"
   echo "Aktivert: ${APP_NAME}.timer"
 }
 
 disable_timer() {
   require_root disable
-  if ! command -v systemctl >/dev/null 2>&1; then
-    echo "systemd ikke tilgjengelig." >&2
-    exit 1
-  fi
+  command -v systemctl >/dev/null 2>&1 || { echo "systemd ikke tilgjengelig." >&2; exit 1; }
   systemctl disable --now "${APP_NAME}.timer"
   echo "Deaktivert: ${APP_NAME}.timer"
 }
