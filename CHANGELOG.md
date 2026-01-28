@@ -3,6 +3,15 @@ All notable changes to this project will be documented in this file.
 
 This project follows Semantic Versioning (SemVer).
 
+## [4.5.0] - 2026-01-28
+### Changed
+- Logs modal now reads journal output using `journalctl -o cat` to remove syslog prefixes and show clean interheart log lines only.
+- Run Now is now non-blocking: WebUI starts `interheart run-now` as a background process and polls runtime + result endpoints for real-time progress.
+
+### Fixed
+- Run Now progress previously appeared static until completion because the web request was blocking. Progress now updates while running.
+
+
 ## [4.4.0] - 2026-01-28
 ### Added
 - `interheart run-now` command to force-check all targets immediately (ignores per-target schedules).
