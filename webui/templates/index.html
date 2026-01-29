@@ -6,6 +6,7 @@
     <title>{{ app_name }}</title>
 
     <link rel="stylesheet" href="/static/app.css" />
+    <script src="/static/app.js" defer></script>
   </head>
 
   <body>
@@ -101,7 +102,14 @@
 
             <div class="field">
               <label class="label" for="fInterval">Interval (seconds)</label>
-              <input class="input" id="fInterval" type="number" min="5" max="{{ max_interval }}" value="{{ default_interval }}" />
+              <input
+                class="input"
+                id="fInterval"
+                type="number"
+                min="5"
+                max="{{ max_interval }}"
+                value="{{ default_interval }}"
+              />
               <div class="help">Keep it sane. 5s – {{ max_interval }}s.</div>
             </div>
           </div>
@@ -125,7 +133,7 @@
       <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modalRemoveTitle">
         <div class="modal__header">
           <h3 class="modal__title" id="modalRemoveTitle">Remove target</h3>
-          <button class="iconbtn" title="Close" data-close="modalRemove">✕</button>
+          <!-- (Intentionally no X/Close button here – you wanted only Cancel) -->
         </div>
 
         <div class="modal__body">
@@ -160,22 +168,10 @@
           <div class="divider"></div>
 
           <div class="row row--end">
-            <!-- NB: knapp finnes fortsatt, men JS kan velge å bruke den eller ikke -->
             <button class="btn" data-close="modalInfo">Close</button>
           </div>
         </div>
       </div>
     </div>
-
-    <script>
-      window.__INTERHEART__ = {
-        appName: "{{ app_name }}",
-        defaultInterval: {{ default_interval }},
-        maxInterval: {{ max_interval }},
-      };
-    </script>
-
-    <!-- All UI logic lives here now -->
-    <script src="/static/app.js"></script>
   </body>
 </html>
