@@ -5,23 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>interheart</title>
 
-  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/app.css?v={{ ui_version }}">
 </head>
 
 <body>
-  <!-- JS config + icons -->
-  <script>
-    window.APP_CONFIG = {
-      poll_seconds: {{ poll_seconds|default(2)|int }},
-      log_lines: {{ log_lines|default(200)|int }},
-      bind_host: {{ bind_host|tojson }},
-      bind_port: {{ bind_port|tojson }},
-      ui_version: {{ ui_version|tojson }},
-      copyright_year: {{ copyright_year|tojson }}
-    };
-    window.ICONS = {{ icons|tojson }};
-  </script>
-
   <div class="toasts" id="toasts"></div>
 
   <!-- Logs modal -->
@@ -36,11 +23,10 @@
           <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="height:34px; padding:0 12px; border-radius:12px; min-width:220px;">
 
           <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">
-            <span class="ico">{{ icons.refresh|safe }}</span> Reload
+            {{ icons.refresh|safe }} Reload
           </button>
 
           <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
-            <!-- inline SVG for Copy (always shows) -->
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                  xmlns="http://www.w3.org/2000/svg" style="opacity:.98">
               <path d="M9 9h11v11H9z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
@@ -50,7 +36,7 @@
           </button>
 
           <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">
-            <span class="ico">{{ icons.close|safe }}</span> Close
+            {{ icons.close|safe }} Close
           </button>
         </div>
       </div>
@@ -81,7 +67,7 @@
             <span id="runLiveText">Running…</span>
           </div>
           <button class="btn btn-ghost btn-mini" id="btnCloseRun" type="button">
-            <span class="ico">{{ icons.close|safe }}</span> Close
+            {{ icons.close|safe }} Close
           </button>
         </div>
       </div>
@@ -166,7 +152,7 @@
 
           <div class="modal-foot-actions">
             <button class="btn btn-primary" type="submit" id="btnAddSubmit" data-default-html="">
-              <span class="ico">{{ icons.plus|safe }}</span> Add target
+              {{ icons.plus|safe }} Add target
             </button>
             <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
           </div>
@@ -194,7 +180,7 @@
         </div>
         <div class="modal-actions">
           <button class="btn btn-ghost btn-mini" id="btnCloseConfirm" type="button">
-            <span class="ico">{{ icons.close|safe }}</span> Close
+            {{ icons.close|safe }} Close
           </button>
         </div>
       </div>
@@ -220,7 +206,6 @@
     </div>
   </div>
 
-  <!-- Main -->
   <div class="wrap">
     <div class="top">
       <div class="brand">
@@ -229,14 +214,10 @@
       </div>
 
       <div class="right-actions">
-        <button class="btn btn-ghost btn-mini" id="openLogs" type="button">
-          <span class="ico">{{ icons.logs|safe }}</span> Logs
-        </button>
-        <button class="btn btn-ghost btn-mini" id="openAdd" type="button">
-          <span class="ico">{{ icons.plus|safe }}</span> Add
-        </button>
+        <button class="btn btn-ghost btn-mini" id="openLogs" type="button">{{ icons.logs|safe }} Logs</button>
+        <button class="btn btn-ghost btn-mini" id="openAdd" type="button">{{ icons.plus|safe }} Add</button>
         <button class="btn btn-primary btn-mini" id="btnRunNow" type="button" data-default-html="">
-          <span class="ico">{{ icons.play|safe }}</span> Run now
+          {{ icons.play|safe }} Run now
         </button>
       </div>
     </div>
@@ -258,14 +239,15 @@
             <th style="width: 90px;">Actions</th>
           </tr>
         </thead>
-        <tbody>
+
+        <tbody id="targetsBody">
         {% for t in targets %}
           <tr data-name="{{ t.name }}" data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
             <td><code>{{ t.name }}</code></td>
             <td><code>{{ t.ip }}</code></td>
+
             <td>
-              <span class="chip status-chip
-                {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
+              <span class="chip status-chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
                 <span class="dot"></span>
                 <span class="status-text" style="font-weight:900; text-transform:uppercase;">{{ t.status }}</span>
               </span>
@@ -285,15 +267,11 @@
             <td style="text-align:right;">
               <div class="menu">
                 <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">
-                  <span class="ico">{{ icons.more|safe }}</span>
+                  {{ icons.more|safe }}
                 </button>
                 <div class="menu-dd" role="menu">
-                  <button class="menu-item" data-action="test" type="button">
-                    <span class="ico">{{ icons.test|safe }}</span> Test
-                  </button>
-                  <button class="menu-item danger" data-action="remove" type="button">
-                    <span class="ico">{{ icons.trash|safe }}</span> Remove
-                  </button>
+                  <button class="menu-item" data-action="test" type="button">{{ icons.test|safe }} Test</button>
+                  <button class="menu-item danger" data-action="remove" type="button">{{ icons.trash|safe }} Remove</button>
                 </div>
               </div>
             </td>
@@ -303,16 +281,20 @@
       </table>
 
       <div class="footer">
-        <div class="hint">
-          WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code>
-        </div>
-        <div>
-          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved
-        </div>
+        <div class="hint">WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
       </div>
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script>
+    // Expose config to app.js (no secrets)
+    window.__INTERHEART__ = {
+      uiVersion: {{ ui_version|tojson }},
+      pollSeconds: {{ poll_seconds|tojson }},
+      logLines: {{ log_lines|tojson }},
+    };
+  </script>
+  <script src="/static/app.js?v={{ ui_version }}"></script>
 </body>
 </html>
