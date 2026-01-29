@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# interheart CLI (entrypoint from repo)
+# install.sh vil senere kopiere denne til /usr/local/bin/interheart
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SELF_DIR}/lib"
+
+# shellcheck source=/dev/null
+source "${LIB_DIR}/core.sh"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/db.sh"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/commands.sh"
+
+main "$@"
