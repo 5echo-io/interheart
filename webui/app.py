@@ -6,7 +6,7 @@ import sqlite3
 import time
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request
 
 
 APP_NAME = "interheart"
@@ -20,8 +20,6 @@ MAX_INTERVAL = int(os.environ.get("INTERHEART_MAX_INTERVAL", "3600"))
 
 NAME_RE = re.compile(r"^[a-zA-Z0-9._-]{2,64}$")
 IP_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
-
-_initialized = False  # brukes for å kjøre db_init én gang
 
 
 def now_ts() -> int:
@@ -55,15 +53,9 @@ def db_init() -> None:
             );
             """
         )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);")
-
-
-def ensure_init() -> None:
-    global _initialized
-    if _initialized:
-        return
-    db_init()
-    _initialized = True
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);"
+        )
 
 
 def validate_name(name: str) -> None:
@@ -97,20 +89,28 @@ def row_to_dict(r: sqlite3.Row) -> Dict[str, Any]:
 
 def list_targets() -> List[Dict[str, Any]]:
     with connect_db() as conn:
-        rows = conn.execute("SELECT * FROM targets ORDER BY name COLLATE NOCASE ASC;").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM targets ORDER BY name COLLATE NOCASE ASC;"
+        ).fetchall()
     return [row_to_dict(r) for r in rows]
 
 
 def get_target(name: str) -> Optional[Dict[str, Any]]:
     with connect_db() as conn:
-        row = conn.execute("SELECT * FROM targets WHERE name = ?;", (name,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM targets WHERE name = ?;",
+            (name,),
+        ).fetchone()
     return row_to_dict(row) if row else None
 
 
 def add_target(name: str, ip: str, endpoint: str, interval: int) -> None:
     ts = now_ts()
     with connect_db() as conn:
-        existing = conn.execute("SELECT name FROM targets WHERE name = ?;", (name,)).fetchone()
+        existing = conn.execute(
+            "SELECT name FROM targets WHERE name = ?;",
+            (name,),
+        ).fetchone()
         if existing:
             raise ValueError("Target already exists")
 
@@ -143,14 +143,20 @@ def update_target(
     ts = now_ts()
 
     with connect_db() as conn:
-        row = conn.execute("SELECT * FROM targets WHERE name = ?;", (name,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM targets WHERE name = ?;",
+            (name,),
+        ).fetchone()
         if not row:
             raise ValueError("Target not found")
 
         current = row_to_dict(row)
 
         if new_name and new_name != name:
-            exists = conn.execute("SELECT name FROM targets WHERE name = ?;", (new_name,)).fetchone()
+            exists = conn.execute(
+                "SELECT name FROM targets WHERE name = ?;",
+                (new_name,),
+            ).fetchone()
             if exists:
                 raise ValueError("New name already exists")
 
@@ -181,7 +187,10 @@ def update_target(
 
         params.append(name)
 
-        conn.execute(f"UPDATE targets SET {', '.join(fields)} WHERE name = ?;", tuple(params))
+        conn.execute(
+            f"UPDATE targets SET {', '.join(fields)} WHERE name = ?;",
+            tuple(params),
+        )
 
     return get_target(new_name or name) or {}
 
@@ -192,12 +201,8 @@ def api_error(message: str, status: int = 400):
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-
-# Flask 2.x/3.x kompatibel init:
-# - før hvert request sikrer vi at DB finnes (koster nesten ingenting etter første gang)
-@app.before_request
-def _ensure_db():
-    ensure_init()
+# Flask 2.3+ fjernet before_first_request, så vi init’er DB ved oppstart (import-time).
+db_init()
 
 
 @app.get("/")
@@ -309,13 +314,14 @@ def api_patch_target(name: str):
 
 @app.get("/api/health")
 def api_health():
-    return jsonify({"ok": True, "app": APP_NAME, "db": DB_PATH, "ts": now_ts()})
-
-
-@app.get("/favicon.ico")
-def favicon():
-    # valgfritt: legg inn webui/static/favicon.ico hvis du vil
-    return send_from_directory(app.static_folder, "favicon.ico")
+    return jsonify(
+        {
+            "ok": True,
+            "app": APP_NAME,
+            "db": DB_PATH,
+            "ts": now_ts(),
+        }
+    )
 
 
 if __name__ == "__main__":
