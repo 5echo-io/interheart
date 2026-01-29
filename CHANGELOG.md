@@ -3,6 +3,28 @@ All notable changes to this project will be documented in this file.
 
 This project follows Semantic Versioning (SemVer).
 
+
+## [4.7.0] - 2026-01-29
+
+### Added
+- WebUI: Top “mini cards” showing **Up / Down / Unknown** totals and **Last run duration**.
+- WebUI: **Search** (name/IP/status) + **Quick filters** (All/Up/Down/Unknown/Disabled).
+- WebUI: Bulk actions:
+  - **Run selected** (run checks only for selected targets)
+  - **Disable selected** (disable selected targets)
+- CLI/state: **Latency measurement (ms)** from ping, stored in state and displayed in WebUI.
+
+### Changed
+- Target config extended with an `ENABLED` flag:
+  - New format: `NAME|IP|ENDPOINT_URL|INTERVAL_SEC|ENABLED`
+  - Backwards compatible parsing of older entries without the flag.
+- WebUI uses `run-now --targets ...` for “Run selected” to avoid scanning the whole list.
+
+### Fixed
+- Sudo/journalctl handling improved (cleaner logs and fewer permission-related failures).
+- More robust parsing and UI updates for runtime/state fields (including latency + disabled state).
+
+
 ## [4.6.0] - 2026-01-29
 ### Fixed
 - WebUI "Run now" no longer fails with permission denied writing `/var/lib/interheart/run_last_output.txt`.
