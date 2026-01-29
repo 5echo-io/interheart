@@ -1,155 +1,46 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Interheart installer (repo-based)
-# Installs:
-# - WebUI (venv + deps)
-# - systemd units (interheart + webui)
-# - sudoers rule for WebUI (optional controlled actions)
-# - CLI command (interheart)
-#
-# Expected repo layout:
-# /opt/interheart
-#   install.sh
-#   interheart.sh
-#   config.example
-#   cli/lib/interheart
-#   webui/app.py
-#   webui/requirements.txt
-#   webui/systemd/*.service, *.timer
-#   webui/systemd/sudoers/interheart-webui
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_DIR="/opt/interheart"
+STATE_DIR="/var/lib/interheart"
 
-REPO_DIR="/opt/interheart"
-ETC_DIR="/etc/interheart"
-VAR_LIB_DIR="/var/lib/interheart"
-LOG_DIR="/var/log/interheart"
+echo "[interheart] Installing from: ${REPO_DIR}"
 
-WEBUI_DIR="${REPO_DIR}/webui"
-WEBUI_VENV="${WEBUI_DIR}/.venv"
+# 1) Ensure base dirs
+sudo mkdir -p "${INSTALL_DIR}" "${STATE_DIR}"
+sudo chmod 755 "${STATE_DIR}"
 
-SYSTEMD_DIR="/etc/systemd/system"
-SUDOERS_DIR="/etc/sudoers.d"
-BIN_DIR="/usr/local/bin"
+# 2) Install CLI -> /usr/local/bin/interheart (from repo interheart.sh)
+sudo install -m 0755 "${REPO_DIR}/interheart.sh" /usr/local/bin/interheart
 
-need_root() {
-  if [[ "${EUID}" -ne 0 ]]; then
-    echo "ERROR: Run as root (use sudo)."
-    exit 1
-  fi
-}
+# 3) Init DB (creates /var/lib/interheart/state.db)
+sudo /usr/local/bin/interheart init-db || true
 
-say() { echo -e "==> $*"; }
+# 4) WebUI venv + deps
+if [ -d "${INSTALL_DIR}/webui" ]; then
+  echo "[interheart] Setting up webui venv"
+  sudo mkdir -p "${INSTALL_DIR}/webui"
+  sudo python3 -m venv "${INSTALL_DIR}/webui/.venv"
+  sudo "${INSTALL_DIR}/webui/.venv/bin/pip" install --upgrade pip
+  sudo "${INSTALL_DIR}/webui/.venv/bin/pip" install -r "${INSTALL_DIR}/webui/requirements.txt"
+fi
 
-install_packages() {
-  say "Installing OS packages..."
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y
-  apt-get install -y \
-    ca-certificates curl git \
-    python3 python3-venv python3-pip \
-    sqlite3 \
-    systemd
-}
+# 5) Install systemd units (FROM REPO)
+echo "[interheart] Installing systemd units"
+sudo cp -f "${INSTALL_DIR}/webui/systemd/interheart.service" /etc/systemd/system/interheart.service
+sudo cp -f "${INSTALL_DIR}/webui/systemd/interheart.timer" /etc/systemd/system/interheart.timer
+sudo cp -f "${INSTALL_DIR}/webui/systemd/interheart-webui.service" /etc/systemd/system/interheart-webui.service
 
-ensure_dirs() {
-  say "Creating directories..."
-  mkdir -p "${ETC_DIR}" "${VAR_LIB_DIR}" "${LOG_DIR}"
-  chmod 755 "${ETC_DIR}" "${VAR_LIB_DIR}" "${LOG_DIR}"
-}
+# Optional sudoers (only if you use it)
+if [ -f "${INSTALL_DIR}/webui/systemd/sudoers/interheart-webui" ]; then
+  sudo cp -f "${INSTALL_DIR}/webui/systemd/sudoers/interheart-webui" /etc/sudoers.d/interheart-webui
+  sudo chmod 0440 /etc/sudoers.d/interheart-webui
+fi
 
-install_config() {
-  if [[ ! -f "${ETC_DIR}/config" ]]; then
-    if [[ -f "${REPO_DIR}/config.example" ]]; then
-      say "Installing default config to ${ETC_DIR}/config"
-      cp "${REPO_DIR}/config.example" "${ETC_DIR}/config"
-      chmod 640 "${ETC_DIR}/config"
-    else
-      say "WARNING: config.example not found; skipping config install"
-    fi
-  else
-    say "Config exists: ${ETC_DIR}/config (leaving as-is)"
-  fi
-}
+# 6) Reload systemd
+sudo systemctl daemon-reload
 
-install_webui_venv() {
-  say "Setting up WebUI venv..."
-  if [[ ! -d "${WEBUI_DIR}" ]]; then
-    echo "ERROR: Missing webui directory: ${WEBUI_DIR}"
-    exit 1
-  fi
-
-  python3 -m venv "${WEBUI_VENV}"
-  "${WEBUI_VENV}/bin/pip" install --upgrade pip wheel setuptools
-
-  if [[ ! -f "${WEBUI_DIR}/requirements.txt" ]]; then
-    echo "ERROR: Missing ${WEBUI_DIR}/requirements.txt"
-    exit 1
-  fi
-
-  "${WEBUI_VENV}/bin/pip" install -r "${WEBUI_DIR}/requirements.txt"
-}
-
-install_systemd_units() {
-  say "Installing systemd units..."
-  local src_dir="${WEBUI_DIR}/systemd"
-
-  for f in interheart.service interheart.timer interheart-webui.service; do
-    if [[ ! -f "${src_dir}/${f}" ]]; then
-      echo "ERROR: Missing systemd unit in repo: ${src_dir}/${f}"
-      exit 1
-    fi
-    cp "${src_dir}/${f}" "${SYSTEMD_DIR}/${f}"
-  done
-
-  if [[ -f "${src_dir}/sudoers/interheart-webui" ]]; then
-    say "Installing sudoers rule..."
-    cp "${src_dir}/sudoers/interheart-webui" "${SUDOERS_DIR}/interheart-webui"
-    chmod 440 "${SUDOERS_DIR}/interheart-webui"
-  else
-    say "No sudoers file found (ok)."
-  fi
-}
-
-install_cli() {
-  say "Installing CLI..."
-  local cli_src="${REPO_DIR}/cli/lib/interheart"
-  if [[ ! -f "${cli_src}" ]]; then
-    echo "ERROR: Missing CLI entry: ${cli_src}"
-    exit 1
-  fi
-
-  cp "${cli_src}" "${BIN_DIR}/interheart"
-  chmod +x "${BIN_DIR}/interheart"
-}
-
-permissions_hint() {
-  # Keep it simple: log + state dirs writable by root/systemd services (running as root by default in our units)
-  # If later you want to run as a dedicated user, we can add users/groups and chown.
-  true
-}
-
-main() {
-  need_root
-
-  if [[ ! -d "${REPO_DIR}" ]]; then
-    echo "ERROR: Repo not found at ${REPO_DIR}"
-    echo "Clone it first: sudo git clone <repo> ${REPO_DIR}"
-    exit 1
-  fi
-
-  install_packages
-  ensure_dirs
-  install_config
-  install_webui_venv
-  install_systemd_units
-  install_cli
-  permissions_hint
-
-  say "Reloading systemd daemon..."
-  systemctl daemon-reload
-
-  say "Done."
-  say "Next: sudo systemctl enable --now interheart.service interheart.timer interheart-webui.service"
-}
-
-main "$@"
+echo "[interheart] Done."
+echo "Next:"
+echo "  sudo systemctl enable --now interheart.timer interheart-webui.service"
