@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# interheart v4.8.0
+# 5echo.io © 2026 All rights reserved
+
 APP_NAME="interheart"
 
 CONFIG_FILE="/etc/5echo/interheart.conf"
@@ -8,20 +11,33 @@ LOG_FILE="/var/log/interheart.log"
 STATE_DIR="/var/lib/interheart"
 STATE_FILE="${STATE_DIR}/state.db"
 
+RUNTIME_FILE="${STATE_DIR}/runtime.json"
+RUN_META_FILE="${STATE_DIR}/run_meta.json"
+RUN_OUT_FILE="${STATE_DIR}/run_last_output.txt"
+
+LAT_DIR="${STATE_DIR}/latency"
+LAT_KEEP=20
+
 # Defaults
 DEFAULT_INTERVAL_SEC=60
 RUNNER_DEFAULT_SEC=10   # how often systemd timer triggers
 PING_COUNT_DEFAULT=1
-PING_TIMEOUT_DEFAULT=2
+PING_TIMEOUT_DEFAULT=1
 CURL_TIMEOUT_DEFAULT=6
 
 BIN_PATH="/usr/local/bin/${APP_NAME}"
 SERVICE_PATH="/etc/systemd/system/${APP_NAME}.service"
 TIMER_PATH="/etc/systemd/system/${APP_NAME}.timer"
 
+VERSION_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/VERSION"
+VERSION="4.8.0"
+if [[ -f "$VERSION_FILE" ]]; then
+  VERSION="$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]' || echo "4.8.0")"
+fi
+
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    echo "This must be run as root. Use: sudo $0 $*" >&2
+    echo "This must run as root. Use: sudo $0 $*" >&2
     exit 1
   fi
 }
@@ -31,56 +47,58 @@ ensure_paths() {
   touch "$CONFIG_FILE"
   chmod 600 "$CONFIG_FILE"
 
-  mkdir -p "$STATE_DIR"
-  chmod 755 "$STATE_DIR"
+  mkdir -p "$STATE_DIR" "$LAT_DIR"
+  chmod 700 "$STATE_DIR"
   touch "$STATE_FILE"
   chmod 600 "$STATE_FILE"
+
+  # runtime files (used by WebUI)
+  : > "$RUNTIME_FILE" 2>/dev/null || true
+  : > "$RUN_META_FILE" 2>/dev/null || true
+  : > "$RUN_OUT_FILE" 2>/dev/null || true
+  chmod 666 "$RUNTIME_FILE" "$RUN_META_FILE" "$RUN_OUT_FILE" 2>/dev/null || true
 }
 
 log() {
   local msg="$1"
   local line
   line="$(date '+%Y-%m-%d %H:%M:%S') - ${msg}"
+
+  # avoid syslog prefix pollution in content; keep message clean
   if command -v systemd-cat >/dev/null 2>&1; then
-    echo "$line" | systemd-cat -t "$APP_NAME" || true
+    echo "$line" | systemd-cat -t "$APP_NAME" >/dev/null 2>&1 || true
   fi
   echo "$line" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 usage() {
   cat <<EOF
-5echo ${APP_NAME}
+5echo ${APP_NAME} v${VERSION}
 
-Config format (v4.7+):
-  NAME|IP|ENDPOINT_URL|INTERVAL_SEC|ENABLED
-
-Backwards compatible:
-  NAME|IP|ENDPOINT_URL|INTERVAL_SEC          (enabled defaults to 1)
-  NAME|IP|ENDPOINT_URL                       (interval defaults to ${DEFAULT_INTERVAL_SEC}, enabled=1)
-
-Commands:
+Config formats supported:
+  NAME|IP|ENDPOINT_URL
+  NAME|IP|ENDPOINT_URL|INTERVAL_SEC
+  NAME|IP|ENDPOINT_URL|INTERVAL_SEC|ENABLED   (ENABLED: 1 or 0)
 
 Targets:
   $0 add <name> <ip> <endpoint_url> [interval_sec]
   $0 remove <name>
   $0 list
+  $0 status
   $0 test <name>
   $0 set-target-interval <name> <seconds>
   $0 disable <name>
-  $0 enable-target <name>
-  $0 disable-selected <name1,name2,...>
-  $0 enable-selected <name1,name2,...>
+  $0 enable <name>
 
-Runtime:
-  $0 run                         (respects schedule + enabled state)
-  $0 run-now [--targets a,b,c]    (force run now; skips disabled unless selected)
-  $0 status                      (prints state for all targets)
+Run:
+  $0 run
+  $0 run-now [--targets name1,name2,...] [--force 1]
 
 Systemd:
   $0 install
   $0 uninstall
-  $0 enable
-  $0 disable
+  $0 enable-timer
+  $0 disable-timer
   $0 sys-status
 
 EOF
@@ -103,7 +121,7 @@ validate_ip() {
   IFS='.' read -r o1 o2 o3 o4 <<<"$ip"
   for o in "$o1" "$o2" "$o3" "$o4"; do
     if (( o < 0 || o > 255 )); then
-      echo "Invalid IP '$ip' (octet out of 0-255)." >&2
+      echo "Invalid IP '$ip' (octet out of range)." >&2
       exit 1
     fi
   done
@@ -119,8 +137,8 @@ validate_url() {
 
 validate_interval() {
   local sec="$1"
-  [[ "$sec" =~ ^[0-9]+$ ]] || { echo "Interval must be integer seconds."; exit 1; }
-  (( sec >= 10 && sec <= 86400 )) || { echo "Interval must be between 10 and 86400 seconds."; exit 1; }
+  [[ "$sec" =~ ^[0-9]+$ ]] || { echo "Interval must be an integer (seconds)."; exit 1; }
+  (( sec >= 10 && sec <= 86400 )) || { echo "Interval must be 10..86400 seconds."; exit 1; }
 }
 
 config_has_name() {
@@ -128,26 +146,22 @@ config_has_name() {
   grep -qE "^${name}\|" "$CONFIG_FILE"
 }
 
-# Parse config with backwards compatibility.
-# Returns: name|ip|url|interval|enabled
+# returns: name|ip|url|interval|enabled
 parse_config_line() {
   local line="$1"
   local name ip url interval enabled
   IFS='|' read -r name ip url interval enabled <<<"$line"
   interval="${interval:-$DEFAULT_INTERVAL_SEC}"
   enabled="${enabled:-1}"
-  if [[ "$enabled" != "0" && "$enabled" != "1" ]]; then
-    enabled="1"
-  fi
+  [[ "$enabled" != "0" ]] && enabled="1"
   echo "${name}|${ip}|${url}|${interval}|${enabled}"
 }
 
-# State db format (v4.7+):
-# NAME|NEXT_DUE_EPOCH|LAST_STATUS|LAST_PING_EPOCH|LAST_SENT_EPOCH|LAST_RTT_MS
-# Backwards compatible reading (missing LAST_RTT_MS -> -1)
+# State db format:
+# NAME|NEXT_DUE_EPOCH|LAST_STATUS|LAST_PING_EPOCH|LAST_SENT_EPOCH|LAST_LAT_MS
 state_get_line() {
   local name="$1"
-  grep -E "^${name}\|" "$STATE_FILE" || true
+  grep -E "^${name}\|" "$STATE_FILE" 2>/dev/null || true
 }
 
 state_set_line() {
@@ -157,7 +171,7 @@ state_set_line() {
 
   local tmp
   tmp="$(mktemp)"
-  grep -vE "^${name}\|" "$STATE_FILE" > "$tmp" || true
+  grep -vE "^${name}\|" "$STATE_FILE" 2>/dev/null > "$tmp" || true
   echo "$newline" >> "$tmp"
   cat "$tmp" > "$STATE_FILE"
   rm -f "$tmp"
@@ -169,36 +183,51 @@ mask_url() {
   echo "$url" | sed -E 's#(https?://[^/]+/).{4,}#\1***#'
 }
 
-# Ping and extract latency in ms (rounded int). Returns:
-#  - echoes "OK|<ms>" on success
-#  - echoes "FAIL|-1" on failure
-ping_latency() {
+ping_latency_ms() {
   local ip="$1"
+  # Use ping -c 1 -W 1 and parse "time=XX ms"
   local out
-  if out="$(ping -c "${PING_COUNT_DEFAULT}" -W "${PING_TIMEOUT_DEFAULT}" "$ip" 2>/dev/null)"; then
-    local ms
-    ms="$(echo "$out" | grep -oE 'time=[0-9.]+' | head -n1 | cut -d= -f2 || true)"
-    if [[ -n "$ms" ]]; then
-      # round
-      local ms_int
-      ms_int="$(python3 - <<PY 2>/dev/null || echo ""
-import math
-try:
-  v=float("${ms}")
-  print(int(round(v)))
-except:
-  pass
-PY
-)"
-      ms_int="${ms_int:-0}"
-      echo "OK|${ms_int}"
-      return 0
-    fi
-    echo "OK|0"
-    return 0
+  if ! out="$(ping -c "$PING_COUNT_DEFAULT" -W "$PING_TIMEOUT_DEFAULT" "$ip" 2>/dev/null)"; then
+    echo ""
+    return 1
   fi
-  echo "FAIL|-1"
-  return 1
+  local t
+  t="$(echo "$out" | sed -nE 's/.*time=([0-9.]+) ms.*/\1/p' | head -n1 || true)"
+  if [[ -z "$t" ]]; then
+    echo ""
+    return 1
+  fi
+  # convert to int ms (round)
+  python3 - <<PY 2>/dev/null || true
+import math
+t=float("$t")
+print(int(round(t)))
+PY
+  return 0
+}
+
+lat_push() {
+  local name="$1"
+  local ms="$2"
+  local f="${LAT_DIR}/${name}.json"
+  python3 - <<PY 2>/dev/null || true
+import json, os
+f="$f"
+ms=int("$ms")
+keep=int("$LAT_KEEP")
+arr=[]
+try:
+  if os.path.exists(f):
+    with open(f,"r",encoding="utf-8") as fh:
+      arr=json.load(fh) or []
+except Exception:
+  arr=[]
+arr.append(ms)
+arr=arr[-keep:]
+os.makedirs(os.path.dirname(f), exist_ok=True)
+with open(f,"w",encoding="utf-8") as fh:
+  json.dump(arr, fh)
+PY
 }
 
 send_endpoint() {
@@ -223,7 +252,7 @@ add_target() {
   validate_interval "$interval"
 
   if config_has_name "$name"; then
-    echo "Already exists: $name. Remove first: sudo $0 remove $name" >&2
+    echo "Target already exists: $name. Remove first: sudo $0 remove $name" >&2
     exit 1
   fi
 
@@ -232,7 +261,7 @@ add_target() {
 
   local now
   now="$(date +%s)"
-  state_set_line "${name}|${now}|unknown|0|0|-1"
+  state_set_line "${name}|${now}|unknown|0|0|0"
 
   log "ADD name=$name ip=$ip interval=${interval}s enabled=1"
   echo "Added: $name ($ip) interval=${interval}s"
@@ -264,6 +293,8 @@ remove_target() {
   rm -f "$tmp"
   chmod 600 "$STATE_FILE"
 
+  rm -f "${LAT_DIR}/${name}.json" 2>/dev/null || true
+
   log "REMOVE name=$name"
   echo "Removed: $name"
 }
@@ -274,7 +305,7 @@ set_target_interval() {
 
   local name="${1:-}"
   local sec="${2:-}"
-  [[ -z "$name" || -z "$sec" ]] && { echo "Use: sudo $0 set-target-interval <name> <seconds>"; exit 1; }
+  [[ -z "$name" || -z "$sec" ]] && { echo "Usage: sudo $0 set-target-interval <name> <seconds>"; exit 1; }
   validate_name "$name"
   validate_interval "$sec"
 
@@ -286,12 +317,9 @@ set_target_interval() {
   local tmp
   tmp="$(mktemp)"
   while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && { echo "$line" >> "$tmp"; continue; }
-
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
     parsed="$(parse_config_line "$line")"
     IFS='|' read -r n ip url interval enabled <<<"$parsed"
-
     if [[ "$n" == "$name" ]]; then
       echo "${n}|${ip}|${url}|${sec}|${enabled}" >> "$tmp"
     else
@@ -308,11 +336,10 @@ set_target_interval() {
   local old
   old="$(state_get_line "$name")"
   if [[ -n "$old" ]]; then
-    IFS='|' read -r _n _due last_status last_ping last_sent last_rtt <<<"$old"
-    last_rtt="${last_rtt:--1}"
-    state_set_line "${name}|${now}|${last_status:-unknown}|${last_ping:-0}|${last_sent:-0}|${last_rtt}"
+    IFS='|' read -r _n _due last_status last_ping last_sent last_lat <<<"$old"
+    state_set_line "${name}|${now}|${last_status:-unknown}|${last_ping:-0}|${last_sent:-0}|${last_lat:-0}"
   else
-    state_set_line "${name}|${now}|unknown|0|0|-1"
+    state_set_line "${name}|${now}|unknown|0|0|0"
   fi
 
   log "SET_INTERVAL name=$name interval=${sec}s"
@@ -320,13 +347,13 @@ set_target_interval() {
 }
 
 set_target_enabled() {
-  require_root set-enabled
+  require_root enable-disable
   ensure_paths
   local name="${1:-}"
-  local enabled="${2:-}"
-  [[ -z "$name" || -z "$enabled" ]] && { echo "Use: sudo $0 disable <name> or sudo $0 enable-target <name>"; exit 1; }
+  local en="${2:-}"
+  [[ -z "$name" || -z "$en" ]] && { echo "Usage: sudo $0 enable|disable <name>"; exit 1; }
   validate_name "$name"
-  [[ "$enabled" == "0" || "$enabled" == "1" ]] || { echo "enabled must be 0/1"; exit 1; }
+  [[ "$en" != "0" ]] && en="1"
 
   if ! config_has_name "$name"; then
     echo "Not found: $name" >&2
@@ -336,16 +363,13 @@ set_target_enabled() {
   local tmp
   tmp="$(mktemp)"
   while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && { echo "$line" >> "$tmp"; continue; }
-
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
     parsed="$(parse_config_line "$line")"
-    IFS='|' read -r n ip url interval en <<<"$parsed"
-
+    IFS='|' read -r n ip url interval enabled <<<"$parsed"
     if [[ "$n" == "$name" ]]; then
-      echo "${n}|${ip}|${url}|${interval}|${enabled}" >> "$tmp"
-    else
       echo "${n}|${ip}|${url}|${interval}|${en}" >> "$tmp"
+    else
+      echo "${n}|${ip}|${url}|${interval}|${enabled}" >> "$tmp"
     fi
   done < "$CONFIG_FILE"
 
@@ -353,38 +377,12 @@ set_target_enabled() {
   rm -f "$tmp"
   chmod 600 "$CONFIG_FILE"
 
-  log "SET_ENABLED name=$name enabled=$enabled"
-  echo "Updated: $name enabled=$enabled"
+  log "SET_ENABLED name=$name enabled=$en"
+  echo "Updated: $name enabled=$en"
 }
 
-disable_target() { set_target_enabled "${1:-}" "0"; }
-enable_target()  { set_target_enabled "${1:-}" "1"; }
-
-disable_selected() {
-  require_root disable-selected
-  ensure_paths
-  local list="${1:-}"
-  [[ -z "$list" ]] && { echo "Use: sudo $0 disable-selected name1,name2"; exit 1; }
-  IFS=',' read -r -a names <<<"$list"
-  for n in "${names[@]}"; do
-    [[ -z "$n" ]] && continue
-    disable_target "$n" || true
-  done
-  echo "Disabled selected"
-}
-
-enable_selected() {
-  require_root enable-selected
-  ensure_paths
-  local list="${1:-}"
-  [[ -z "$list" ]] && { echo "Use: sudo $0 enable-selected name1,name2"; exit 1; }
-  IFS=',' read -r -a names <<<"$list"
-  for n in "${names[@]}"; do
-    [[ -z "$n" ]] && continue
-    enable_target "$n" || true
-  done
-  echo "Enabled selected"
-}
+enable_target(){ set_target_enabled "${1:-}" "1"; }
+disable_target(){ set_target_enabled "${1:-}" "0"; }
 
 list_targets() {
   require_root list
@@ -396,19 +394,16 @@ list_targets() {
   fi
 
   echo "Targets:"
-  echo "--------------------------------------------------------------------------------"
+  echo "---------------------------------------------------------------------------------------------------------------"
   printf "  %-26s %-15s %-10s %-9s %s\n" "NAME" "IP" "INTERVAL" "ENABLED" "ENDPOINT"
-  echo "--------------------------------------------------------------------------------"
+  echo "---------------------------------------------------------------------------------------------------------------"
   while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && continue
-
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
     parsed="$(parse_config_line "$line")"
     IFS='|' read -r name ip url interval enabled <<<"$parsed"
-
-    printf "  %-26s %-15s %-10s %-9s %s\n" "$name" "$ip" "${interval}s" "${enabled}" "$(mask_url "$url")"
+    printf "  %-26s %-15s %-10s %-9s %s\n" "$name" "$ip" "${interval}s" "$enabled" "$(mask_url "$url")"
   done < "$CONFIG_FILE"
-  echo "--------------------------------------------------------------------------------"
+  echo "---------------------------------------------------------------------------------------------------------------"
 }
 
 status_targets() {
@@ -419,58 +414,37 @@ status_targets() {
   now="$(date +%s)"
 
   echo "State:"
-  echo "----------------------------------------------------------------------------------------------------------------------------"
-  printf "  %-26s %-10s %-12s %-14s %-14s %-14s %-10s\n" "NAME" "STATUS" "NEXT_IN" "NEXT_DUE" "LAST_PING" "LAST_RESP" "LAT(ms)"
-  echo "----------------------------------------------------------------------------------------------------------------------------"
+  echo "-------------------------------------------------------------------------------------------------------------------------------"
+  printf "  %-26s %-10s %-12s %-14s %-14s %-14s %-10s\n" "NAME" "STATUS" "NEXT_IN" "NEXT_DUE" "LAST_PING" "LAST_RESP" "LAT_MS"
+  echo "-------------------------------------------------------------------------------------------------------------------------------"
 
   [[ ! -s "$CONFIG_FILE" ]] && { echo "  (no targets)"; exit 0; }
 
   while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && continue
-
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
     parsed="$(parse_config_line "$line")"
     IFS='|' read -r name _ip _url _interval enabled <<<"$parsed"
 
     st="$(state_get_line "$name")"
-    local next_due last_status last_ping last_sent last_rtt
+    local next_due last_status last_ping last_sent last_lat
     if [[ -n "$st" ]]; then
-      IFS='|' read -r _n next_due last_status last_ping last_sent last_rtt <<<"$st"
+      IFS='|' read -r _n next_due last_status last_ping last_sent last_lat <<<"$st"
     else
-      next_due="0"
-      last_status="unknown"
-      last_ping="0"
-      last_sent="0"
-      last_rtt="-1"
-    fi
-
-    next_due="${next_due:-0}"
-    last_status="${last_status:-unknown}"
-    last_ping="${last_ping:-0}"
-    last_sent="${last_sent:-0}"
-    last_rtt="${last_rtt:--1}"
-
-    if [[ "$enabled" == "0" ]]; then
-      last_status="disabled"
+      next_due="0"; last_status="unknown"; last_ping="0"; last_sent="0"; last_lat="0"
     fi
 
     local next_in
-    if (( next_due <= 0 )); then
-      next_in="due"
+    if (( now < ${next_due:-0} )); then
+      next_in="$(( next_due - now ))s"
     else
-      local diff=$(( next_due - now ))
-      if (( diff <= 0 )); then
-        next_in="due"
-      else
-        next_in="${diff}s"
-      fi
+      next_in="due"
     fi
 
     printf "  %-26s %-10s %-12s %-14s %-14s %-14s %-10s\n" \
-      "$name" "$last_status" "$next_in" "$next_due" "$last_ping" "$last_sent" "$last_rtt"
+      "$name" "${last_status:-unknown}" "$next_in" "${next_due:-0}" "${last_ping:-0}" "${last_sent:-0}" "${last_lat:-0}"
   done < "$CONFIG_FILE"
 
-  echo "----------------------------------------------------------------------------------------------------------------------------"
+  echo "-------------------------------------------------------------------------------------------------------------------------------"
 }
 
 test_target() {
@@ -481,176 +455,212 @@ test_target() {
   [[ -z "$name" ]] && { usage; exit 1; }
   validate_name "$name"
 
+  local line
   line="$(grep -E "^${name}\|" "$CONFIG_FILE" || true)"
   [[ -z "$line" ]] && { echo "Not found: $name"; exit 1; }
 
+  local parsed ip url interval enabled
   parsed="$(parse_config_line "$line")"
   IFS='|' read -r _name ip url interval enabled <<<"$parsed"
 
   echo "Testing: $name ($ip) interval=${interval}s enabled=${enabled}"
   if [[ "$enabled" == "0" ]]; then
-    echo "DISABLED: skipping"
+    echo "DISABLED"
     exit 4
   fi
 
-  local p
-  if p="$(ping_latency "$ip")"; then
-    local ms
-    ms="${p#OK|}"
+  local ms
+  ms="$(ping_latency_ms "$ip" || true)"
+  if [[ -n "$ms" ]]; then
     echo "PING: OK (${ms}ms)"
     echo "Calling endpoint…"
     if send_endpoint "$url"; then
       echo "ENDPOINT: OK"
       exit 0
     else
-      echo "ENDPOINT: FAILED (curl)"
+      echo "ENDPOINT: FAIL (curl)"
       exit 2
     fi
   else
-    echo "PING: FAILED"
+    echo "PING: FAIL"
     exit 3
   fi
 }
 
-# Helper: check if name is in comma list
-name_in_list() {
-  local name="$1"
-  local list="$2"
-  [[ -z "$list" ]] && return 1
-  IFS=',' read -r -a arr <<<"$list"
-  for n in "${arr[@]}"; do
-    [[ "$n" == "$name" ]] && return 0
-  done
-  return 1
+write_runtime() {
+  # args: status current done due queue_json updated
+  local status="$1" current="$2" done="$3" due="$4" queue="$5"
+  python3 - <<PY 2>/dev/null || true
+import json, time
+data={
+  "status":"$status",
+  "current":"$current",
+  "done":int("$done"),
+  "due":int("$due"),
+  "queue":$queue,
+  "updated":int(time.time())
+}
+open("$RUNTIME_FILE","w",encoding="utf-8").write(json.dumps(data))
+PY
+  chmod 666 "$RUNTIME_FILE" 2>/dev/null || true
 }
 
 run_checks_internal() {
-  local force="${1:-0}"           # 1 = ignore schedule (run-now)
-  local only_targets="${2:-}"     # comma list; if set -> run only these
+  # args: force(0/1) selected_csv(optional)
+  local force="${1:-0}"
+  local selected="${2:-}"
 
-  ensure_paths
   [[ ! -s "$CONFIG_FILE" ]] && { log "RUN: no targets"; echo "No targets"; exit 0; }
 
   local now
   now="$(date +%s)"
 
-  local total=0 due=0 skipped=0 ping_ok_count=0 ping_fail=0 sent=0 curl_fail=0 disabled_count=0
-  local run_start_ns run_end_ns
-  run_start_ns="$(date +%s%N)"
+  # build selection map
+  declare -A sel
+  if [[ -n "$selected" ]]; then
+    IFS=',' read -r -a arr <<<"$selected"
+    for n in "${arr[@]}"; do
+      n="$(echo "$n" | xargs || true)"
+      [[ -n "$n" ]] && sel["$n"]=1
+    done
+  fi
+
+  local total=0 due=0 skipped=0 ping_ok_count=0 ping_fail=0 sent=0 curl_fail=0 disabled=0
+  local queue_json="[]"
+  if [[ -n "$selected" ]]; then
+    # queue only selected
+    queue_json="$(python3 - <<PY 2>/dev/null
+import json
+s="$selected".split(",")
+s=[x.strip() for x in s if x.strip()]
+print(json.dumps(s))
+PY
+)"
+  else
+    # queue all enabled targets
+    queue_json="$(python3 - <<PY 2>/dev/null
+import json
+cfg=open("$CONFIG_FILE","r",encoding="utf-8").read().splitlines()
+out=[]
+for line in cfg:
+  line=line.strip()
+  if not line or line.startswith("#"): continue
+  parts=line.split("|")
+  name=parts[0].strip()
+  enabled="1"
+  if len(parts)>=5:
+    enabled=parts[4].strip() or "1"
+  if enabled!="0":
+    out.append(name)
+print(json.dumps(out))
+PY
+)"
+  fi
+
+  write_runtime "running" "" 0 0 "$queue_json"
+
+  local done_count=0
+  local due_count=0
 
   while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && continue
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
 
+    local parsed name ip url interval enabled
     parsed="$(parse_config_line "$line")"
     IFS='|' read -r name ip url interval enabled <<<"$parsed"
 
-    # Filter selection if only_targets is set
-    if [[ -n "$only_targets" ]]; then
-      if ! name_in_list "$name" "$only_targets"; then
-        continue
-      fi
+    # selection filter
+    if [[ -n "$selected" && -z "${sel[$name]+x}" ]]; then
+      continue
     fi
 
     total=$((total+1))
 
-    st="$(state_get_line "$name")"
-    local next_due last_status last_ping last_sent last_rtt
-    if [[ -n "$st" ]]; then
-      IFS='|' read -r _n next_due last_status last_ping last_sent last_rtt <<<"$st"
-      next_due="${next_due:-0}"
-      last_rtt="${last_rtt:--1}"
-    else
-      next_due="0"
-      last_status="unknown"
-      last_ping="0"
-      last_sent="0"
-      last_rtt="-1"
-    fi
-
-    # Disabled targets:
-    # - In normal run: always skip
-    # - In run-now with selection: allow if explicitly selected
     if [[ "$enabled" == "0" ]]; then
-      disabled_count=$((disabled_count+1))
-      # If selection is set, it's explicit -> allow running disabled only when selected
-      if [[ -z "$only_targets" ]]; then
-        skipped=$((skipped+1))
-        last_status="disabled"
-        state_set_line "${name}|${next_due}|${last_status}|${last_ping}|${last_sent}|${last_rtt}"
-        continue
-      fi
+      disabled=$((disabled+1))
+      continue
     fi
 
-    if [[ "$force" != "1" ]]; then
-      if (( now < next_due )); then
-        skipped=$((skipped+1))
-        continue
-      fi
-    end
+    local st next_due last_status last_ping last_sent last_lat
+    st="$(state_get_line "$name")"
+    if [[ -n "$st" ]]; then
+      IFS='|' read -r _n next_due last_status last_ping last_sent last_lat <<<"$st"
+      next_due="${next_due:-0}"
+    else
+      next_due="0"; last_status="unknown"; last_ping="0"; last_sent="0"; last_lat="0"
+    fi
+
+    if (( force == 0 )) && (( now < next_due )); then
+      skipped=$((skipped+1))
+      continue
+    fi
 
     due=$((due+1))
+    due_count=$due
 
-    local p ms
-    if p="$(ping_latency "$ip")"; then
-      ms="${p#OK|}"
+    write_runtime "running" "$name" "$done_count" "$due_count" "$queue_json"
+
+    local ms
+    ms="$(ping_latency_ms "$ip" || true)"
+
+    if [[ -n "$ms" ]]; then
       ping_ok_count=$((ping_ok_count+1))
       last_status="up"
       last_ping="$now"
-      last_rtt="${ms:-0}"
+      last_lat="$ms"
+      lat_push "$name" "$ms"
 
       if send_endpoint "$url"; then
         sent=$((sent+1))
         last_sent="$now"
-        log "OK   name=$name ip=$ip rtt=${last_rtt}ms interval=${interval}s endpoint=sent"
+        log "OK name=$name ip=$ip latency=${ms}ms endpoint=sent"
       else
         curl_fail=$((curl_fail+1))
-        log "WARN name=$name ip=$ip rtt=${last_rtt}ms interval=${interval}s ping=ok endpoint=FAILED(curl)"
+        log "WARN name=$name ip=$ip latency=${ms}ms ping=ok endpoint=FAILED(curl)"
       fi
     else
       ping_fail=$((ping_fail+1))
       last_status="down"
       last_ping="$now"
-      last_rtt="-1"
-      log "DOWN name=$name ip=$ip interval=${interval}s ping=failed endpoint=not_sent"
+      last_lat="0"
+      log "DOWN name=$name ip=$ip ping=failed endpoint=not_sent"
     fi
 
     next_due=$(( now + interval ))
-    state_set_line "${name}|${next_due}|${last_status}|${last_ping}|${last_sent}|${last_rtt}"
+    state_set_line "${name}|${next_due}|${last_status}|${last_ping}|${last_sent}|${last_lat}"
+
+    done_count=$((done_count+1))
+    write_runtime "running" "$name" "$done_count" "$due_count" "$queue_json"
   done < "$CONFIG_FILE"
 
-  run_end_ns="$(date +%s%N)"
-  local dur_ms
-  dur_ms="$(( (run_end_ns - run_start_ns) / 1000000 ))"
+  write_runtime "idle" "" "$done_count" "$due_count" "$queue_json"
 
-  log "RUN summary total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail disabled=$disabled_count force=$force duration_ms=$dur_ms"
-  echo "OK: total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail disabled=$disabled_count force=$force duration_ms=$dur_ms"
+  log "RUN summary total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail force=$force disabled=$disabled"
+  echo "OK: total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail force=$force disabled=$disabled"
 }
 
 run_checks() {
   require_root run
-  run_checks_internal "0" ""
+  ensure_paths
+  run_checks_internal 0 ""
 }
 
 run_now() {
   require_root run-now
   ensure_paths
 
-  local targets=""
+  local force="0"
+  local targets_csv=""
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --targets)
-        targets="${2:-}"
-        shift 2
-        ;;
-      *)
-        shift
-        ;;
+      --force) force="${2:-0}"; shift 2 ;;
+      --targets) targets_csv="${2:-}"; shift 2 ;;
+      *) shift 1 ;;
     esac
   done
 
-  # force=1. If targets set, run only these (even if disabled, since explicit).
-  run_checks_internal "1" "$targets"
+  run_checks_internal "$force" "$targets_csv"
 }
 
 install_systemd() {
@@ -689,7 +699,7 @@ EOF
 
   systemctl daemon-reload
   echo "Installed systemd: $APP_NAME.service + $APP_NAME.timer"
-  echo "Next: sudo $BIN_PATH enable"
+  echo "Next: sudo $BIN_PATH enable-timer"
 }
 
 uninstall_systemd() {
@@ -704,13 +714,13 @@ uninstall_systemd() {
 }
 
 enable_timer() {
-  require_root enable
+  require_root enable-timer
   systemctl enable --now "${APP_NAME}.timer"
   echo "Enabled: ${APP_NAME}.timer"
 }
 
 disable_timer() {
-  require_root disable
+  require_root disable-timer
   systemctl disable --now "${APP_NAME}.timer"
   echo "Disabled: ${APP_NAME}.timer"
 }
@@ -735,14 +745,12 @@ main() {
     test) test_target "${1:-}" ;;
     set-target-interval) set_target_interval "${1:-}" "${2:-}" ;;
     disable) disable_target "${1:-}" ;;
-    enable-target) enable_target "${1:-}" ;;
-    disable-selected) disable_selected "${1:-}" ;;
-    enable-selected) enable_selected "${1:-}" ;;
+    enable) enable_target "${1:-}" ;;
     status) status_targets ;;
     install) install_systemd ;;
     uninstall) uninstall_systemd ;;
-    enable) enable_timer ;;
-    disable) disable_timer ;;
+    enable-timer) enable_timer ;;
+    disable-timer) disable_timer ;;
     sys-status) sys_status ;;
     ""|help|-h|--help) usage ;;
     *) echo "Unknown command: $cmd"; usage; exit 1 ;;
