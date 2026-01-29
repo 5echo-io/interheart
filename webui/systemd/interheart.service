@@ -1,8 +1,9 @@
+# webui/systemd/interheart.service
 [Unit]
-Description=5echo interheart runner (manual runs)
+Description=5echo interheart runner (scheduled)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/interheart run
+ExecStart=/usr/local/bin/interheart run-now
