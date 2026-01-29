@@ -1,16 +1,14 @@
-/* interheart webui (legacy UX migrated) */
+/* interheart webui - app.js
+   Migrated from legacy inline JS (v4.6-ish) to split static file.
+*/
 (function () {
-  "use strict";
+  // ---- helpers ----
+  const cfg = window.__INTERHEART__ || {};
+  const POLL_SECONDS = Number(cfg.pollSeconds || 2);
+  const LOG_LINES = Number(cfg.logLines || 200);
 
-  const CFG = window.APP_CONFIG || {};
-  const ICONS = window.ICONS || {};
-
-  const POLL_SECONDS = Number(CFG.poll_seconds || 2);
-  const LOG_LINES = Number(CFG.log_lines || 200);
-
-  // ---------- helpers ----------
-  function $(sel, root = document) { return root.querySelector(sel); }
-  function $all(sel, root = document) { return Array.from(root.querySelectorAll(sel)); }
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
   function escapeHtml(s) {
     return String(s ?? "")
@@ -21,18 +19,34 @@
       .replaceAll("'", "&#039;");
   }
 
-  function ico(name) {
-    // returns HTML string for <span class="ico">...</span>
-    const svg = ICONS[name] || "";
-    return `<span class="ico">${svg}</span>`;
+  // ---- toasts ----
+  const toasts = $("#toasts");
+  function toast(title, msg) {
+    if (!toasts) return;
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.innerHTML = `
+      <div>
+        <b>${escapeHtml(title)}</b>
+        <p>${escapeHtml(msg || "")}</p>
+      </div>
+      <button class="x" aria-label="Close">×</button>
+    `;
+    const x = $(".x", el);
+    if (x) x.onclick = () => el.remove();
+    toasts.appendChild(el);
+    setTimeout(() => {
+      if (el && el.parentNode) el.remove();
+    }, 5200);
   }
 
-  function show(el) {
+  // ---- modal helpers ----
+  function showModal(el) {
     if (!el) return;
     el.classList.add("show");
     el.setAttribute("aria-hidden", "false");
   }
-  function hide(el) {
+  function hideModal(el) {
     if (!el) return;
     el.classList.remove("show");
     el.setAttribute("aria-hidden", "true");
@@ -45,82 +59,47 @@
     }
   }
 
-  async function fetchJson(url, opts) {
-    const res = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
-    let data = null;
-    try { data = await res.json(); } catch (_) {}
-    if (!res.ok) {
-      const msg = (data && (data.message || data.error)) ? (data.message || data.error) : `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
-    return data;
+  async function apiPost(url, formData) {
+    const res = await fetch(url, { method: "POST", body: formData });
+    return await res.json();
   }
 
-  async function postForm(url, formData) {
-    return await fetchJson(url, { method: "POST", body: formData });
-  }
-
-  // ---------- toasts ----------
-  const toasts = $("#toasts");
-
-  function toast(title, msg) {
-    if (!toasts) return;
-    const el = document.createElement("div");
-    el.className = "toast";
-    el.innerHTML = `
-      <div>
-        <b>${escapeHtml(title)}</b>
-        <p>${escapeHtml(msg || "")}</p>
-      </div>
-      <button class="x" aria-label="Close">×</button>
-    `;
-    $(".x", el).onclick = () => el.remove();
-    toasts.appendChild(el);
-    setTimeout(() => { if (el && el.parentNode) el.remove(); }, 5200);
-  }
-
-  // ---------- modals ----------
+  // ---- Logs modal ----
   const logModal = $("#logModal");
-  const runModal = $("#runModal");
-  const addModal = $("#addModal");
-  const confirmModal = $("#confirmModal");
-
-  function closeAllModals() {
-    [logModal, runModal, addModal, confirmModal].forEach(hide);
-  }
-
-  // ---------- logs modal ----------
-  const openLogsBtn = $("#openLogs");
-  const closeLogsBtn = $("#btnCloseLogs");
-  const reloadLogsBtn = $("#btnReloadLogs");
-  const copyLogsBtn = $("#btnCopyLogs");
+  const openLogs = $("#openLogs");
+  const closeLogs = $("#btnCloseLogs");
+  const reloadLogs = $("#btnReloadLogs");
+  const copyLogs = $("#btnCopyLogs");
   const logBox = $("#logBox");
   const logMeta = $("#logMeta");
   const logFilter = $("#logFilter");
-  const logLinesLbl = $("#logLinesLbl");
-
   let rawLog = "";
 
   async function loadLogs() {
-    if (!logBox) return;
     try {
-      const data = await fetchJson(`/logs?lines=${encodeURIComponent(String(LOG_LINES))}`);
+      const res = await fetch(`/logs?lines=${encodeURIComponent(String(LOG_LINES))}`, { cache: "no-store" });
+      const data = await res.json();
       rawLog = data.text || "";
       if (logMeta) {
-        logMeta.textContent = `${data.source || "log"} • ${(data.lines || 0)} lines • ${(data.updated || "")}`;
+        logMeta.textContent =
+          (data.source || "log") +
+          " • " +
+          (data.lines || 0) +
+          " lines • " +
+          (data.updated || "");
       }
       applyLogFilter();
-      logBox.scrollTop = logBox.scrollHeight;
+      if (logBox) logBox.scrollTop = logBox.scrollHeight;
     } catch (e) {
       rawLog = "";
-      logBox.textContent = "Failed to fetch logs: " + (e && e.message ? e.message : "unknown");
+      if (logBox) logBox.textContent = "Failed to fetch logs: " + (e && e.message ? e.message : "unknown");
       if (logMeta) logMeta.textContent = "error";
     }
   }
 
   function applyLogFilter() {
     if (!logBox) return;
-    const q = String(logFilter?.value || "").trim().toLowerCase();
+    const q = (logFilter?.value || "").trim().toLowerCase();
     if (!q) {
       logBox.textContent = rawLog || "(empty)";
       return;
@@ -129,109 +108,134 @@
     logBox.textContent = lines.join("\n") || "(no matches)";
   }
 
-  if (logLinesLbl) logLinesLbl.textContent = String(LOG_LINES);
+  if (openLogs) {
+    openLogs.addEventListener("click", async () => {
+      showModal(logModal);
+      if (logFilter) logFilter.focus();
+      await loadLogs();
+    });
+  }
+  if (closeLogs) closeLogs.addEventListener("click", () => hideModal(logModal));
+  if (reloadLogs) reloadLogs.addEventListener("click", async () => await loadLogs());
+  if (copyLogs) {
+    copyLogs.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(logBox?.textContent || "");
+        toast("Copied", "Logs copied to clipboard");
+      } catch (e) {
+        // ignore
+      }
+    });
+  }
+  if (logFilter) logFilter.addEventListener("input", applyLogFilter);
+  if (logModal) {
+    logModal.addEventListener("click", (e) => {
+      if (e.target === logModal) hideModal(logModal);
+    });
+  }
 
-  openLogsBtn?.addEventListener("click", async () => {
-    show(logModal);
-    logFilter?.focus();
-    await loadLogs();
-  });
-  closeLogsBtn?.addEventListener("click", () => hide(logModal));
-  reloadLogsBtn?.addEventListener("click", async () => await loadLogs());
-  copyLogsBtn?.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(logBox?.textContent || "");
-      toast("Copied", "Logs copied to clipboard");
-    } catch (_) {}
-  });
-  logFilter?.addEventListener("input", applyLogFilter);
-  logModal?.addEventListener("click", (e) => { if (e.target === logModal) hide(logModal); });
-
-  // ---------- add modal ----------
-  const openAddBtn = $("#openAdd");
-  const addCancelBtn = $("#btnAddCancel");
+  // ---- Add modal ----
+  const addModal = $("#addModal");
+  const openAdd = $("#openAdd");
+  const addCancel = $("#btnAddCancel");
   const addForm = $("#addForm");
   const btnAddSubmit = $("#btnAddSubmit");
-
   captureDefaultHtml(btnAddSubmit);
 
-  openAddBtn?.addEventListener("click", () => show(addModal));
-  addCancelBtn?.addEventListener("click", () => hide(addModal));
-  addModal?.addEventListener("click", (e) => { if (e.target === addModal) hide(addModal); });
+  if (openAdd) openAdd.addEventListener("click", () => showModal(addModal));
+  if (addCancel) addCancel.addEventListener("click", () => hideModal(addModal));
+  if (addModal) {
+    addModal.addEventListener("click", (e) => {
+      if (e.target === addModal) hideModal(addModal);
+    });
+  }
 
-  addForm?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!btnAddSubmit) return;
+  if (addForm) {
+    addForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!btnAddSubmit) return;
 
-    btnAddSubmit.disabled = true;
-    btnAddSubmit.innerHTML = "Adding…";
-    try {
-      const fd = new FormData(addForm);
-      const data = await postForm("/api/add", fd);
-      if (data.ok) {
-        toast("Added", data.message || "Target added");
-        hide(addModal);
-        addForm.reset();
-        await refreshState(true);
-      } else {
-        toast("Error", data.message || "Failed to add");
+      btnAddSubmit.disabled = true;
+      btnAddSubmit.innerHTML = "Adding…";
+      try {
+        const fd = new FormData(addForm);
+        const res = await fetch("/api/add", { method: "POST", body: fd });
+        const data = await res.json();
+        if (data.ok) {
+          toast("Added", data.message || "Target added");
+          hideModal(addModal);
+          addForm.reset();
+          await refreshState(true);
+        } else {
+          toast("Error", data.message || "Failed to add");
+        }
+      } catch (err) {
+        toast("Error", err && err.message ? err.message : "Failed to add");
+      } finally {
+        btnAddSubmit.disabled = false;
+        btnAddSubmit.innerHTML = btnAddSubmit.dataset.defaultHtml || "Add target";
       }
-    } catch (err) {
-      toast("Error", err && err.message ? err.message : "Failed to add");
-    } finally {
-      btnAddSubmit.disabled = false;
-      btnAddSubmit.innerHTML = btnAddSubmit.dataset.defaultHtml || (ico("plus") + " Add target");
-    }
-  });
+    });
+  }
 
-  // ---------- confirm remove modal ----------
+  // ---- Confirm remove modal ----
+  const confirmModal = $("#confirmModal");
   const btnCloseConfirm = $("#btnCloseConfirm");
   const btnCancelRemove = $("#btnCancelRemove");
   const btnConfirmRemove = $("#btnConfirmRemove");
-  const confirmNameEl = $("#confirmName");
+  const confirmName = $("#confirmName");
   let pendingRemoveName = null;
 
   function openConfirmRemove(name) {
     pendingRemoveName = name;
-    if (confirmNameEl) confirmNameEl.textContent = name;
-    show(confirmModal);
+    if (confirmName) confirmName.textContent = name;
+    showModal(confirmModal);
   }
 
   function closeConfirmRemove() {
     pendingRemoveName = null;
-    hide(confirmModal);
+    hideModal(confirmModal);
   }
 
-  btnCloseConfirm?.addEventListener("click", closeConfirmRemove);
-  btnCancelRemove?.addEventListener("click", closeConfirmRemove);
-  confirmModal?.addEventListener("click", (e) => { if (e.target === confirmModal) closeConfirmRemove(); });
+  if (btnCloseConfirm) btnCloseConfirm.addEventListener("click", closeConfirmRemove);
+  if (btnCancelRemove) btnCancelRemove.addEventListener("click", closeConfirmRemove);
+  if (confirmModal) {
+    confirmModal.addEventListener("click", (e) => {
+      if (e.target === confirmModal) closeConfirmRemove();
+    });
+  }
 
-  btnConfirmRemove?.addEventListener("click", async () => {
-    const name = pendingRemoveName;
-    if (!name) return;
+  async function removeTarget(name) {
+    const fd = new FormData();
+    fd.set("name", name);
+    return await apiPost("/api/remove", fd);
+  }
 
-    btnConfirmRemove.disabled = true;
-    btnConfirmRemove.textContent = "Removing…";
-    try {
-      const fd = new FormData();
-      fd.set("name", name);
-      const data = await postForm("/api/remove", fd);
-      toast(data.ok ? "Removed" : "Error", data.message || (data.ok ? "Done" : "Failed"));
-      closeConfirmRemove();
-    } catch (e) {
-      toast("Error", e && e.message ? e.message : "Failed");
-    } finally {
-      btnConfirmRemove.disabled = false;
-      btnConfirmRemove.textContent = "Remove";
-      await refreshState(true);
-    }
-  });
+  if (btnConfirmRemove) {
+    btnConfirmRemove.addEventListener("click", async () => {
+      const name = pendingRemoveName;
+      if (!name) return;
 
-  // ---------- dropdown actions ----------
+      btnConfirmRemove.disabled = true;
+      btnConfirmRemove.textContent = "Removing…";
+      try {
+        const data = await removeTarget(name);
+        toast(data.ok ? "Removed" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+        closeConfirmRemove();
+      } catch (e) {
+        toast("Error", e && e.message ? e.message : "Failed");
+      } finally {
+        btnConfirmRemove.disabled = false;
+        btnConfirmRemove.textContent = "Remove";
+        await refreshState(true);
+      }
+    });
+  }
+
+  // ---- dropdown menus ----
   function closeAllMenus() {
-    $all(".menu.show").forEach((m) => m.classList.remove("show"));
+    $$(".menu.show").forEach((m) => m.classList.remove("show"));
   }
-
   document.addEventListener("click", (e) => {
     const btn = e.target.closest(".menu-btn");
     if (btn) {
@@ -244,94 +248,9 @@
     if (!e.target.closest(".menu")) closeAllMenus();
   });
 
-  function attachMenuActions() {
-    $all('tr[data-name]').forEach((row) => {
-      const name = row.getAttribute("data-name");
-      $all(".menu-item", row).forEach((btn) => {
-        if (btn.dataset.bound === "1") return;
-        btn.dataset.bound = "1";
-        btn.addEventListener("click", async () => {
-          closeAllMenus();
-          const action = btn.getAttribute("data-action");
-          if (action === "remove") {
-            openConfirmRemove(name);
-            return;
-          }
-
-          const fd = new FormData();
-          fd.set("name", name);
-
-          try {
-            if (action === "test") {
-              toast("Testing", `Running test for ${name}…`);
-              const data = await postForm("/api/test", fd);
-              toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
-            }
-          } catch (e) {
-            toast("Error", e && e.message ? e.message : "Failed");
-          } finally {
-            await refreshState(true);
-          }
-        });
-      });
-    });
-  }
-
-  // ---------- inline interval editing ----------
-  async function setIntervalFor(name, seconds) {
-    const fd = new FormData();
-    fd.set("name", name);
-    fd.set("seconds", String(seconds));
-    return await postForm("/api/set-target-interval", fd);
-  }
-
-  function attachIntervalHandlers() {
-    $all('tr[data-name]').forEach((row) => {
-      const name = row.getAttribute("data-name");
-      const input = $(".interval-input", row);
-      if (!input || input.dataset.bound === "1") return;
-      input.dataset.bound = "1";
-
-      const commit = async () => {
-        const v = String(input.value || "").trim();
-        const n = parseInt(v, 10);
-        if (!Number.isFinite(n) || n < 10 || n > 86400) {
-          toast("Invalid interval", "Use 10–86400 seconds");
-          input.value = input.getAttribute("data-interval") || "60";
-          return;
-        }
-        if (String(n) === String(input.getAttribute("data-interval"))) return;
-
-        input.disabled = true;
-        try {
-          const r = await setIntervalFor(name, n);
-          if (r.ok) {
-            toast("Updated", r.message || `Interval set to ${n}s`);
-            input.setAttribute("data-interval", String(n));
-          } else {
-            toast("Error", r.message || "Failed to set interval");
-            input.value = input.getAttribute("data-interval") || "60";
-          }
-        } catch (e) {
-          toast("Error", e && e.message ? e.message : "Failed to set interval");
-          input.value = input.getAttribute("data-interval") || "60";
-        } finally {
-          input.disabled = false;
-        }
-      };
-
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { e.preventDefault(); commit(); input.blur(); }
-        if (e.key === "Escape") { input.value = input.getAttribute("data-interval") || "60"; input.blur(); }
-      });
-      input.addEventListener("blur", commit);
-    });
-  }
-
-  // ---------- run summary modal ----------
-  const btnRunNow = $("#btnRunNow");
+  // ---- Run summary modal + realtime polling ----
+  const runModal = $("#runModal");
   const btnCloseRun = $("#btnCloseRun");
-
   const runTitleMeta = $("#runTitleMeta");
   const runLive = $("#runLive");
   const runLiveText = $("#runLiveText");
@@ -350,39 +269,60 @@
   const runHintBox = $("#runHintBox");
   const runHintText = $("#runHintText");
 
-  captureDefaultHtml(btnRunNow);
-
-  btnCloseRun?.addEventListener("click", () => hide(runModal));
-  runModal?.addEventListener("click", (e) => { if (e.target === runModal) hide(runModal); });
+  if (btnCloseRun) btnCloseRun.addEventListener("click", () => hideModal(runModal));
+  if (runModal) {
+    runModal.addEventListener("click", (e) => {
+      if (e.target === runModal) hideModal(runModal);
+    });
+  }
 
   function setBar(done, due) {
-    const pct = (!due || due <= 0) ? 0 : Math.max(0, Math.min(100, Math.round((done / due) * 100)));
-    if (runBar) runBar.style.width = pct + "%";
+    if (!runBar) return;
+    const pct =
+      !due || due <= 0 ? 0 : Math.max(0, Math.min(100, Math.round((done / due) * 100)));
+    runBar.style.width = pct + "%";
   }
 
   let runtimePoll = null;
   let statusPoll = null;
   let lastRuntimeUpdated = 0;
 
+  async function fetchRuntime() {
+    try {
+      const res = await fetch("/runtime", { cache: "no-store" });
+      return await res.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function fetchRunStatus() {
+    try {
+      const res = await fetch("/api/run-status", { cache: "no-store" });
+      return await res.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function fetchRunResult() {
+    try {
+      const res = await fetch("/api/run-result", { cache: "no-store" });
+      return await res.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
   function highlightWorking(name) {
-    $all('tr[data-name]').forEach((r) => {
+    $$('tr[data-name]').forEach((r) => {
       if (r.getAttribute("data-name") === name) r.classList.add("working");
       else r.classList.remove("working");
     });
   }
 
   function clearWorking() {
-    $all('tr[data-name]').forEach((r) => r.classList.remove("working"));
-  }
-
-  async function fetchRuntime() {
-    try { return await fetchJson("/runtime"); } catch (_) { return null; }
-  }
-  async function fetchRunStatus() {
-    try { return await fetchJson("/api/run-status"); } catch (_) { return null; }
-  }
-  async function fetchRunResult() {
-    try { return await fetchJson("/api/run-result"); } catch (_) { return null; }
+    $$('tr[data-name]').forEach((r) => r.classList.remove("working"));
   }
 
   function startRuntimePoll() {
@@ -430,6 +370,7 @@
         stopRuntimePoll();
         clearWorking();
         if (runLive) runLive.style.display = "none";
+
         const result = await fetchRunResult();
         if (result) applyRunResult(result);
       }
@@ -437,10 +378,17 @@
   }
 
   function stopRuntimePoll() {
-    if (runtimePoll) { clearInterval(runtimePoll); runtimePoll = null; }
+    if (runtimePoll) {
+      clearInterval(runtimePoll);
+      runtimePoll = null;
+    }
   }
+
   function stopStatusPoll() {
-    if (statusPoll) { clearInterval(statusPoll); statusPoll = null; }
+    if (statusPoll) {
+      clearInterval(statusPoll);
+      statusPoll = null;
+    }
   }
 
   function setRunModalInitial() {
@@ -458,10 +406,11 @@
 
     if (runNowLine) runNowLine.textContent = "Starting…";
     if (runDoneLine) runDoneLine.textContent = "done: 0 / 0";
-
-    if (runRaw) { runRaw.style.display = "none"; runRaw.textContent = ""; }
+    if (runRaw) {
+      runRaw.style.display = "none";
+      runRaw.textContent = "";
+    }
     if (runHintBox) runHintBox.style.display = "none";
-
     setBar(0, 0);
   }
 
@@ -482,14 +431,15 @@
 
       const due = Number(summary.due || 0);
       setBar(due, due);
-
       if (runNowLine) runNowLine.textContent = data.ok ? "Completed" : "Failed";
       if (runDoneLine) runDoneLine.textContent = `done: ${due} / ${due}`;
 
       if (due === 0 && Number(summary.total || 0) > 0) {
         if (runHintBox) runHintBox.style.display = "block";
-        if (runHintText) runHintText.textContent =
-          "Nothing was checked. If this keeps happening, verify permissions and systemd timer state.";
+        if (runHintText) {
+          runHintText.textContent =
+            "Nothing was checked. If this keeps happening, verify permissions and systemd timer state.";
+        }
       }
     } else {
       if (runRaw) {
@@ -502,43 +452,153 @@
     toast(data.ok ? "Run completed" : "Run failed", data.ok ? "Done" : (data.message || "Error"));
   }
 
-  btnRunNow?.addEventListener("click", async () => {
-    btnRunNow.disabled = true;
+  // ---- Run Now button ----
+  const btnRunNow = $("#btnRunNow");
+  captureDefaultHtml(btnRunNow);
 
-    setRunModalInitial();
-    show(runModal);
+  if (btnRunNow) {
+    btnRunNow.addEventListener("click", async () => {
+      btnRunNow.disabled = true;
 
-    startRuntimePoll();
-    startStatusPoll();
+      setRunModalInitial();
+      showModal(runModal);
 
-    try {
-      const data = await fetchJson("/api/run-now", { method: "POST" });
-      if (!data.ok) {
+      startRuntimePoll();
+      startStatusPoll();
+
+      try {
+        const res = await fetch("/api/run-now", { method: "POST" });
+        const data = await res.json();
+
+        if (!data.ok) {
+          stopStatusPoll();
+          stopRuntimePoll();
+          clearWorking();
+          if (runLive) runLive.style.display = "none";
+          toast("Run failed", data.message || "Failed to start run");
+          if (runRaw) {
+            runRaw.textContent = data.message || "Failed to start run";
+            runRaw.style.display = "block";
+          }
+          if (runNowLine) runNowLine.textContent = "Failed";
+        } else {
+          if (runNowLine) runNowLine.textContent = "Started…";
+        }
+      } catch (e) {
         stopStatusPoll();
         stopRuntimePoll();
         clearWorking();
         if (runLive) runLive.style.display = "none";
-        toast("Run failed", data.message || "Failed to start run");
-        if (runRaw) { runRaw.textContent = data.message || "Failed to start run"; runRaw.style.display = "block"; }
+        toast("Run failed", e && e.message ? e.message : "Error");
+        if (runRaw) {
+          runRaw.textContent = e && e.message ? e.message : "Run failed";
+          runRaw.style.display = "block";
+        }
         if (runNowLine) runNowLine.textContent = "Failed";
-      } else {
-        if (runNowLine) runNowLine.textContent = "Started…";
+      } finally {
+        btnRunNow.disabled = false;
+        await refreshState(true);
       }
-    } catch (e) {
-      stopStatusPoll();
-      stopRuntimePoll();
-      clearWorking();
-      if (runLive) runLive.style.display = "none";
-      toast("Run failed", e && e.message ? e.message : "Error");
-      if (runRaw) { runRaw.textContent = e && e.message ? e.message : "Run failed"; runRaw.style.display = "block"; }
-      if (runNowLine) runNowLine.textContent = "Failed";
-    } finally {
-      btnRunNow.disabled = false;
-      await refreshState(true);
-    }
-  });
+    });
+  }
 
-  // ---------- real-time refresh + row blink ----------
+  // ---- Inline interval editing ----
+  async function setIntervalFor(name, seconds) {
+    const fd = new FormData();
+    fd.set("name", name);
+    fd.set("seconds", String(seconds));
+    return await apiPost("/api/set-target-interval", fd);
+  }
+
+  function attachIntervalHandlers() {
+    $$('tr[data-name]').forEach((row) => {
+      const name = row.getAttribute("data-name");
+      const input = $(".interval-input", row);
+      if (!input || input.dataset.bound === "1") return;
+      input.dataset.bound = "1";
+
+      const commit = async () => {
+        const v = String(input.value || "").trim();
+        const n = parseInt(v, 10);
+        if (!Number.isFinite(n) || n < 10 || n > 86400) {
+          toast("Invalid interval", "Use 10–86400 seconds");
+          input.value = input.getAttribute("data-interval") || "60";
+          return;
+        }
+        if (String(n) === String(input.getAttribute("data-interval"))) return;
+
+        input.disabled = true;
+        try {
+          const r = await setIntervalFor(name, n);
+          if (r.ok) {
+            toast("Updated", r.message || `Interval set to ${n}s`);
+            input.setAttribute("data-interval", String(n));
+          } else {
+            toast("Error", r.message || "Failed to set interval");
+            input.value = input.getAttribute("data-interval") || "60";
+          }
+        } catch (e) {
+          toast("Error", e && e.message ? e.message : "Failed to set interval");
+          input.value = input.getAttribute("data-interval") || "60";
+        } finally {
+          input.disabled = false;
+        }
+      };
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+          input.blur();
+        }
+        if (e.key === "Escape") {
+          input.value = input.getAttribute("data-interval") || "60";
+          input.blur();
+        }
+      });
+      input.addEventListener("blur", commit);
+    });
+  }
+
+  // ---- Menu actions ----
+  function attachMenuActions() {
+    $$('tr[data-name]').forEach((row) => {
+      const name = row.getAttribute("data-name");
+      $$(".menu-item", row).forEach((btn) => {
+        if (btn.dataset.bound === "1") return;
+        btn.dataset.bound = "1";
+
+        btn.addEventListener("click", async () => {
+          closeAllMenus();
+          const action = btn.getAttribute("data-action");
+          const fd = new FormData();
+          fd.set("name", name);
+
+          if (action === "remove") {
+            openConfirmRemove(name);
+            return;
+          }
+
+          try {
+            let data;
+            if (action === "test") {
+              toast("Testing", `Running test for ${name}…`);
+              data = await apiPost("/api/test", fd);
+            } else {
+              return;
+            }
+            toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+          } catch (e) {
+            toast("Error", e && e.message ? e.message : "Failed");
+          } finally {
+            await refreshState(true);
+          }
+        });
+      });
+    });
+  }
+
+  // ---- Real-time refresh + row blink ----
   function setStatusChip(row, status) {
     const chip = $(".status-chip", row);
     const text = $(".status-text", row);
@@ -554,11 +614,10 @@
 
   function flashIfChanged(el, newText) {
     if (!el) return false;
-    const txt = String(newText ?? "-");
-    if (el.textContent !== txt) {
-      el.textContent = txt;
+    if (el.textContent !== newText) {
+      el.textContent = newText;
       el.classList.remove("flash");
-      void el.offsetWidth; // reflow
+      void el.offsetWidth; // reflow to restart animation
       el.classList.add("flash");
       return true;
     }
@@ -575,11 +634,13 @@
 
   async function refreshState(force = false) {
     try {
-      const data = await fetchJson("/state");
+      const res = await fetch("/state", { cache: "no-store" });
+      const data = await res.json();
+
       const map = new Map();
       (data.targets || []).forEach((t) => map.set(t.name, t));
 
-      $all('tr[data-name]').forEach((row) => {
+      $$('tr[data-name]').forEach((row) => {
         const name = row.getAttribute("data-name");
         const t = map.get(name);
         if (!t) return;
@@ -609,26 +670,24 @@
 
       attachIntervalHandlers();
       attachMenuActions();
-    } catch (_) {
-      // silent on purpose
+    } catch (e) {
+      // silent
     }
   }
 
-  // init bindings
+  // ---- init ----
   attachIntervalHandlers();
   attachMenuActions();
 
-  setInterval(() => refreshState(false), Math.max(1, POLL_SECONDS) * 1000);
+  setInterval(() => refreshState(false), POLL_SECONDS * 1000);
 
   // ESC closes modals + menus
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      if (logModal?.classList.contains("show")) hide(logModal);
-      if (addModal?.classList.contains("show")) hide(addModal);
-      if (runModal?.classList.contains("show")) hide(runModal);
-      if (confirmModal?.classList.contains("show")) hide(confirmModal);
-      closeAllMenus();
-    }
+    if (e.key !== "Escape") return;
+    if (logModal?.classList.contains("show")) hideModal(logModal);
+    if (addModal?.classList.contains("show")) hideModal(addModal);
+    if (runModal?.classList.contains("show")) hideModal(runModal);
+    if (confirmModal?.classList.contains("show")) hideModal(confirmModal);
+    closeAllMenus();
   });
-
 })();
