@@ -8,11 +8,10 @@ from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, render_template, request
 
-
 APP_NAME = "interheart"
 
-# Må være samme DB som CLI bruker
-DEFAULT_DB_PATH = "/var/lib/interheart/interheart.db"
+# CLI bruker /var/lib/interheart/state.db
+DEFAULT_DB_PATH = "/var/lib/interheart/state.db"
 DB_PATH = os.environ.get("INTERHEART_DB", DEFAULT_DB_PATH)
 
 DEFAULT_INTERVAL = int(os.environ.get("INTERHEART_DEFAULT_INTERVAL", "60"))
@@ -34,28 +33,39 @@ def connect_db() -> sqlite3.Connection:
 
 def db_init() -> None:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
     with connect_db() as conn:
+        # targets (samme som CLI interheart.sh)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS targets (
               name TEXT PRIMARY KEY,
               ip TEXT NOT NULL,
               endpoint TEXT NOT NULL,
-              interval INTEGER NOT NULL,
+              interval INTEGER NOT NULL DEFAULT 60,
               enabled INTEGER NOT NULL DEFAULT 1,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL,
-              last_status TEXT DEFAULT NULL,
-              last_ping INTEGER DEFAULT NULL,
-              last_response INTEGER DEFAULT NULL,
-              last_latency_ms INTEGER DEFAULT NULL,
-              next_due_at INTEGER DEFAULT NULL
+              created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+              updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
             );
             """
         )
+
+        # runtime (samme som CLI interheart.sh)
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);"
+            """
+            CREATE TABLE IF NOT EXISTS runtime (
+              name TEXT PRIMARY KEY,
+              status TEXT NOT NULL DEFAULT 'unknown',
+              next_due INTEGER NOT NULL DEFAULT 0,
+              last_ping INTEGER NOT NULL DEFAULT 0,
+              last_sent INTEGER NOT NULL DEFAULT 0,
+              last_rtt_ms INTEGER NOT NULL DEFAULT -1
+            );
+            """
         )
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_next_due ON runtime(next_due);")
 
 
 def validate_name(name: str) -> None:
@@ -87,21 +97,76 @@ def row_to_dict(r: sqlite3.Row) -> Dict[str, Any]:
     return {k: r[k] for k in r.keys()}
 
 
+def _target_row_to_ui(r: sqlite3.Row) -> Dict[str, Any]:
+    """
+    UI forventer felter som ligner på den gamle webui-db'en.
+    Vi mapper runtime.* fra CLI-db til UI-felt.
+    """
+    d = row_to_dict(r)
+
+    # Map til UI-felter (for kompatibilitet med index.html/js du har)
+    d["last_status"] = d.get("status") or "unknown"
+    d["last_ping"] = d.get("last_ping", 0) or 0
+    d["last_response"] = d.get("last_sent", 0) or 0
+    d["last_latency_ms"] = d.get("last_rtt_ms", -1)
+    d["next_due_at"] = d.get("next_due", 0) or 0
+
+    # Rydd opp (valgfritt – men det er greit å la dem ligge også)
+    # Vi lar status/next_due/last_sent/last_rtt_ms bli stående, så info-modal kan vise begge.
+    return d
+
+
 def list_targets() -> List[Dict[str, Any]]:
     with connect_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM targets ORDER BY name COLLATE NOCASE ASC;"
+            """
+            SELECT
+              t.name,
+              t.ip,
+              t.endpoint,
+              t.interval,
+              t.enabled,
+              t.created_at,
+              t.updated_at,
+              COALESCE(r.status, 'unknown') AS status,
+              COALESCE(r.next_due, 0) AS next_due,
+              COALESCE(r.last_ping, 0) AS last_ping,
+              COALESCE(r.last_sent, 0) AS last_sent,
+              COALESCE(r.last_rtt_ms, -1) AS last_rtt_ms
+            FROM targets t
+            LEFT JOIN runtime r ON r.name = t.name
+            ORDER BY t.name COLLATE NOCASE ASC;
+            """
         ).fetchall()
-    return [row_to_dict(r) for r in rows]
+
+    return [_target_row_to_ui(r) for r in rows]
 
 
 def get_target(name: str) -> Optional[Dict[str, Any]]:
     with connect_db() as conn:
         row = conn.execute(
-            "SELECT * FROM targets WHERE name = ?;",
+            """
+            SELECT
+              t.name,
+              t.ip,
+              t.endpoint,
+              t.interval,
+              t.enabled,
+              t.created_at,
+              t.updated_at,
+              COALESCE(r.status, 'unknown') AS status,
+              COALESCE(r.next_due, 0) AS next_due,
+              COALESCE(r.last_ping, 0) AS last_ping,
+              COALESCE(r.last_sent, 0) AS last_sent,
+              COALESCE(r.last_rtt_ms, -1) AS last_rtt_ms
+            FROM targets t
+            LEFT JOIN runtime r ON r.name = t.name
+            WHERE t.name = ?;
+            """,
             (name,),
         ).fetchone()
-    return row_to_dict(row) if row else None
+
+    return _target_row_to_ui(row) if row else None
 
 
 def add_target(name: str, ip: str, endpoint: str, interval: int) -> None:
@@ -117,10 +182,19 @@ def add_target(name: str, ip: str, endpoint: str, interval: int) -> None:
         conn.execute(
             """
             INSERT INTO targets
-              (name, ip, endpoint, interval, enabled, created_at, updated_at, next_due_at)
-            VALUES (?, ?, ?, ?, 1, ?, ?, ?);
+              (name, ip, endpoint, interval, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?, ?);
             """,
-            (name, ip, endpoint, interval, ts, ts, ts),
+            (name, ip, endpoint, interval, ts, ts),
+        )
+
+        # Sørg for runtime-row finnes (så UI kan vise status osv)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO runtime (name, status, next_due, last_ping, last_sent, last_rtt_ms)
+            VALUES (?, 'unknown', 0, 0, 0, -1);
+            """,
+            (name,),
         )
 
 
@@ -129,6 +203,7 @@ def delete_target(name: str) -> None:
         cur = conn.execute("DELETE FROM targets WHERE name = ?;", (name,))
         if cur.rowcount == 0:
             raise ValueError("Target not found")
+        conn.execute("DELETE FROM runtime WHERE name = ?;", (name,))
 
 
 def update_target(
@@ -143,20 +218,12 @@ def update_target(
     ts = now_ts()
 
     with connect_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM targets WHERE name = ?;",
-            (name,),
-        ).fetchone()
+        row = conn.execute("SELECT * FROM targets WHERE name = ?;", (name,)).fetchone()
         if not row:
             raise ValueError("Target not found")
 
-        current = row_to_dict(row)
-
         if new_name and new_name != name:
-            exists = conn.execute(
-                "SELECT name FROM targets WHERE name = ?;",
-                (new_name,),
-            ).fetchone()
+            exists = conn.execute("SELECT name FROM targets WHERE name = ?;", (new_name,)).fetchone()
             if exists:
                 raise ValueError("New name already exists")
 
@@ -180,7 +247,7 @@ def update_target(
             params.append(1 if enabled else 0)
 
         if not fields:
-            return current
+            return get_target(name) or {}
 
         fields.append("updated_at = ?")
         params.append(ts)
@@ -192,6 +259,10 @@ def update_target(
             tuple(params),
         )
 
+        # Hvis navn endres: oppdater runtime.name også
+        if new_name is not None and new_name != name:
+            conn.execute("UPDATE runtime SET name = ? WHERE name = ?;", (new_name, name))
+
     return get_target(new_name or name) or {}
 
 
@@ -201,8 +272,10 @@ def api_error(message: str, status: int = 400):
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-# Flask 2.3+ fjernet before_first_request, så vi init’er DB ved oppstart (import-time).
-db_init()
+
+@app.before_first_request
+def _startup():
+    db_init()
 
 
 @app.get("/")
