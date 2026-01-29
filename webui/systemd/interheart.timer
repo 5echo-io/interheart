@@ -1,9 +1,14 @@
+# /opt/interheart/webui/systemd/interheart.timer
 [Unit]
 Description=5echo interheart scheduler
 
 [Timer]
-OnBootSec=10s
+# Start første run litt etter boot
+OnBootSec=15s
+
+# Kjør deretter hvert 10. sekund
 OnUnitActiveSec=10s
+
 AccuracySec=1s
 Unit=interheart.service
 
