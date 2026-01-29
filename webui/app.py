@@ -1,14 +1,14 @@
 from flask import Flask, request, jsonify, render_template
+from markupsafe import Markup
 import os
 import subprocess
 import time
 import json
 import re
-from typing import Dict, Any, List, Tuple
 
 APP = Flask(__name__, template_folder="templates", static_folder="static")
 
-def read_version() -> str:
+def read_version():
     try:
         base = os.environ.get("INTERHEART_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         candidates = [
@@ -30,19 +30,19 @@ CLI = os.environ.get("INTERHEART_CLI", "/usr/local/bin/interheart")
 BIND_HOST = os.environ.get("WEBUI_BIND", "0.0.0.0")
 BIND_PORT = int(os.environ.get("WEBUI_PORT", "8088"))
 
-LOG_LINES_DEFAULT = 200
-STATE_POLL_SECONDS = 2
+LOG_LINES_DEFAULT = int(os.environ.get("WEBUI_LOG_LINES", "200"))
+STATE_POLL_SECONDS = int(os.environ.get("WEBUI_POLL_SECONDS", "2"))
 
 STATE_DIR = "/var/lib/interheart"
 RUNTIME_FILE = os.path.join(STATE_DIR, "runtime.json")
 RUN_META_FILE = os.path.join(STATE_DIR, "run_meta.json")
 RUN_OUT_FILE = os.path.join(STATE_DIR, "run_last_output.txt")
 
+SUMMARY_RE = re.compile(
+    r"total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)"
+)
 
-# -------------------------
-# Helpers (files + process)
-# -------------------------
-def ensure_state_dir() -> None:
+def ensure_state_dir():
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
         for p in [RUNTIME_FILE, RUN_META_FILE, RUN_OUT_FILE]:
@@ -60,16 +60,11 @@ def ensure_state_dir() -> None:
 
 ensure_state_dir()
 
-
-def run_cmd(args: List[str]) -> Tuple[int, str]:
-    """
-    WebUI runs as root via systemd, so NO sudo needed.
-    """
+def run_cmd(args):
     cmd = [CLI] + args
     p = subprocess.run(cmd, capture_output=True, text=True)
     out = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
     return p.returncode, out.strip()
-
 
 def journalctl_lines(lines: int) -> str:
     cmd = ["journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=cat"]
@@ -78,59 +73,10 @@ def journalctl_lines(lines: int) -> str:
         raise RuntimeError((p.stderr or "journalctl failed").strip())
     return (p.stdout or "").strip()
 
-
-def load_run_meta() -> Dict[str, Any]:
-    try:
-        if os.path.exists(RUN_META_FILE):
-            with open(RUN_META_FILE, "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-            if not raw:
-                return {}
-            return json.loads(raw)
-    except Exception:
-        return {}
-    return {}
-
-
-def save_run_meta(meta: Dict[str, Any]) -> None:
-    ensure_state_dir()
-    try:
-        with open(RUN_META_FILE, "w", encoding="utf-8") as f:
-            json.dump(meta, f)
-        try:
-            os.chmod(RUN_META_FILE, 0o644)
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-
-def pid_is_running(pid: int) -> bool:
-    if not pid or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except Exception:
-        return False
-
-
-def human_ts(epoch: int) -> str:
-    if not epoch or epoch <= 0:
-        return "-"
-    try:
-        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(epoch))
-    except Exception:
-        return "-"
-
-
-# -------------------------
-# Parse CLI output (old UI)
-# -------------------------
-def parse_list_targets(list_output: str) -> List[Dict[str, Any]]:
+def parse_list_targets(list_output: str):
     targets = []
     in_table = False
-    for line in (list_output or "").splitlines():
+    for line in list_output.splitlines():
         line = line.rstrip()
         if line.startswith("--------------------------------------------------------------------------------"):
             in_table = True
@@ -156,11 +102,10 @@ def parse_list_targets(list_output: str) -> List[Dict[str, Any]]:
         })
     return targets
 
-
-def parse_status(status_output: str) -> Dict[str, Dict[str, Any]]:
-    state: Dict[str, Dict[str, Any]] = {}
+def parse_status(status_output: str):
+    state = {}
     in_table = False
-    for line in (status_output or "").splitlines():
+    for line in status_output.splitlines():
         if line.startswith("--------------------------------------------------------------------------------------------------------------"):
             in_table = True
             continue
@@ -170,7 +115,6 @@ def parse_status(status_output: str) -> Dict[str, Dict[str, Any]]:
             continue
         if not line.strip():
             continue
-
         parts = line.split()
         if len(parts) < 6:
             continue
@@ -185,8 +129,15 @@ def parse_status(status_output: str) -> Dict[str, Dict[str, Any]]:
         }
     return state
 
+def human_ts(epoch: int):
+    if not epoch or epoch <= 0:
+        return "-"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(epoch))
+    except Exception:
+        return "-"
 
-def merged_targets() -> List[Dict[str, Any]]:
+def merged_targets():
     _, list_out = run_cmd(["list"])
     targets = parse_list_targets(list_out)
 
@@ -210,14 +161,6 @@ def merged_targets() -> List[Dict[str, Any]]:
         })
     return merged
 
-
-# -------------------------
-# Run summary parsing
-# -------------------------
-SUMMARY_RE = re.compile(
-    r"total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)"
-)
-
 def parse_run_summary(text: str):
     m = SUMMARY_RE.search(text or "")
     if not m:
@@ -232,16 +175,12 @@ def parse_run_summary(text: str):
         "curl_fail": int(m.group(7)),
     }
 
-
-# -------------------------
-# Icons (as SVG strings)
-# -------------------------
-def icon_svg(path_d: str, opacity: float = 0.95) -> str:
-    return (
-        f'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" '
-        f'xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">'
-        f'<path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
-        f"</svg>"
+def icon_svg(path_d: str, opacity: float = 0.95):
+    return Markup(
+        f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+        xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">
+        <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>"""
     )
 
 ICONS = {
@@ -255,10 +194,39 @@ ICONS = {
     "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
 }
 
+def load_run_meta():
+    try:
+        if os.path.exists(RUN_META_FILE):
+            with open(RUN_META_FILE, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            if not raw:
+                return {}
+            return json.loads(raw)
+    except Exception:
+        return {}
+    return {}
 
-# -------------------------
-# Routes (HTML + API)
-# -------------------------
+def save_run_meta(meta: dict):
+    ensure_state_dir()
+    try:
+        with open(RUN_META_FILE, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        try:
+            os.chmod(RUN_META_FILE, 0o644)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def pid_is_running(pid: int):
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
 @APP.get("/")
 def index():
     return render_template(
@@ -273,11 +241,9 @@ def index():
         icons=ICONS,
     )
 
-
 @APP.get("/state")
 def state():
     return jsonify({"updated": int(time.time()), "targets": merged_targets()})
-
 
 @APP.get("/runtime")
 def runtime():
@@ -297,7 +263,6 @@ def runtime():
         pass
     return jsonify({"status": "idle", "current": "", "done": 0, "due": 0, "updated": int(time.time())})
 
-
 @APP.get("/logs")
 def logs():
     try:
@@ -306,7 +271,6 @@ def logs():
         lines = LOG_LINES_DEFAULT
     lines = max(50, min(1000, lines))
     updated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(time.time())))
-
     try:
         text = journalctl_lines(lines)
         src = "journalctl -t interheart -o cat"
@@ -315,12 +279,8 @@ def logs():
     except Exception as e:
         return jsonify({"source": "journalctl (error)", "lines": 1, "updated": updated, "text": f"(journalctl error: {str(e)})"})
 
-
 @APP.post("/api/run-now")
 def api_run_now():
-    """
-    Start run-now as background process so UI can poll /runtime while it runs.
-    """
     ensure_state_dir()
 
     meta = load_run_meta()
@@ -328,10 +288,9 @@ def api_run_now():
     if existing_pid and pid_is_running(existing_pid):
         return jsonify({"ok": True, "message": "Already running", "pid": existing_pid})
 
-    # mark runtime running
     try:
         with open(RUNTIME_FILE, "w", encoding="utf-8") as f:
-            json.dump({"status": "running", "current": "", "done": 0, "due": 0, "updated": int(time.time())}, f)
+            json.dump({"status":"running","current":"","done":0,"due":0,"updated":int(time.time())}, f)
         try:
             os.chmod(RUNTIME_FILE, 0o644)
         except Exception:
@@ -349,7 +308,6 @@ def api_run_now():
         save_run_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1})
         return jsonify({"ok": False, "message": f"Failed to start run-now: {str(e)}"})
 
-
 @APP.get("/api/run-status")
 def api_run_status():
     meta = load_run_meta()
@@ -365,14 +323,7 @@ def api_run_status():
         meta["pid"] = 0
         save_run_meta(meta)
 
-    return jsonify({
-        "running": False,
-        "finished": bool(started),
-        "pid": pid,
-        "started": started,
-        "finished_at": int(meta.get("finished") or 0)
-    })
-
+    return jsonify({"running": False, "finished": bool(started), "pid": pid, "started": started, "finished_at": int(meta.get("finished") or 0)})
 
 @APP.get("/api/run-result")
 def api_run_result():
@@ -388,16 +339,10 @@ def api_run_result():
 
     summary = parse_run_summary(out)
     ok = True
-    if "Unknown command" in out or ("Failed" in out and not out.startswith("OK:")):
+    if "Unknown command" in out:
         ok = False
 
-    return jsonify({
-        "ok": ok,
-        "message": out or ("OK" if ok else "Failed"),
-        "summary": summary,
-        "meta": meta,
-    })
-
+    return jsonify({"ok": ok, "message": out or ("OK" if ok else "Failed"), "summary": summary, "meta": meta})
 
 @APP.post("/api/test")
 def api_test():
@@ -405,13 +350,11 @@ def api_test():
     rc, out = run_cmd(["test", name])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
-
 @APP.post("/api/remove")
 def api_remove():
     name = request.form.get("name", "")
     rc, out = run_cmd(["remove", name])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
-
 
 @APP.post("/api/add")
 def api_add():
@@ -422,14 +365,12 @@ def api_add():
     rc, out = run_cmd(["add", name, ip, endpoint, interval])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
-
 @APP.post("/api/set-target-interval")
 def api_set_target_interval():
     name = request.form.get("name", "")
     sec = request.form.get("seconds", "")
     rc, out = run_cmd(["set-target-interval", name, sec])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
-
 
 if __name__ == "__main__":
     APP.run(host=BIND_HOST, port=BIND_PORT, threaded=True)
