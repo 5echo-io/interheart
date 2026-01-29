@@ -1,406 +1,365 @@
-/* Interheart WebUI (static) - v4.8.0 split
-   - Dropdown Actions: Remove, Information, Edit
-   - Remove modal: kun Cancel + Remove (reversert rekkefølge)
-   - Penere checkbox: switch
-   - Interval kolonne smalere
-   - Latency + endpoint fjernet fra tabell -> flyttet til Information modal
-*/
+/* webui/static/app.js
+ * Interheart WebUI - vanilla JS
+ * Assumes these IDs exist in index.html:
+ * btnAdd, btnRefresh, btnSaveTarget, btnConfirmRemove
+ * tbodyTargets, hintLine
+ * modalEdit, modalRemove, modalInfo
+ * fName, fIP, fEndpoint, fInterval
+ * modalEditTitle, editModeHint
+ * removeName
+ * infoGrid
+ * toast, toastInner
+ */
 
-(function () {
-  const API_BASE = "/api";
+(() => {
+  // --- tiny helpers ---
+  const $ = (id) => document.getElementById(id);
 
-  // ---------- helpers ----------
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-
-  function clampStr(s, max = 120) {
-    if (s == null) return "";
-    const str = String(s);
-    if (str.length <= max) return str;
-    return str.slice(0, max - 1) + "…";
-  }
-
-  function safe(v, fallback = "-") {
-    if (v === null || v === undefined || v === "") return fallback;
-    return String(v);
-  }
-
-  function msToHuman(ms) {
-    const n = Number(ms);
-    if (!Number.isFinite(n)) return "-";
-    if (n < 1000) return `${Math.round(n)} ms`;
-    const s = n / 1000;
-    if (s < 60) return `${s.toFixed(2)} s`;
-    const m = Math.floor(s / 60);
-    const rem = (s % 60).toFixed(0).padStart(2, "0");
-    return `${m}m ${rem}s`;
-  }
-
-  // ---------- toast ----------
-  let toastTimer = null;
-  function toast(msg, kind = "ok") {
-    const el = $("#toast");
-    if (!el) return;
-    el.dataset.kind = kind;
-    $("#toastText").textContent = msg;
-    el.classList.add("toast--show");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove("toast--show"), 2200);
-  }
-
-  // ---------- state ----------
   const state = {
     targets: [],
-    filterEnabled: false,
-    lastUpdated: null,
+    editMode: "add", // add | edit
+    currentName: null, // for edit/remove/info
   };
 
-  // ---------- fetch ----------
-  async function apiGet(path) {
-    const res = await fetch(API_BASE + path, { headers: { "Accept": "application/json" } });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(`GET ${path} -> ${res.status} ${txt}`);
-    }
-    return res.json();
+  function showToast(text, kind = "ok") {
+    const el = $("toast");
+    const inner = $("toastInner");
+    if (!el || !inner) return;
+
+    inner.textContent = String(text || "");
+    el.dataset.kind = kind;
+    el.classList.add("toast--show");
+
+    window.clearTimeout(showToast._t);
+    showToast._t = window.setTimeout(() => el.classList.remove("toast--show"), 2600);
   }
 
-  async function apiPost(path, body) {
-    const res = await fetch(API_BASE + path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify(body || {}),
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(`POST ${path} -> ${res.status} ${txt}`);
-    }
-    return res.json().catch(() => ({}));
-  }
-
-  async function apiDelete(path) {
-    const res = await fetch(API_BASE + path, { method: "DELETE" });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(`DELETE ${path} -> ${res.status} ${txt}`);
-    }
-    return res.json().catch(() => ({}));
-  }
-
-  // ---------- render ----------
-  function render() {
-    renderHeader();
-    renderTable();
-  }
-
-  function renderHeader() {
-    const count = state.targets.length;
-    const up = state.targets.filter(t => t.status === "up").length;
-    const down = state.targets.filter(t => t.status === "down").length;
-    const badge = $("#statusBadge");
-
-    if (badge) {
-      badge.classList.remove("badge--up", "badge--down", "badge--warn");
-      if (down > 0) badge.classList.add("badge--down");
-      else if (up === count && count > 0) badge.classList.add("badge--up");
-      else badge.classList.add("badge--warn");
-
-      $("#statusBadgeText").textContent = `${up} up • ${down} down • ${count} targets`;
-    }
-
-    const updated = $("#lastUpdated");
-    if (updated) {
-      updated.textContent = state.lastUpdated
-        ? `Updated: ${new Date(state.lastUpdated).toLocaleString()}`
-        : "Updated: -";
-    }
-
-    const sw = $("#enabledSwitch");
-    if (sw) sw.checked = !!state.filterEnabled;
-  }
-
-  function getVisibleTargets() {
-    const q = ($("#searchInput")?.value || "").trim().toLowerCase();
-    let items = state.targets.slice();
-
-    if (state.filterEnabled) {
-      items = items.filter(t => !!t.enabled);
-    }
-    if (q) {
-      items = items.filter(t => {
-        const hay = [
-          t.name, t.id, t.group, t.ip, t.interval,
-          t.endpoint, t.url
-        ].map(x => (x || "").toString().toLowerCase()).join(" ");
-        return hay.includes(q);
-      });
-    }
-
-    return items;
-  }
-
-  function renderTable() {
-    const tbody = $("#targetsBody");
-    if (!tbody) return;
-
-    const items = getVisibleTargets();
-    tbody.innerHTML = "";
-
-    if (!items.length) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td class="td-muted" colspan="7" style="padding:16px 14px;">No targets found.</td>`;
-      tbody.appendChild(tr);
-      return;
-    }
-
-    for (const t of items) {
-      const tr = document.createElement("tr");
-
-      const statusClass =
-        t.status === "up" ? "badge badge--up" :
-        t.status === "down" ? "badge badge--down" :
-        "badge badge--warn";
-
-      tr.innerHTML = `
-        <td>
-          <div class="row">
-            <span class="${statusClass}">${safe((t.status || "unknown").toUpperCase())}</span>
-          </div>
-        </td>
-        <td>
-          <div class="td-strong">${safe(t.name, "Unnamed")}</div>
-          <div class="td-muted">${safe(t.group, "")}</div>
-        </td>
-        <td class="td-mono">${safe(t.ip)}</td>
-        <td class="td-mono col-interval">${safe(t.interval)}</td>
-        <td>
-          <label class="switch" title="Enabled">
-            <input type="checkbox" data-action="toggleEnabled" data-id="${safe(t.id)}" ${t.enabled ? "checked" : ""}/>
-            <span class="switch__ui"></span>
-          </label>
-        </td>
-        <td class="td-muted">${safe(t.last_check || t.lastCheck || "")}</td>
-        <td style="text-align:right;">
-          ${renderActionsDropdown(t)}
-        </td>
-      `;
-
-      tbody.appendChild(tr);
-    }
-
-    // bind switch toggles
-    $$(`input[data-action="toggleEnabled"]`, tbody).forEach(inp => {
-      inp.addEventListener("change", async (e) => {
-        const id = e.target.getAttribute("data-id");
-        const enabled = !!e.target.checked;
-        try {
-          await apiPost(`/targets/${encodeURIComponent(id)}/enabled`, { enabled });
-          toast(enabled ? "Enabled" : "Disabled", "ok");
-          await refresh();
-        } catch (err) {
-          toast("Could not update enabled state", "err");
-          console.error(err);
-          await refresh();
-        }
-      });
-    });
-
-    // dropdown wiring
-    $$(`.dropdown`, tbody).forEach(dd => wireDropdown(dd));
-  }
-
-  function renderActionsDropdown(t) {
-    const id = safe(t.id);
-    return `
-      <div class="dropdown" data-id="${id}">
-        <button class="btn btn--sm btn--ghost" data-dd-open type="button">Actions ▾</button>
-        <div class="dropdown__menu" data-dd-menu>
-          <button class="dropdown__item" type="button" data-dd-action="info">Information</button>
-          <button class="dropdown__item" type="button" data-dd-action="edit">Edit</button>
-          <div class="dropdown__sep"></div>
-          <button class="dropdown__item dropdown__item--danger" type="button" data-dd-action="remove">Remove</button>
-        </div>
-      </div>
-    `;
-  }
-
-  function wireDropdown(root) {
-    const btn = $(`[data-dd-open]`, root);
-    const menu = $(`[data-dd-menu]`, root);
-
-    function close() {
-      menu.classList.remove("dropdown__menu--open");
-    }
-    function toggle() {
-      // close others
-      $$(`.dropdown__menu--open`).forEach(m => m !== menu && m.classList.remove("dropdown__menu--open"));
-      menu.classList.toggle("dropdown__menu--open");
-    }
-
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      toggle();
-    });
-
-    menu.addEventListener("click", async (e) => {
-      const el = e.target.closest("[data-dd-action]");
-      if (!el) return;
-      const action = el.getAttribute("data-dd-action");
-      const id = root.getAttribute("data-id");
-      close();
-
-      const target = state.targets.find(x => String(x.id) === String(id));
-      if (!target) return;
-
-      if (action === "remove") openRemoveModal(target);
-      if (action === "info") openInfoModal(target);
-      if (action === "edit") openEditModal(target);
-    });
-
-    // click outside closes
-    document.addEventListener("click", (e) => {
-      if (!root.contains(e.target)) close();
-    });
-  }
-
-  // ---------- modals ----------
   function openModal(id) {
-    const el = $(id);
-    if (!el) return;
-    el.classList.add("modal--open");
+    const m = $(id);
+    if (!m) return;
+    m.setAttribute("aria-hidden", "false");
+    m.classList.add("modal--open");
   }
 
   function closeModal(id) {
-    const el = $(id);
-    if (!el) return;
-    el.classList.remove("modal--open");
+    const m = $(id);
+    if (!m) return;
+    m.setAttribute("aria-hidden", "true");
+    m.classList.remove("modal--open");
   }
 
-  // Remove modal: ingen "Close". Bare Cancel + Remove, og rekkefølge: Remove først, så Cancel.
-  function openRemoveModal(t) {
-    $("#removeTargetName").textContent = safe(t.name, "Unnamed");
-    $("#removeTargetId").textContent = safe(t.id);
+  async function api(url, options = {}) {
+    const res = await fetch(url, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
 
-    const removeBtn = $("#btnConfirmRemove");
-    removeBtn.onclick = async () => {
-      try {
-        await apiDelete(`/targets/${encodeURIComponent(t.id)}`);
-        toast("Target removed", "ok");
-        closeModal("#modalRemove");
-        await refresh();
-      } catch (err) {
-        toast("Could not remove target", "err");
-        console.error(err);
-      }
-    };
-
-    openModal("#modalRemove");
-  }
-
-  function openInfoModal(t) {
-    $("#infoName").textContent = safe(t.name, "Unnamed");
-    $("#infoId").textContent = safe(t.id);
-    $("#infoGroup").textContent = safe(t.group);
-    $("#infoIP").textContent = safe(t.ip);
-    $("#infoInterval").textContent = safe(t.interval);
-
-    // Flyttet hit:
-    $("#infoEndpoint").textContent = safe(t.endpoint || t.url || "");
-    $("#infoLatency").textContent = msToHuman(t.latency_ms || t.latency || t.last_latency_ms);
-
-    $("#infoLastCheck").textContent = safe(t.last_check || t.lastCheck || "");
-    $("#infoStatus").textContent = safe(t.status || "unknown");
-
-    openModal("#modalInfo");
-  }
-
-  function openEditModal(t) {
-    // prefill
-    $("#editId").value = safe(t.id, "");
-    $("#editName").value = safe(t.name, "");
-    $("#editGroup").value = safe(t.group, "");
-    $("#editIP").value = safe(t.ip, "");
-    $("#editInterval").value = safe(t.interval, "");
-    $("#editEndpoint").value = safe(t.endpoint || t.url || "", "");
-
-    $("#btnSaveEdit").onclick = async () => {
-      const payload = {
-        name: $("#editName").value.trim(),
-        group: $("#editGroup").value.trim(),
-        ip: $("#editIP").value.trim(),
-        interval: $("#editInterval").value.trim(),
-        endpoint: $("#editEndpoint").value.trim(),
-      };
-
-      try {
-        await apiPost(`/targets/${encodeURIComponent(t.id)}`, payload);
-        toast("Target updated", "ok");
-        closeModal("#modalEdit");
-        await refresh();
-      } catch (err) {
-        toast("Could not update target", "err");
-        console.error(err);
-      }
-    };
-
-    openModal("#modalEdit");
-  }
-
-  // modal close wiring
-  function wireModalBasics(modalSel) {
-    const modal = $(modalSel);
-    if (!modal) return;
-
-    const backdrop = $(`.modal__backdrop`, modal);
-    const closeBtns = $$(`[data-modal-close]`, modal);
-
-    backdrop?.addEventListener("click", () => closeModal(modalSel));
-    closeBtns.forEach(b => b.addEventListener("click", () => closeModal(modalSel)));
-  }
-
-  // ---------- refresh ----------
-  async function refresh() {
-    try {
-      const data = await apiGet("/targets");
-      state.targets = Array.isArray(data) ? data : (data.targets || []);
-      state.lastUpdated = Date.now();
-      render();
-    } catch (err) {
-      console.error(err);
-      toast("Could not load targets", "err");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      const msg = data?.error || `Request failed (${res.status})`;
+      throw new Error(msg);
     }
+    return data;
   }
 
-  async function toggleFilterEnabled(v) {
-    state.filterEnabled = !!v;
-    renderTable();
+  function cssId(s) {
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, "_");
   }
 
-  // ---------- init ----------
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function escapeAttr(s) {
+    return escapeHtml(s).replaceAll('"', "&quot;");
+  }
+
+  function intervalText(t) {
+    const v = Number(t?.interval || 0);
+    if (!v) return "—";
+    return `${v}s`;
+  }
+
+  function statusBadge(t) {
+    const s = String(t?.last_status || "unknown").toLowerCase();
+    const label =
+      s === "up" ? "Up" :
+      s === "down" ? "Down" :
+      s === "degraded" ? "Degraded" :
+      s === "paused" ? "Paused" :
+      "Unknown";
+
+    const cls =
+      s === "up" ? "badge badge--up" :
+      s === "down" ? "badge badge--down" :
+      s === "degraded" ? "badge badge--warn" :
+      "badge";
+
+    return `<span class="${cls}">${label}</span>`;
+  }
+
+  function render() {
+    const tbody = $("tbodyTargets");
+    const hint = $("hintLine");
+    if (!tbody || !hint) return;
+
+    const items = state.targets || [];
+    if (!items.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="td-muted">No targets yet.</td></tr>`;
+      hint.textContent = "0 targets";
+      return;
+    }
+
+    hint.textContent = `${items.length} target${items.length === 1 ? "" : "s"} loaded`;
+
+    tbody.innerHTML = items.map((t) => {
+      const enabled = !!t.enabled;
+
+      return `
+        <tr>
+          <td>
+            <label class="switch">
+              <input type="checkbox" ${enabled ? "checked" : ""} data-toggle="${escapeAttr(t.name)}">
+              <span class="switch__ui"></span>
+            </label>
+          </td>
+          <td class="td-strong">${escapeHtml(t.name)}</td>
+          <td class="td-mono">${escapeHtml(t.ip || "—")}</td>
+          <td class="td-mono col-interval">${intervalText(t)}</td>
+          <td>${statusBadge(t)}</td>
+          <td style="text-align:right;">
+            <div class="dropdown">
+              <button class="btn btn--ghost btn--sm" data-dd="${escapeAttr(t.name)}">Actions ▾</button>
+              <div class="dropdown__menu" id="dd-${cssId(t.name)}">
+                <button class="dropdown__item" data-action="info" data-name="${escapeAttr(t.name)}">Information</button>
+                <button class="dropdown__item" data-action="edit" data-name="${escapeAttr(t.name)}">Edit</button>
+                <div class="dropdown__sep"></div>
+                <button class="dropdown__item dropdown__item--danger" data-action="remove" data-name="${escapeAttr(t.name)}">Remove</button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  async function loadTargets() {
+    const hint = $("hintLine");
+    if (hint) hint.textContent = "Loading…";
+    const out = await api("/api/targets");
+    state.targets = out.data || [];
+    render();
+  }
+
+  function resetEditForm() {
+    const fName = $("fName");
+    const fIP = $("fIP");
+    const fEndpoint = $("fEndpoint");
+    const fInterval = $("fInterval");
+
+    if (fName) fName.value = "";
+    if (fIP) fIP.value = "";
+    if (fEndpoint) fEndpoint.value = "";
+    if (fInterval && fInterval.defaultValue) fInterval.value = fInterval.defaultValue;
+  }
+
+  function setEditMode(mode, target) {
+    state.editMode = mode;
+
+    const title = $("modalEditTitle");
+    const hint = $("editModeHint");
+    const fName = $("fName");
+    const fIP = $("fIP");
+    const fEndpoint = $("fEndpoint");
+    const fInterval = $("fInterval");
+
+    if (mode === "add") {
+      state.currentName = null;
+      if (title) title.textContent = "Add target";
+      if (hint) hint.textContent = "Creates a new target.";
+      resetEditForm();
+      return;
+    }
+
+    // edit
+    state.currentName = target?.name || null;
+    if (title) title.textContent = "Edit target";
+    if (hint) hint.textContent = "Edits the existing target (name/IP/endpoint/interval).";
+
+    if (fName) fName.value = target?.name || "";
+    if (fIP) fIP.value = target?.ip || "";
+    if (fEndpoint) fEndpoint.value = target?.endpoint || "";
+    if (fInterval) fInterval.value = String(target?.interval ?? (fInterval.defaultValue || "60"));
+  }
+
+  async function saveTarget() {
+    const payload = {
+      name: ($("fName")?.value || "").trim(),
+      ip: ($("fIP")?.value || "").trim(),
+      endpoint: ($("fEndpoint")?.value || "").trim(),
+      interval: Number(($("fInterval")?.value || "0")),
+    };
+
+    if (state.editMode === "add") {
+      await api("/api/targets", { method: "POST", body: JSON.stringify(payload) });
+      showToast("Target created", "ok");
+      closeModal("modalEdit");
+      await loadTargets();
+      return;
+    }
+
+    await api(`/api/targets/${encodeURIComponent(state.currentName)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+
+    showToast("Target updated", "ok");
+    closeModal("modalEdit");
+    await loadTargets();
+  }
+
+  function openRemove(name) {
+    state.currentName = name;
+    const el = $("removeName");
+    if (el) el.textContent = name;
+    openModal("modalRemove");
+  }
+
+  async function confirmRemove() {
+    const name = state.currentName;
+    await api(`/api/targets/${encodeURIComponent(name)}`, { method: "DELETE" });
+    showToast("Target removed", "ok");
+    closeModal("modalRemove");
+    await loadTargets();
+  }
+
+  function openInfo(target) {
+    state.currentName = target?.name || null;
+
+    const lines = [
+      ["Name", target?.name],
+      ["IP", target?.ip || "—"],
+      ["Endpoint URL", target?.endpoint || "—"],
+      ["Interval", intervalText(target)],
+      ["Enabled", target?.enabled ? "Yes" : "No"],
+      ["Last status", (target?.last_status || "unknown")],
+      ["Last ping (epoch)", target?.last_ping ?? "—"],
+      ["Last response (epoch)", target?.last_response ?? "—"],
+      ["Last latency (ms)", target?.last_latency_ms ?? "—"],
+      ["Next due (epoch)", target?.next_due_at ?? "—"],
+      ["Created", target?.created_at ?? "—"],
+      ["Updated", target?.updated_at ?? "—"],
+    ];
+
+    const grid = $("infoGrid");
+    if (grid) {
+      grid.innerHTML = lines.map(([k, v]) => `
+        <div class="infoRow">
+          <div class="infoKey">${escapeHtml(k)}</div>
+          <div class="infoVal">${escapeHtml(v)}</div>
+        </div>
+      `).join("");
+    }
+
+    openModal("modalInfo");
+  }
+
+  function closeAllDropdowns() {
+    document.querySelectorAll(".dropdown__menu--open")
+      .forEach((m) => m.classList.remove("dropdown__menu--open"));
+  }
+
   function init() {
-    // wire header UI
-    $("#btnRefresh")?.addEventListener("click", refresh);
-    $("#searchInput")?.addEventListener("input", renderTable);
-    $("#enabledSwitch")?.addEventListener("change", (e) => toggleFilterEnabled(e.target.checked));
+    // Close modals via data-close
+    document.addEventListener("click", (e) => {
+      const t = e.target;
+      const closeId = t?.getAttribute?.("data-close");
+      if (closeId) closeModal(closeId);
+    });
 
-    // modals
-    wireModalBasics("#modalRemove");
-    wireModalBasics("#modalInfo");
-    wireModalBasics("#modalEdit");
+    // Dropdown + actions
+    document.addEventListener("click", (e) => {
+      const t = e.target;
 
-    // Remove modal buttons
-    $("#btnCancelRemove")?.addEventListener("click", () => closeModal("#modalRemove"));
+      // Toggle dropdown
+      const ddName = t?.getAttribute?.("data-dd");
+      if (ddName) {
+        const id = `dd-${cssId(ddName)}`;
+        const menu = document.getElementById(id);
+        if (!menu) return;
 
-    // Info modal
-    $("#btnCloseInfo")?.addEventListener("click", () => closeModal("#modalInfo"));
+        const open = menu.classList.contains("dropdown__menu--open");
+        closeAllDropdowns();
+        if (!open) menu.classList.add("dropdown__menu--open");
 
-    // Edit modal
-    $("#btnCancelEdit")?.addEventListener("click", () => closeModal("#modalEdit"));
+        e.stopPropagation();
+        return;
+      }
 
-    refresh();
-    setInterval(refresh, 10_000);
+      // Action click
+      const action = t?.getAttribute?.("data-action");
+      const name = t?.getAttribute?.("data-name");
+      if (action && name) {
+        closeAllDropdowns();
+
+        const target = (state.targets || []).find((x) => x.name === name);
+        if (!target) return;
+
+        if (action === "remove") openRemove(name);
+        if (action === "info") openInfo(target);
+        if (action === "edit") {
+          setEditMode("edit", target);
+          openModal("modalEdit");
+        }
+        return;
+      }
+
+      // click outside closes dropdowns
+      closeAllDropdowns();
+    });
+
+    // Toggle enable
+    document.addEventListener("change", async (e) => {
+      const t = e.target;
+      const name = t?.getAttribute?.("data-toggle");
+      if (!name) return;
+
+      const enabled = !!t.checked;
+      try {
+        await api(`/api/targets/${encodeURIComponent(name)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ enabled }),
+        });
+        showToast(enabled ? "Enabled" : "Disabled", "ok");
+        await loadTargets();
+      } catch (err) {
+        showToast(err?.message || "Failed", "err");
+        // revert UI
+        t.checked = !enabled;
+      }
+    });
+
+    // Buttons
+    $("btnRefresh")?.addEventListener("click", () => loadTargets().catch((e) => showToast(e.message, "err")));
+    $("btnAdd")?.addEventListener("click", () => {
+      setEditMode("add", null);
+      openModal("modalEdit");
+    });
+    $("btnSaveTarget")?.addEventListener("click", () => saveTarget().catch((e) => showToast(e.message, "err")));
+    $("btnConfirmRemove")?.addEventListener("click", () => confirmRemove().catch((e) => showToast(e.message, "err")));
+
+    // Initial
+    loadTargets().catch((e) => showToast(e.message, "err"));
   }
 
-  document.addEventListener("DOMContentLoaded", init);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
