@@ -41,8 +41,6 @@ RUN_OUT_FILE = os.path.join(STATE_DIR, "run_last_output.txt")
 def ensure_state_dir():
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
-        # Make state dir + files readable/writable by webui user (www-data) in typical setups
-        # (local UI only; acceptable tradeoff)
         try:
             os.chmod(STATE_DIR, 0o777)
         except Exception:
@@ -82,7 +80,7 @@ def parse_list_targets(list_output: str):
         if not line.strip():
             continue
         parts = line.split()
-        # New list format includes ENABLED column: NAME IP INTERVAL ENABLED ENDPOINT
+        # NAME IP INTERVAL ENABLED ENDPOINT(masked)
         if len(parts) < 5:
             continue
         name = parts[0]
@@ -100,10 +98,15 @@ def parse_list_targets(list_output: str):
     return targets
 
 def parse_status(status_output: str):
+    """
+    interheart status table:
+      NAME STATUS NEXT_IN NEXT_DUE LAST_PING LAST_RESP LAT_MS
+    """
     state = {}
     in_table = False
     for line in status_output.splitlines():
-        if line.startswith("----------------------------------------------------------------------------------------------------------------------------"):
+        if line.startswith("----------------------------------------------------------------------------------------------------------------------------") or \
+           line.startswith("-------------------------------------------------------------------------------------------------------------------------------"):
             in_table = True
             continue
         if not in_table:
@@ -114,16 +117,18 @@ def parse_status(status_output: str):
             continue
 
         parts = line.split()
-        # NAME STATUS NEXT_IN NEXT_DUE LAST_PING LAST_RESP LAT(ms)
+        # NAME STATUS NEXT_IN NEXT_DUE LAST_PING LAST_RESP LAT_MS
         if len(parts) < 7:
             continue
         name = parts[0]
         status = parts[1]
+        next_due = parts[3]
         last_ping = parts[4]
         last_sent = parts[5]
         last_rtt = parts[6]
         state[name] = {
             "status": status,
+            "next_due_epoch": int(next_due) if next_due.isdigit() else 0,
             "last_ping_epoch": int(last_ping) if last_ping.isdigit() else 0,
             "last_sent_epoch": int(last_sent) if last_sent.isdigit() else 0,
             "last_rtt_ms": int(last_rtt) if last_rtt.lstrip("-").isdigit() else -1,
@@ -137,6 +142,19 @@ def human_ts(epoch: int):
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(epoch))
     except Exception:
         return "-"
+
+def human_due(epoch: int):
+    if not epoch or epoch <= 0:
+        return "-"
+    now = int(time.time())
+    if epoch <= now:
+        return f"due ({human_ts(epoch)})"
+    diff = epoch - now
+    if diff < 60:
+        return f"in {diff}s ({human_ts(epoch)})"
+    if diff < 3600:
+        return f"in {diff//60}m ({human_ts(epoch)})"
+    return f"in {diff//3600}h {((diff%3600)//60)}m ({human_ts(epoch)})"
 
 def sudo_journalctl(lines: int) -> str:
     cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=cat"]
@@ -220,6 +238,8 @@ ICONS = {
     "search": icon_svg("M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15"),
     "ban": icon_svg("M18 6L6 18M6 6l12 12"),
     "check": icon_svg("M20 6 9 17l-5-5"),
+    "info": icon_svg("M12 16v-4M12 8h.01"),
+    "edit": icon_svg("M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5"),
 }
 
 def merged_targets():
@@ -233,17 +253,19 @@ def merged_targets():
     for t in targets:
         st = state.get(t["name"], {})
         status = st.get("status", "unknown")
+        next_due_epoch = st.get("next_due_epoch", 0)
         last_ping_epoch = st.get("last_ping_epoch", 0)
         last_sent_epoch = st.get("last_sent_epoch", 0)
         last_rtt_ms = st.get("last_rtt_ms", -1)
 
-        # If config says disabled, prefer disabled status (some older states won't reflect it)
         if not t.get("enabled", True):
             status = "disabled"
 
         merged.append({
             **t,
             "status": status,
+            "next_due_epoch": next_due_epoch,
+            "next_due_human": human_due(next_due_epoch),
             "last_ping_human": human_ts(last_ping_epoch),
             "last_response_human": human_ts(last_sent_epoch),
             "last_ping_epoch": last_ping_epoch,
@@ -270,6 +292,17 @@ def format_duration_ms(ms: int):
     m = int(sec // 60)
     s = sec - (m * 60)
     return f"{m}m {s:.0f}s"
+
+def get_last_run_summary():
+    try:
+        if os.path.exists(RUN_OUT_FILE):
+            with open(RUN_OUT_FILE, "r", encoding="utf-8") as f:
+                out = f.read().strip()
+            s = parse_run_summary(out or "")
+            return s
+    except Exception:
+        return None
+    return None
 
 TEMPLATE = r"""
 <!doctype html>
@@ -332,7 +365,7 @@ TEMPLATE = r"""
     .hint{color:rgba(255,255,255,.52);font-size:12px}
     .sep{height:1px;background:var(--line);margin:12px 0}
 
-    input{
+    input, select{
       border-radius:14px;
       border:1px solid var(--line);
       background:rgba(255,255,255,.03);
@@ -343,7 +376,7 @@ TEMPLATE = r"""
       font-family:var(--sans);
       height:36px;
     }
-    input:focus{ border-color:rgba(255,255,255,.24); filter:brightness(1.03); background:rgba(255,255,255,.04); }
+    input:focus, select:focus{ border-color:rgba(255,255,255,.24); filter:brightness(1.03); background:rgba(255,255,255,.04); }
     input::placeholder{color:rgba(255,255,255,.30)}
 
     .btn{
@@ -378,9 +411,14 @@ TEMPLATE = r"""
 
     table{width:100%;border-collapse:collapse;border-radius:14px;overflow:hidden}
     th,td{padding:10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
-    th{color:var(--muted);font-weight:850;text-align:left}
+    th{color:var(--muted);font-weight:850;text-align:left;user-select:none}
     td code{font-family:var(--mono);font-size:12px;color:rgba(255,255,255,.88)}
     tr:hover td{background:rgba(255,255,255,.020)}
+
+    th.sortable{cursor:pointer}
+    th.sortable:hover{color:rgba(255,255,255,.78)}
+    .sort-ind{opacity:.65;font-size:11px;margin-left:8px}
+    .sort-ind.on{opacity:.95}
 
     .chip{
       display:inline-flex;align-items:center;gap:8px;
@@ -408,7 +446,7 @@ TEMPLATE = r"""
 
     .interval-wrap{display:flex;align-items:center;gap:8px}
     .interval-input{
-      width:86px;height:34px;padding:8px 10px;border-radius:12px;font-weight:850;
+      width:72px;height:34px;padding:8px 10px;border-radius:12px;font-weight:850;
       font-family:var(--mono);
       background:rgba(255,255,255,.03);
     }
@@ -417,7 +455,7 @@ TEMPLATE = r"""
     .menu{position:relative;display:inline-block}
     .menu-btn{width:40px;height:34px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px}
     .menu-dd{
-      position:absolute;right:0;top:42px;width:220px;
+      position:absolute;right:0;top:42px;width:240px;
       background:rgba(10,16,28,.96);
       border:1px solid rgba(255,255,255,.12);
       border-radius:14px;
@@ -440,7 +478,7 @@ TEMPLATE = r"""
 
     .toasts{
       position:fixed;top:18px; right:18px;display:flex;flex-direction:column;gap:10px;
-      z-index:9999;width:min(460px, calc(100vw - 24px));pointer-events:none;
+      z-index:9999;width:min(520px, calc(100vw - 24px));pointer-events:none;
     }
     .toast{
       pointer-events:auto;border-radius:16px;border:1px solid rgba(255,255,255,.12);
@@ -451,6 +489,8 @@ TEMPLATE = r"""
     .toast b{font-size:13px}
     .toast p{margin:2px 0 0 0;font-size:12px;color:rgba(255,255,255,.64);line-height:1.35}
     .toast .x{margin-left:auto;cursor:pointer;border:0;background:transparent;color:rgba(255,255,255,.70);font-weight:900}
+    .toast-actions{display:flex;gap:8px;margin-left:auto;align-items:center}
+    .toast-actions .btn-mini{height:30px}
 
     .modal{
       position:fixed;inset:0;display:none;align-items:center;justify-content:center;
@@ -485,15 +525,6 @@ TEMPLATE = r"""
       white-space:pre;overflow:auto;position:relative;
     }
 
-    .flash{animation: flash .80s ease;border-radius:10px;padding:2px 6px}
-    @keyframes flash{0%{background:rgba(255,255,255,.18)}100%{background:transparent}}
-
-    tr.working td{background:rgba(255,255,255,.035)}
-    tr.working td:first-child{position:relative}
-    tr.working td:first-child:before{
-      content:"";position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px;
-      background:rgba(255,255,255,.20);
-    }
     tr.blink-ok td{animation: rowOk .9s ease}
     tr.blink-bad td{animation: rowBad .9s ease}
     @keyframes rowOk{0%{background:rgba(53,211,159,.16)}100%{background:transparent}}
@@ -509,36 +540,8 @@ TEMPLATE = r"""
 
     .grid3{display:grid;grid-template-columns: 1.2fr 1fr .7fr;gap:12px}
     .field label{display:block;font-size:12px;color:rgba(255,255,255,.55);margin:0 0 6px 2px}
-    .field input{width:100%}
-
+    .field input, .field select{width:100%}
     .modal-foot-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
-
-    .summary-wrap{display:grid;grid-template-columns: repeat(5, 1fr);gap:12px}
-    .metric{border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);border-radius:16px;padding:12px}
-    .metric b{font-size:12px;color:rgba(255,255,255,.65);display:block;margin-bottom:6px}
-    .metric .v{font-size:18px;font-weight:900;letter-spacing:.2px}
-    .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);overflow:hidden;margin-top:10px}
-    .bar > div{height:100%;width:0%;background:rgba(255,255,255,.28);transition: width .25s ease}
-    .summary-sub{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;color:rgba(255,255,255,.60);font-size:12px;font-family:var(--mono)}
-
-    .run-live{
-      display:inline-flex;align-items:center;gap:10px;
-      padding:8px 10px;border-radius:14px;
-      border:1px solid rgba(255,255,255,.10);
-      background:rgba(255,255,255,.03);
-      font-family:var(--mono);
-      font-size:12px;
-      color:rgba(255,255,255,.78);
-    }
-    .run-live .pulse{
-      width:10px;height:10px;border-radius:999px;background:rgba(255,255,255,.30);
-      animation: pulse2 1.2s infinite;
-    }
-    @keyframes pulse2{
-      0%{box-shadow:0 0 0 0 rgba(255,255,255,.18)}
-      70%{box-shadow:0 0 0 12px rgba(255,255,255,0)}
-      100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}
-    }
 
     .danger-box{
       border:1px solid rgba(255,59,92,.22);
@@ -548,7 +551,7 @@ TEMPLATE = r"""
       color:rgba(255,255,255,.86);
     }
 
-    /* v4.7 mini cards + filter row */
+    /* mini cards + filter row */
     .stats-row{
       display:grid;
       grid-template-columns: repeat(4, 1fr);
@@ -565,7 +568,10 @@ TEMPLATE = r"""
       justify-content:space-between;
       gap:12px;
       overflow:hidden;
+      position:relative;
     }
+    .stat.clickable{cursor:pointer}
+    .stat.clickable:hover{border-color:rgba(255,255,255,.16); background:rgba(255,255,255,.04)}
     .stat .k{font-size:12px;color:rgba(255,255,255,.62);font-weight:850}
     .stat .v{font-size:22px;font-weight:950;letter-spacing:.2px}
     .pill{
@@ -601,15 +607,98 @@ TEMPLATE = r"""
       height:36px;
     }
     .chipbtn.active{border-color:rgba(255,255,255,.22); background:rgba(255,255,255,.06)}
-    .selbox{width:18px;height:18px;accent-color:#ffffff;}
+
+    /* prettier checkbox */
+    .selbox{
+      width:18px;height:18px;
+      appearance:none;-webkit-appearance:none;
+      border-radius:6px;
+      border:1px solid rgba(255,255,255,.18);
+      background:rgba(255,255,255,.04);
+      display:inline-grid;
+      place-content:center;
+      cursor:pointer;
+      transition: transform .12s ease, background .12s ease, border-color .12s ease, filter .12s ease;
+    }
+    .selbox:hover{
+      border-color: rgba(255,255,255,.26);
+      background: rgba(255,255,255,.06);
+      transform: translateY(-1px);
+    }
+    .selbox:checked{
+      border-color: rgba(115,183,255,.35);
+      background: rgba(115,183,255,.14);
+    }
+    .selbox:checked::after{
+      content:"";
+      width:9px;height:5px;
+      border-left:2px solid rgba(255,255,255,.92);
+      border-bottom:2px solid rgba(255,255,255,.92);
+      transform: rotate(-45deg);
+      margin-top:-1px;
+    }
+
+    /* Popover */
+    .pop{
+      position:absolute;
+      right:12px;
+      top:56px;
+      width:min(520px, calc(100vw - 40px));
+      background:rgba(10,16,28,.96);
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:16px;
+      box-shadow: 0 22px 60px rgba(0,0,0,.70);
+      padding:12px;
+      z-index:70;
+      display:none;
+      animation: pop .14s ease;
+    }
+    .pop.show{display:block}
+    .pop h4{margin:0 0 8px 0;font-size:13px}
+    .pop .grid{
+      display:grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap:10px;
+      margin-top:10px;
+    }
+    .pop .m{
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.03);
+      border-radius:14px;
+      padding:10px;
+    }
+    .pop .m b{display:block;font-size:12px;color:rgba(255,255,255,.64);margin-bottom:6px}
+    .pop .m .v{font-size:16px;font-weight:950;font-family:var(--mono)}
+    .pop .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .pop .row .xbtn{border:0;background:transparent;color:rgba(255,255,255,.72);cursor:pointer;font-weight:950}
+    .pop .hint{margin-top:8px}
+
+    /* info rows */
+    .info-grid{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:12px;
+    }
+    .info-item{
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.03);
+      border-radius:16px;
+      padding:12px;
+      overflow:hidden;
+    }
+    .info-item b{display:block;font-size:12px;color:rgba(255,255,255,.62);margin-bottom:6px}
+    .info-item code{font-family:var(--mono);font-size:12px;color:rgba(255,255,255,.88);word-break:break-all}
+    .copy-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .copy-row .btn-mini{height:32px}
 
     @media (max-width: 940px){
       .footer{flex-direction:column;align-items:flex-start}
       .modal-head{flex-direction:column;align-items:stretch;gap:10px}
       .modal-actions{justify-content:flex-start;flex-wrap:wrap}
       .grid3{grid-template-columns:1fr}
-      .summary-wrap{grid-template-columns:1fr 1fr}
       .stats-row{grid-template-columns: 1fr 1fr}
+      .info-grid{grid-template-columns:1fr}
+      .pop .grid{grid-template-columns: 1fr 1fr}
     }
   </style>
 </head>
@@ -627,18 +716,9 @@ TEMPLATE = r"""
       </div>
       <div class="modal-actions">
         <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="height:34px; padding:0 12px; border-radius:12px; min-width:220px;">
-
-        <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">
-          {{ icons.refresh|safe }} Reload
-        </button>
-
-        <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
-          {{ icons.copy|safe }} Copy
-        </button>
-
-        <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">
-          {{ icons.close|safe }} Close
-        </button>
+        <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">{{ icons.refresh|safe }} Reload</button>
+        <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">{{ icons.copy|safe }} Copy</button>
+        <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">{{ icons.close|safe }} Close</button>
       </div>
     </div>
 
@@ -717,11 +797,7 @@ TEMPLATE = r"""
         <b>Confirm remove</b>
         <span>This cannot be undone</span>
       </div>
-      <div class="modal-actions">
-        <button class="btn btn-ghost btn-mini" id="btnCloseConfirm" type="button">
-          {{ icons.close|safe }} Close
-        </button>
-      </div>
+      <div class="modal-actions"></div>
     </div>
 
     <div class="modal-body">
@@ -733,9 +809,152 @@ TEMPLATE = r"""
       </div>
 
       <div class="modal-foot-actions" style="margin-top:14px;">
-        <button class="btn btn-ghost" id="btnCancelRemove" type="button">Cancel</button>
         <button class="btn btn-danger" id="btnConfirmRemove" type="button">Remove</button>
+        <button class="btn btn-ghost" id="btnCancelRemove" type="button">Cancel</button>
       </div>
+    </div>
+
+    <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
+      <div class="hint">interheart <code>{{ ui_version }}</code></div>
+      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+    </div>
+  </div>
+</div>
+
+<!-- Target information modal -->
+<div class="modal" id="infoModal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Target information">
+    <div class="modal-head">
+      <div class="modal-title">
+        <b>Target information</b>
+        <span id="infoSubtitle">-</span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-mini" id="btnCloseInfo" type="button">{{ icons.close|safe }} Close</button>
+      </div>
+    </div>
+
+    <div class="modal-body">
+      <div class="info-grid">
+        <div class="info-item">
+          <b>Name</b>
+          <code id="infoName">-</code>
+        </div>
+        <div class="info-item">
+          <b>IP</b>
+          <code id="infoIP">-</code>
+        </div>
+
+        <div class="info-item">
+          <b>Endpoint</b>
+          <code id="infoEndpoint">-</code>
+        </div>
+        <div class="info-item">
+          <b>Enabled</b>
+          <code id="infoEnabled">-</code>
+        </div>
+
+        <div class="info-item">
+          <b>Interval</b>
+          <code id="infoInterval">-</code>
+        </div>
+        <div class="info-item">
+          <b>Next due</b>
+          <code id="infoNextDue">-</code>
+        </div>
+
+        <div class="info-item">
+          <b>Last ping</b>
+          <code id="infoLastPing">-</code>
+        </div>
+        <div class="info-item">
+          <b>Last response</b>
+          <code id="infoLastResp">-</code>
+        </div>
+
+        <div class="info-item">
+          <b>Last latency</b>
+          <code id="infoLatency">-</code>
+        </div>
+        <div class="info-item">
+          <b>Status</b>
+          <code id="infoStatus">-</code>
+        </div>
+      </div>
+
+      <div class="copy-row">
+        <button class="btn btn-ghost btn-mini" id="btnCopyName" type="button">{{ icons.copy|safe }} Copy name</button>
+        <button class="btn btn-ghost btn-mini" id="btnCopyIP" type="button">{{ icons.copy|safe }} Copy IP</button>
+        <button class="btn btn-ghost btn-mini" id="btnCopyEndpoint" type="button">{{ icons.copy|safe }} Copy endpoint</button>
+      </div>
+
+      <div class="modal-foot-actions">
+        <button class="btn btn-ghost" id="btnInfoEdit" type="button">{{ icons.edit|safe }} Edit</button>
+        <button class="btn btn-primary" id="btnInfoToggle" type="button">{{ icons.ban|safe }} Disable</button>
+      </div>
+    </div>
+
+    <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
+      <div class="hint">interheart <code>{{ ui_version }}</code></div>
+      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit target modal -->
+<div class="modal" id="editModal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Edit target">
+    <div class="modal-head">
+      <div class="modal-title">
+        <b>Edit target</b>
+        <span id="editSubtitle">-</span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-mini" id="btnCloseEdit" type="button">{{ icons.close|safe }} Close</button>
+      </div>
+    </div>
+
+    <div class="modal-body">
+      <form id="editForm">
+        <input type="hidden" name="old_name" id="editOldName">
+
+        <div class="grid3">
+          <div class="field">
+            <label>Name</label>
+            <input name="name" id="editName" required>
+          </div>
+
+          <div class="field">
+            <label>IP address</label>
+            <input name="ip" id="editIP" required>
+          </div>
+
+          <div class="field">
+            <label>Interval (sec)</label>
+            <input name="interval" id="editInterval" type="number" min="10" max="86400" step="1" required>
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:12px;">
+          <label>Endpoint URL</label>
+          <input name="endpoint" id="editEndpoint" required>
+        </div>
+
+        <div class="field" style="margin-top:12px;">
+          <label>Enabled</label>
+          <select name="enabled" id="editEnabled">
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+        </div>
+
+        <div class="modal-foot-actions">
+          <button class="btn btn-ghost" type="button" id="btnEditCancel">Cancel</button>
+          <button class="btn btn-primary" type="submit" id="btnEditSave">{{ icons.check|safe }} Save changes</button>
+        </div>
+
+        <div class="hint" id="editHint" style="margin-top:10px;">Tip: URL must start with http:// or https://</div>
+      </form>
     </div>
 
     <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
@@ -784,12 +1003,35 @@ TEMPLATE = r"""
       </div>
       <div class="pill warn"><span class="dot" style="background:var(--warn)"></span> live</div>
     </div>
-    <div class="stat">
+
+    <div class="stat clickable" id="statDurCard">
       <div>
         <div class="k">Last run duration</div>
         <div class="v" id="statDur">{{ last_run_duration }}</div>
       </div>
-      <div class="pill info"><span class="dot" style="background:var(--info)"></span> meta</div>
+      <div class="pill info"><span class="dot" style="background:var(--info)"></span> summary</div>
+
+      <div class="pop" id="runSummaryPop">
+        <div class="row">
+          <h4 style="margin:0;">Last run summary</h4>
+          <button class="xbtn" id="btnCloseSummary" type="button">×</button>
+        </div>
+        <div class="hint" id="runSummaryMeta">Parsed from last output</div>
+
+        <div class="grid" id="runSummaryGrid">
+          <div class="m"><b>Total</b><div class="v" id="rsTotal">-</div></div>
+          <div class="m"><b>Due</b><div class="v" id="rsDue">-</div></div>
+          <div class="m"><b>Skipped</b><div class="v" id="rsSkipped">-</div></div>
+          <div class="m"><b>Ping OK</b><div class="v" id="rsPingOk">-</div></div>
+          <div class="m"><b>Ping FAIL</b><div class="v" id="rsPingFail">-</div></div>
+          <div class="m"><b>Sent</b><div class="v" id="rsSent">-</div></div>
+          <div class="m"><b>Curl FAIL</b><div class="v" id="rsCurlFail">-</div></div>
+          <div class="m"><b>Disabled</b><div class="v" id="rsDisabled">-</div></div>
+          <div class="m"><b>Force</b><div class="v" id="rsForce">-</div></div>
+        </div>
+
+        <div class="hint" style="margin-top:10px;" id="rsDuration">Duration: -</div>
+      </div>
     </div>
   </div>
 
@@ -815,6 +1057,9 @@ TEMPLATE = r"""
         <button class="btn btn-ghost btn-mini btn-disabled" id="btnDisableSelected" type="button">
           {{ icons.ban|safe }} Disable selected
         </button>
+        <button class="btn btn-ghost btn-mini btn-disabled" id="btnEnableSelected" type="button">
+          {{ icons.check|safe }} Activate selected
+        </button>
       </div>
     </div>
 
@@ -825,21 +1070,30 @@ TEMPLATE = r"""
       <thead>
         <tr>
           <th style="width: 42px;"><input type="checkbox" id="selAll" class="selbox"></th>
-          <th style="width: 210px;">Name</th>
-          <th style="width: 130px;">IP</th>
-          <th style="width: 140px;">Status</th>
-          <th style="width: 120px;">Latency</th>
-          <th style="width: 150px;">Interval</th>
-          <th style="width: 200px;">Last ping</th>
-          <th style="width: 200px;">Last response</th>
-          <th>Endpoint</th>
+
+          <th class="sortable" data-sort="name" style="width: 230px;">Name <span class="sort-ind" data-ind="name">↕</span></th>
+          <th class="sortable" data-sort="ip" style="width: 140px;">IP <span class="sort-ind" data-ind="ip">↕</span></th>
+          <th class="sortable" data-sort="status" style="width: 150px;">Status <span class="sort-ind" data-ind="status">↕</span></th>
+          <th class="sortable" data-sort="interval" style="width: 130px;">Interval <span class="sort-ind" data-ind="interval">↕</span></th>
+          <th class="sortable" data-sort="last_ping" style="width: 220px;">Last ping <span class="sort-ind" data-ind="last_ping">↕</span></th>
+          <th style="width: 220px;">Last response</th>
           <th style="width: 90px;">Actions</th>
         </tr>
       </thead>
+
       <tbody id="tbody">
       {% for t in targets %}
-        <tr data-name="{{ t.name }}" data-ip="{{ t.ip }}" data-status="{{ t.status }}" data-enabled="{{ '1' if t.enabled else '0' }}"
-            data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
+        <tr
+          data-name="{{ t.name }}"
+          data-ip="{{ t.ip }}"
+          data-status="{{ t.status }}"
+          data-enabled="{{ '1' if t.enabled else '0' }}"
+          data-interval="{{ t.interval }}"
+          data-next-due="{{ t.next_due_epoch }}"
+          data-last-ping="{{ t.last_ping_epoch }}"
+          data-last-resp="{{ t.last_response_epoch }}"
+          data-lat="{{ t.last_rtt_ms }}"
+        >
           <td><input type="checkbox" class="selbox selRow"></td>
           <td><code>{{ t.name }}</code></td>
           <td><code>{{ t.ip }}</code></td>
@@ -851,8 +1105,6 @@ TEMPLATE = r"""
             </span>
           </td>
 
-          <td><code class="lat">{{ (t.last_rtt_ms|string + ' ms') if t.last_rtt_ms is not none and t.last_rtt_ms >= 0 else '-' }}</code></td>
-
           <td>
             <div class="interval-wrap">
               <input class="interval-input" data-interval="{{ t.interval }}" value="{{ t.interval }}" inputmode="numeric" />
@@ -862,7 +1114,6 @@ TEMPLATE = r"""
 
           <td><code class="last-ping">{{ t.last_ping_human }}</code></td>
           <td><code class="last-resp">{{ t.last_response_human }}</code></td>
-          <td><code class="endpoint">{{ t.endpoint_masked }}</code></td>
 
           <td style="text-align:right;">
             <div class="menu">
@@ -870,6 +1121,10 @@ TEMPLATE = r"""
                 {{ icons.more|safe }}
               </button>
               <div class="menu-dd" role="menu">
+                <button class="menu-item" data-action="info" type="button">{{ icons.info|safe }} Information</button>
+                <button class="menu-item" data-action="edit" type="button">{{ icons.edit|safe }} Edit</button>
+                <button class="menu-item" data-action="toggle" type="button">{{ icons.ban|safe }} <span class="toggle-label">Disable</span></button>
+                <div style="height:1px;background:rgba(255,255,255,.10);margin:6px 0;"></div>
                 <button class="menu-item" data-action="test" type="button">{{ icons.test|safe }} Test</button>
                 <button class="menu-item danger" data-action="remove" type="button">{{ icons.trash|safe }} Remove</button>
               </div>
@@ -890,25 +1145,48 @@ TEMPLATE = r"""
 <script>
 (function(){
   const toasts = document.getElementById("toasts");
+
   function escapeHtml(s){
     return String(s ?? "")
       .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
-      .replaceAll('"',"quot;").replaceAll("'","&#039;");
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
   }
-  function toast(title, msg){
+
+  function toast(title, msg, opts={}){
     const el = document.createElement("div");
     el.className = "toast";
+
+    const actionHtml = opts.actionText ? `
+      <div class="toast-actions">
+        <button class="btn btn-ghost btn-mini" data-act="1">${escapeHtml(opts.actionText)}</button>
+      </div>
+    ` : `<div style="margin-left:auto"></div>`;
+
     el.innerHTML = `
-      <div>
+      <div style="min-width:0;">
         <b>${escapeHtml(title)}</b>
         <p>${escapeHtml(msg || "")}</p>
       </div>
+      ${actionHtml}
       <button class="x" aria-label="Close">×</button>
     `;
+
     el.querySelector(".x").onclick = () => el.remove();
+
+    if (opts.onAction){
+      const btn = el.querySelector('[data-act="1"]');
+      if (btn) btn.onclick = () => opts.onAction(el);
+    }
+
     toasts.appendChild(el);
-    setTimeout(() => { if (el && el.parentNode) el.remove(); }, 5200);
+
+    const ttl = typeof opts.ttl === "number" ? opts.ttl : 5200;
+    if (ttl > 0){
+      setTimeout(() => { if (el && el.parentNode) el.remove(); }, ttl);
+    }
+    return el;
   }
+
   function show(el){ el.classList.add("show"); el.setAttribute("aria-hidden","false"); }
   function hide(el){ el.classList.remove("show"); el.setAttribute("aria-hidden","true"); }
 
@@ -991,7 +1269,6 @@ TEMPLATE = r"""
 
   // ---- Confirm remove modal ----
   const confirmModal = document.getElementById("confirmModal");
-  const btnCloseConfirm = document.getElementById("btnCloseConfirm");
   const btnCancelRemove = document.getElementById("btnCancelRemove");
   const btnConfirmRemove = document.getElementById("btnConfirmRemove");
   const confirmName = document.getElementById("confirmName");
@@ -1006,7 +1283,6 @@ TEMPLATE = r"""
     pendingRemoveName = null;
     hide(confirmModal);
   }
-  btnCloseConfirm.addEventListener("click", closeConfirmRemove);
   btnCancelRemove.addEventListener("click", closeConfirmRemove);
   confirmModal.addEventListener("click", (e) => { if (e.target === confirmModal) closeConfirmRemove(); });
 
@@ -1035,6 +1311,297 @@ TEMPLATE = r"""
     }
   });
 
+  // ---- Info modal ----
+  const infoModal = document.getElementById("infoModal");
+  const btnCloseInfo = document.getElementById("btnCloseInfo");
+  const btnInfoEdit = document.getElementById("btnInfoEdit");
+  const btnInfoToggle = document.getElementById("btnInfoToggle");
+  const infoSubtitle = document.getElementById("infoSubtitle");
+
+  const infoName = document.getElementById("infoName");
+  const infoIP = document.getElementById("infoIP");
+  const infoEndpoint = document.getElementById("infoEndpoint");
+  const infoEnabled = document.getElementById("infoEnabled");
+  const infoInterval = document.getElementById("infoInterval");
+  const infoNextDue = document.getElementById("infoNextDue");
+  const infoLastPing = document.getElementById("infoLastPing");
+  const infoLastResp = document.getElementById("infoLastResp");
+  const infoLatency = document.getElementById("infoLatency");
+  const infoStatus = document.getElementById("infoStatus");
+
+  const btnCopyName = document.getElementById("btnCopyName");
+  const btnCopyIP = document.getElementById("btnCopyIP");
+  const btnCopyEndpoint = document.getElementById("btnCopyEndpoint");
+
+  let currentInfoName = null;
+  let currentInfoEndpoint = null;
+
+  btnCloseInfo.addEventListener("click", () => hide(infoModal));
+  infoModal.addEventListener("click", (e) => { if (e.target === infoModal) hide(infoModal); });
+
+  async function copyText(label, text){
+    try{
+      await navigator.clipboard.writeText(text || "");
+      toast("Copied", `${label} copied`);
+    }catch(e){
+      toast("Error", "Copy failed");
+    }
+  }
+
+  btnCopyName.addEventListener("click", () => copyText("Name", currentInfoName || ""));
+  btnCopyIP.addEventListener("click", () => copyText("IP", (infoIP.textContent || "").trim()));
+  btnCopyEndpoint.addEventListener("click", () => copyText("Endpoint", currentInfoEndpoint || ""));
+
+  async function fetchTargetInfo(name){
+    const res = await fetch("/api/target-info?name=" + encodeURIComponent(name), {cache:"no-store"});
+    return await res.json();
+  }
+
+  function setInfoFromRow(row){
+    const name = row.getAttribute("data-name") || "-";
+    const ip = row.getAttribute("data-ip") || "-";
+    const enabled = row.getAttribute("data-enabled") === "1";
+    const interval = row.getAttribute("data-interval") || "-";
+    const nextDue = parseInt(row.getAttribute("data-next-due") || "0", 10);
+    const lastPingText = (row.querySelector(".last-ping")?.textContent || "-").trim();
+    const lastRespText = (row.querySelector(".last-resp")?.textContent || "-").trim();
+    const status = (row.getAttribute("data-status") || "unknown").trim();
+    const lat = parseInt(row.getAttribute("data-lat") || "-1", 10);
+
+    currentInfoName = name;
+    infoName.textContent = name;
+    infoIP.textContent = ip;
+    infoEnabled.textContent = enabled ? "Enabled (1)" : "Disabled (0)";
+    infoInterval.textContent = interval + "s";
+    infoNextDue.textContent = nextDue > 0 ? String(nextDue) + " (" + humanDue(nextDue) + ")" : "-";
+    infoLastPing.textContent = lastPingText;
+    infoLastResp.textContent = lastRespText;
+    infoLatency.textContent = (lat >= 0) ? (lat + " ms") : "-";
+    infoStatus.textContent = status.toUpperCase();
+
+    infoSubtitle.textContent = name + " • " + ip;
+    btnInfoToggle.innerHTML = (enabled ? `{{ icons.ban|safe }} Disable` : `{{ icons.check|safe }} Activate`);
+  }
+
+  function humanDue(epoch){
+    const e = parseInt(epoch || "0", 10);
+    if (!e) return "-";
+    const now = Math.floor(Date.now()/1000);
+    if (e <= now) return "due";
+    const diff = e - now;
+    if (diff < 60) return `in ${diff}s`;
+    if (diff < 3600) return `in ${Math.floor(diff/60)}m`;
+    return `in ${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m`;
+  }
+
+  async function openInfo(name){
+    const row = document.querySelector(`tr[data-name="${CSS.escape(name)}"]`);
+    if (!row) return;
+    setInfoFromRow(row);
+
+    // Fetch full endpoint + canonical values from CLI get
+    try{
+      const data = await fetchTargetInfo(name);
+      if (data.ok && data.target){
+        currentInfoEndpoint = data.target.endpoint || "";
+        infoEndpoint.textContent = data.target.endpoint || "-";
+
+        // keep enabled/interval/name/ip coherent if CLI returns it
+        infoEnabled.textContent = data.target.enabled ? "Enabled (1)" : "Disabled (0)";
+        infoInterval.textContent = String(data.target.interval || 60) + "s";
+        infoIP.textContent = data.target.ip || infoIP.textContent;
+        infoName.textContent = data.target.name || infoName.textContent;
+        currentInfoName = data.target.name || currentInfoName;
+
+        btnInfoToggle.innerHTML = (data.target.enabled ? `{{ icons.ban|safe }} Disable` : `{{ icons.check|safe }} Activate`);
+      }else{
+        infoEndpoint.textContent = "(unable to read endpoint)";
+      }
+    }catch(e){
+      infoEndpoint.textContent = "(failed to load endpoint)";
+    }
+
+    show(infoModal);
+  }
+
+  // ---- Edit modal ----
+  const editModal = document.getElementById("editModal");
+  const btnCloseEdit = document.getElementById("btnCloseEdit");
+  const btnEditCancel = document.getElementById("btnEditCancel");
+  const editForm = document.getElementById("editForm");
+  const btnEditSave = document.getElementById("btnEditSave");
+  const editSubtitle = document.getElementById("editSubtitle");
+
+  const editOldName = document.getElementById("editOldName");
+  const editName = document.getElementById("editName");
+  const editIP = document.getElementById("editIP");
+  const editInterval = document.getElementById("editInterval");
+  const editEndpoint = document.getElementById("editEndpoint");
+  const editEnabled = document.getElementById("editEnabled");
+
+  btnCloseEdit.addEventListener("click", () => hide(editModal));
+  btnEditCancel.addEventListener("click", () => hide(editModal));
+  editModal.addEventListener("click", (e) => { if (e.target === editModal) hide(editModal); });
+
+  function validIP(ip){
+    const parts = String(ip||"").trim().split(".");
+    if (parts.length !== 4) return false;
+    for (const p of parts){
+      if (!/^\d+$/.test(p)) return false;
+      const n = parseInt(p, 10);
+      if (n < 0 || n > 255) return false;
+    }
+    return true;
+  }
+  function validURL(u){
+    const s = String(u||"").trim().toLowerCase();
+    return s.startsWith("http://") || s.startsWith("https://");
+  }
+
+  function openEditFromData(data){
+    const t = data.target || {};
+    editOldName.value = t.name || "";
+    editName.value = t.name || "";
+    editIP.value = t.ip || "";
+    editInterval.value = String(t.interval || 60);
+    editEndpoint.value = t.endpoint || "";
+    editEnabled.value = (t.enabled ? "1" : "0");
+    editSubtitle.textContent = (t.name || "-") + " • edit details";
+    show(editModal);
+  }
+
+  async function openEdit(name){
+    try{
+      const data = await fetchTargetInfo(name);
+      if (!data.ok){
+        toast("Error", data.message || "Failed to load target");
+        return;
+      }
+      openEditFromData(data);
+    }catch(e){
+      toast("Error", "Failed to load target");
+    }
+  }
+
+  btnInfoEdit.addEventListener("click", async () => {
+    if (!currentInfoName) return;
+    hide(infoModal);
+    await openEdit(currentInfoName);
+  });
+
+  editForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const oldName = editOldName.value.trim();
+    const name = editName.value.trim();
+    const ip = editIP.value.trim();
+    const interval = editInterval.value.trim();
+    const endpoint = editEndpoint.value.trim();
+    const enabled = editEnabled.value;
+
+    if (!name){
+      toast("Invalid", "Name is required");
+      return;
+    }
+    if (!validIP(ip)){
+      toast("Invalid", "IP address is not valid");
+      return;
+    }
+    const n = parseInt(interval, 10);
+    if (!Number.isFinite(n) || n < 10 || n > 86400){
+      toast("Invalid", "Interval must be 10–86400 seconds");
+      return;
+    }
+    if (!validURL(endpoint)){
+      toast("Invalid", "Endpoint URL must start with http:// or https://");
+      return;
+    }
+
+    btnEditSave.disabled = true;
+    btnEditSave.textContent = "Saving…";
+    try{
+      const fd = new FormData();
+      fd.set("old_name", oldName);
+      fd.set("name", name);
+      fd.set("ip", ip);
+      fd.set("interval", String(n));
+      fd.set("endpoint", endpoint);
+      fd.set("enabled", enabled);
+
+      const res = await fetch("/api/edit-target", {method:"POST", body: fd});
+      const data = await res.json();
+      if (data.ok){
+        toast("Saved", data.message || "Updated");
+        hide(editModal);
+        await refreshState(true);
+      }else{
+        toast("Error", data.message || "Failed to save");
+      }
+    }catch(err){
+      toast("Error", err && err.message ? err.message : "Failed to save");
+    }finally{
+      btnEditSave.disabled = false;
+      btnEditSave.innerHTML = `{{ icons.check|safe }} Save changes`;
+    }
+  });
+
+  // ---- API helpers ----
+  async function apiPost(url, fd){
+    const res = await fetch(url, {method:"POST", body: fd});
+    return await res.json();
+  }
+
+  async function postJson(url, payload){
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload || {})
+    });
+    return await res.json();
+  }
+
+  // ---- Disable/enable with Undo toast ----
+  async function disableOne(name){
+    const fd = new FormData();
+    fd.set("name", name);
+    return await apiPost("/api/disable", fd);
+  }
+  async function enableOne(name){
+    const fd = new FormData();
+    fd.set("name", name);
+    return await apiPost("/api/enable", fd);
+  }
+
+  async function toggleTarget(name, makeEnabled){
+    if (makeEnabled){
+      const r = await enableOne(name);
+      return r;
+    }
+    const r = await disableOne(name);
+    return r;
+  }
+
+  async function confirmDisableWithUndo(name){
+    // do disable now
+    const r = await disableOne(name);
+    if (!r.ok){
+      toast("Error", r.message || "Disable failed");
+      return;
+    }
+    await refreshState(true);
+
+    toast("Disabled", `${name} disabled`, {
+      actionText: "Undo",
+      ttl: 5000,
+      onAction: async (el) => {
+        el.remove();
+        const rr = await enableOne(name);
+        toast(rr.ok ? "Restored" : "Error", rr.message || (rr.ok ? "Enabled" : "Failed"));
+        await refreshState(true);
+      }
+    });
+  }
+
   // ---- Actions dropdown ----
   function closeAllMenus(){
     document.querySelectorAll(".menu.show").forEach(m => m.classList.remove("show"));
@@ -1051,31 +1618,56 @@ TEMPLATE = r"""
     if (!e.target.closest(".menu")) closeAllMenus();
   });
 
-  async function apiPost(url, fd){
-    const res = await fetch(url, {method:"POST", body: fd});
-    return await res.json();
+  function syncToggleLabelForRow(row){
+    const enabled = row.getAttribute("data-enabled") === "1";
+    const label = row.querySelector(".toggle-label");
+    if (label) label.textContent = enabled ? "Disable" : "Activate";
   }
 
   function attachMenuActions(){
     document.querySelectorAll("tr[data-name]").forEach(row => {
       const name = row.getAttribute("data-name");
+      syncToggleLabelForRow(row);
+
       row.querySelectorAll(".menu-item").forEach(btn => {
         if (btn.dataset.bound === "1") return;
         btn.dataset.bound = "1";
         btn.addEventListener("click", async () => {
           closeAllMenus();
           const action = btn.getAttribute("data-action");
-          const fd = new FormData();
-          fd.set("name", name);
 
           if (action === "remove"){
             openConfirmRemove(name);
             return;
           }
 
+          if (action === "info"){
+            await openInfo(name);
+            return;
+          }
+
+          if (action === "edit"){
+            await openEdit(name);
+            return;
+          }
+
+          if (action === "toggle"){
+            const enabled = row.getAttribute("data-enabled") === "1";
+            if (enabled){
+              await confirmDisableWithUndo(name);
+            }else{
+              const r = await enableOne(name);
+              toast(r.ok ? "Activated" : "Error", r.message || (r.ok ? "Enabled" : "Failed"));
+              await refreshState(true);
+            }
+            return;
+          }
+
           try{
             if (action === "test"){
               toast("Testing", `Running test for ${name}…`);
+              const fd = new FormData();
+              fd.set("name", name);
               const data = await apiPost("/api/test", fd);
               toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
             }
@@ -1123,6 +1715,7 @@ TEMPLATE = r"""
           if (r.ok){
             toast("Updated", r.message || `Interval set to ${n}s`);
             input.setAttribute("data-interval", String(n));
+            row.setAttribute("data-interval", String(n));
           }else{
             toast("Error", r.message || "Failed to set interval");
             input.value = input.getAttribute("data-interval") || "60";
@@ -1177,6 +1770,7 @@ TEMPLATE = r"""
   const selAll = document.getElementById("selAll");
   const btnRunSelected = document.getElementById("btnRunSelected");
   const btnDisableSelected = document.getElementById("btnDisableSelected");
+  const btnEnableSelected = document.getElementById("btnEnableSelected");
   const btnRunNowAll = document.getElementById("btnRunNowAll");
 
   function selectedNames(){
@@ -1193,13 +1787,11 @@ TEMPLATE = r"""
     const names = selectedNames();
     const has = names.length > 0;
 
-    [btnRunSelected, btnDisableSelected].forEach(b => {
+    [btnRunSelected, btnDisableSelected, btnEnableSelected].forEach(b => {
       b.classList.toggle("btn-disabled", !has);
+      b.disabled = !has;
     });
-    btnRunSelected.disabled = !has;
-    btnDisableSelected.disabled = !has;
 
-    // Master checkbox reflects visible rows only
     const visibleRows = Array.from(document.querySelectorAll("#tbody tr[data-name]")).filter(r => r.style.display !== "none");
     const visibleCbs = visibleRows.map(r => r.querySelector(".selRow")).filter(Boolean);
     const allChecked = visibleCbs.length > 0 && visibleCbs.every(cb => cb.checked);
@@ -1217,15 +1809,12 @@ TEMPLATE = r"""
     updateBulkButtons();
   });
 
-  document.querySelectorAll(".selRow").forEach(cb => cb.addEventListener("change", updateBulkButtons));
-
-  async function postJson(url, payload){
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify(payload || {})
+  function attachSelHandlers(){
+    document.querySelectorAll(".selRow").forEach(cb => {
+      if (cb.dataset.bound === "1") return;
+      cb.dataset.bound = "1";
+      cb.addEventListener("change", updateBulkButtons);
     });
-    return await res.json();
   }
 
   btnRunSelected.addEventListener("click", async () => {
@@ -1239,16 +1828,158 @@ TEMPLATE = r"""
   btnDisableSelected.addEventListener("click", async () => {
     const names = selectedNames();
     if (!names.length) return;
+
+    // disable each (with one undo toast per item is too noisy)
     toast("Disable selected", `Disabling ${names.length} target(s)…`);
     const data = await postJson("/api/disable-selected", {targets: names});
     toast(data.ok ? "Done" : "Error", data.message || (data.ok ? "Done" : "Failed"));
     await refreshState(true);
   });
 
+  btnEnableSelected.addEventListener("click", async () => {
+    const names = selectedNames();
+    if (!names.length) return;
+    toast("Activate selected", `Activating ${names.length} target(s)…`);
+    const data = await postJson("/api/enable-selected", {targets: names});
+    toast(data.ok ? "Done" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+    await refreshState(true);
+  });
+
   btnRunNowAll.addEventListener("click", async () => {
     toast("Run now", "Starting run…");
-    const data = await postJson("/api/run-selected", {targets: []}); // empty => run-all now
+    const data = await postJson("/api/run-selected", {targets: []});
     toast(data.ok ? "Started" : "Error", data.message || (data.ok ? "Started" : "Failed"));
+  });
+
+  // ---- Sorting ----
+  let sortKey = null;
+  let sortDir = 1; // 1 asc, -1 desc
+
+  function statusRank(st){
+    // smaller first
+    const s = String(st||"unknown").toLowerCase();
+    if (s === "down") return 1;
+    if (s === "unknown") return 2;
+    if (s === "up") return 3;
+    if (s === "disabled") return 4;
+    return 9;
+  }
+
+  function ipToNum(ip){
+    const p = String(ip||"").split(".");
+    if (p.length !== 4) return 0;
+    let n = 0;
+    for (let i=0;i<4;i++){
+      const v = parseInt(p[i],10);
+      if (!Number.isFinite(v)) return 0;
+      n = (n*256) + v;
+    }
+    return n;
+  }
+
+  function getSortVal(row, key){
+    if (key === "name") return (row.getAttribute("data-name") || "").toLowerCase();
+    if (key === "ip") return ipToNum(row.getAttribute("data-ip") || "");
+    if (key === "status") return statusRank(row.getAttribute("data-status") || "unknown");
+    if (key === "interval") return parseInt(row.getAttribute("data-interval") || "0", 10) || 0;
+    if (key === "last_ping") return parseInt(row.getAttribute("data-last-ping") || "0", 10) || 0;
+    return (row.getAttribute("data-name") || "").toLowerCase();
+  }
+
+  function applySort(){
+    if (!sortKey) return;
+    const tbody = document.getElementById("tbody");
+    const rows = Array.from(tbody.querySelectorAll("tr[data-name]"));
+
+    rows.sort((a,b) => {
+      const va = getSortVal(a, sortKey);
+      const vb = getSortVal(b, sortKey);
+      if (va < vb) return -1 * sortDir;
+      if (va > vb) return 1 * sortDir;
+      return 0;
+    });
+
+    rows.forEach(r => tbody.appendChild(r));
+
+    document.querySelectorAll(".sort-ind").forEach(ind => {
+      ind.classList.remove("on");
+      ind.textContent = "↕";
+    });
+    const ind = document.querySelector(`.sort-ind[data-ind="${sortKey}"]`);
+    if (ind){
+      ind.classList.add("on");
+      ind.textContent = sortDir === 1 ? "↑" : "↓";
+    }
+  }
+
+  document.querySelectorAll("th.sortable[data-sort]").forEach(th => {
+    th.addEventListener("click", () => {
+      const k = th.getAttribute("data-sort");
+      if (!k) return;
+      if (sortKey === k){
+        sortDir = sortDir * -1;
+      }else{
+        sortKey = k;
+        sortDir = 1;
+      }
+      applySort();
+      applyFilters();
+    });
+  });
+
+  // ---- Run summary popover ----
+  const statDurCard = document.getElementById("statDurCard");
+  const runSummaryPop = document.getElementById("runSummaryPop");
+  const btnCloseSummary = document.getElementById("btnCloseSummary");
+
+  function setRunSummary(summary){
+    const s = summary || {};
+    document.getElementById("rsTotal").textContent = String(s.total ?? "-");
+    document.getElementById("rsDue").textContent = String(s.due ?? "-");
+    document.getElementById("rsSkipped").textContent = String(s.skipped ?? "-");
+    document.getElementById("rsPingOk").textContent = String(s.ping_ok ?? "-");
+    document.getElementById("rsPingFail").textContent = String(s.ping_fail ?? "-");
+    document.getElementById("rsSent").textContent = String(s.sent ?? "-");
+    document.getElementById("rsCurlFail").textContent = String(s.curl_fail ?? "-");
+    document.getElementById("rsDisabled").textContent = String(s.disabled ?? "-");
+    document.getElementById("rsForce").textContent = String(s.force ?? "-");
+    document.getElementById("rsDuration").textContent = "Duration: " + (s.duration_ms ? (s.duration_ms + " ms") : "-");
+  }
+
+  async function loadRunSummary(){
+    try{
+      const res = await fetch("/api/last-run-summary", {cache:"no-store"});
+      const data = await res.json();
+      if (data.ok && data.summary){
+        setRunSummary(data.summary);
+        return;
+      }
+    }catch(e){}
+    setRunSummary(null);
+  }
+
+  function closeSummary(){
+    runSummaryPop.classList.remove("show");
+  }
+  btnCloseSummary.addEventListener("click", (e) => { e.stopPropagation(); closeSummary(); });
+
+  statDurCard.addEventListener("click", async (e) => {
+    // toggle
+    const isOpen = runSummaryPop.classList.contains("show");
+    if (isOpen){
+      closeSummary();
+      return;
+    }
+    await loadRunSummary();
+    runSummaryPop.classList.add("show");
+  });
+
+  document.addEventListener("click", (e) => {
+    if (runSummaryPop.classList.contains("show")){
+      if (!e.target.closest("#statDurCard")){
+        closeSummary();
+      }
+    }
   });
 
   // ---- Real-time refresh + row blink ----
@@ -1264,18 +1995,6 @@ TEMPLATE = r"""
     else chip.classList.add("status-unknown");
 
     text.textContent = (status || "unknown").toUpperCase();
-  }
-
-  function flashIfChanged(el, newText){
-    if (!el) return false;
-    if (el.textContent !== newText){
-      el.textContent = newText;
-      el.classList.remove("flash");
-      void el.offsetWidth;
-      el.classList.add("flash");
-      return true;
-    }
-    return false;
   }
 
   function blinkRow(row, ok){
@@ -1295,6 +2014,10 @@ TEMPLATE = r"""
     document.getElementById("statUnknown").textContent = String(unknown);
   }
 
+  function refreshToggleLabelEverywhere(){
+    document.querySelectorAll("tr[data-name]").forEach(row => syncToggleLabelForRow(row));
+  }
+
   async function refreshState(force=false){
     try{
       const res = await fetch("/state", {cache:"no-store"});
@@ -1309,6 +2032,11 @@ TEMPLATE = r"""
         if (!t) return;
 
         row.setAttribute("data-status", t.status || "unknown");
+        row.setAttribute("data-enabled", t.enabled ? "1" : "0");
+        row.setAttribute("data-interval", String(t.interval || 60));
+        row.setAttribute("data-next-due", String(t.next_due_epoch || 0));
+        row.setAttribute("data-lat", String(t.last_rtt_ms ?? -1));
+
         setStatusChip(row, t.status);
 
         const prevPing = parseInt(row.getAttribute("data-last-ping") || "0", 10);
@@ -1319,45 +2047,73 @@ TEMPLATE = r"""
           blinkRow(row, t.status === "up");
         }
 
-        flashIfChanged(row.querySelector(".last-ping"), t.last_ping_human || "-");
-        flashIfChanged(row.querySelector(".last-resp"), t.last_response_human || "-");
-
-        const latEl = row.querySelector(".lat");
-        const latTxt = (t.last_rtt_ms !== undefined && t.last_rtt_ms !== null && t.last_rtt_ms >= 0) ? (String(t.last_rtt_ms) + " ms") : "-";
-        flashIfChanged(latEl, latTxt);
+        const lp = row.querySelector(".last-ping");
+        const lr = row.querySelector(".last-resp");
+        if (lp && lp.textContent !== (t.last_ping_human || "-")) lp.textContent = t.last_ping_human || "-";
+        if (lr && lr.textContent !== (t.last_response_human || "-")) lr.textContent = t.last_response_human || "-";
 
         const iv = row.querySelector(".interval-input");
         if (iv && force){
           iv.value = String(t.interval || 60);
           iv.setAttribute("data-interval", String(t.interval || 60));
         }
-
-        const ep = row.querySelector(".endpoint");
-        if (ep) ep.textContent = t.endpoint_masked || "-";
       });
+
+      // if info modal is open for current target, keep it fresh (except endpoint)
+      if (infoModal.classList.contains("show") && currentInfoName){
+        const row = document.querySelector(`tr[data-name="${CSS.escape(currentInfoName)}"]`);
+        if (row) setInfoFromRow(row);
+      }
 
       attachIntervalHandlers();
       attachMenuActions();
+      attachSelHandlers();
+      refreshToggleLabelEverywhere();
+
+      // keep sort stable after refresh
+      applySort();
+
       applyFilters();
     }catch(e){
       // silent
     }
   }
 
+  // ---- Info modal toggle button ----
+  btnInfoToggle.addEventListener("click", async () => {
+    if (!currentInfoName) return;
+    const row = document.querySelector(`tr[data-name="${CSS.escape(currentInfoName)}"]`);
+    const enabled = row ? (row.getAttribute("data-enabled") === "1") : true;
+
+    if (enabled){
+      await confirmDisableWithUndo(currentInfoName);
+    }else{
+      const r = await enableOne(currentInfoName);
+      toast(r.ok ? "Activated" : "Error", r.message || (r.ok ? "Enabled" : "Failed"));
+      await refreshState(true);
+    }
+  });
+
+  // ---- Bulk initial state ----
+  applyFilters();
+  updateBulkButtons();
+
   // init
   attachIntervalHandlers();
   attachMenuActions();
-  applyFilters();
-  updateBulkButtons();
+  attachSelHandlers();
   setInterval(() => refreshState(false), {{ poll_seconds }} * 1000);
 
-  // ESC closes modals
+  // ESC closes modals + menus + popover
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape"){
       if (logModal.classList.contains("show")) hide(logModal);
       if (addModal.classList.contains("show")) hide(addModal);
       if (confirmModal.classList.contains("show")) hide(confirmModal);
+      if (infoModal.classList.contains("show")) hide(infoModal);
+      if (editModal.classList.contains("show")) hide(editModal);
       closeAllMenus();
+      closeSummary();
     }
   });
 
@@ -1370,10 +2126,9 @@ TEMPLATE = r"""
 @APP.get("/")
 def index():
     ts = merged_targets()
-    meta = load_run_meta()
+
     last_dur = ""
     try:
-        # if we have latest output, parse duration_ms from it
         if os.path.exists(RUN_OUT_FILE):
             with open(RUN_OUT_FILE, "r", encoding="utf-8") as f:
                 out = f.read().strip()
@@ -1419,6 +2174,47 @@ def logs():
     except Exception as e:
         return jsonify({"source": "journalctl (error)", "lines": 1, "updated": updated, "text": f"(journalctl error: {str(e)})"})
 
+@APP.get("/api/last-run-summary")
+def api_last_run_summary():
+    s = get_last_run_summary()
+    return jsonify({"ok": True, "summary": s})
+
+@APP.get("/api/target-info")
+def api_target_info():
+    name = request.args.get("name", "").strip()
+    if not name:
+        return jsonify({"ok": False, "message": "Missing name"})
+    rc, out = run_cmd(["get", name])
+    if rc != 0:
+        return jsonify({"ok": False, "message": out or "Not found"})
+
+    parts = (out or "").strip().split("|")
+    if len(parts) < 5:
+        return jsonify({"ok": False, "message": "Bad get output"})
+    return jsonify({
+        "ok": True,
+        "target": {
+            "name": parts[0],
+            "ip": parts[1],
+            "endpoint": parts[2],
+            "interval": int(parts[3]) if parts[3].isdigit() else 60,
+            "enabled": True if parts[4] == "1" else False,
+        }
+    })
+
+@APP.post("/api/edit-target")
+def api_edit_target():
+    old_name = request.form.get("old_name", "").strip()
+    new_name = request.form.get("name", "").strip()
+    ip = request.form.get("ip", "").strip()
+    endpoint = request.form.get("endpoint", "").strip()
+    interval = request.form.get("interval", "").strip()
+    enabled = request.form.get("enabled", "1").strip()
+    enabled = "0" if enabled == "0" else "1"
+
+    rc, out = run_cmd(["edit", old_name, new_name, ip, endpoint, interval, enabled])
+    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
 @APP.post("/api/test")
 def api_test():
     name = request.form.get("name", "")
@@ -1447,15 +2243,55 @@ def api_set_target_interval():
     rc, out = run_cmd(["set-target-interval", name, sec])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
+@APP.post("/api/disable")
+def api_disable_one():
+    name = request.form.get("name", "")
+    rc, out = run_cmd(["disable", name])
+    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
+@APP.post("/api/enable")
+def api_enable_one():
+    name = request.form.get("name", "")
+    rc, out = run_cmd(["enable", name])
+    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
 @APP.post("/api/disable-selected")
 def api_disable_selected():
     data = request.get_json(silent=True) or {}
     targets = data.get("targets") or []
-    targets = [str(x) for x in targets if str(x).strip()]
+    targets = [str(x).strip() for x in targets if str(x).strip()]
     if not targets:
         return jsonify({"ok": False, "message": "No targets selected"})
-    rc, out = run_cmd(["disable-selected", ",".join(targets)])
-    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
+    failed = []
+    for name in targets:
+        rc, out = run_cmd(["disable", name])
+        if rc != 0:
+            failed.append(f"{name}: {out}")
+
+    if failed:
+        return jsonify({"ok": False, "message": "Some failed: " + " | ".join(failed)})
+    return jsonify({"ok": True, "message": f"Disabled {len(targets)} target(s)"})
+
+
+@APP.post("/api/enable-selected")
+def api_enable_selected():
+    data = request.get_json(silent=True) or {}
+    targets = data.get("targets") or []
+    targets = [str(x).strip() for x in targets if str(x).strip()]
+    if not targets:
+        return jsonify({"ok": False, "message": "No targets selected"})
+
+    failed = []
+    for name in targets:
+        rc, out = run_cmd(["enable", name])
+        if rc != 0:
+            failed.append(f"{name}: {out}")
+
+    if failed:
+        return jsonify({"ok": False, "message": "Some failed: " + " | ".join(failed)})
+    return jsonify({"ok": True, "message": f"Enabled {len(targets)} target(s)"})
+
 
 @APP.post("/api/run-selected")
 def api_run_selected():
@@ -1475,7 +2311,6 @@ def api_run_selected():
     if existing_pid and pid_is_running(existing_pid):
         return jsonify({"ok": True, "message": "Already running", "pid": existing_pid})
 
-    # Start background run
     cmd = ["sudo", CLI, "run-now"]
     if targets_arg:
         cmd += ["--targets", targets_arg]
