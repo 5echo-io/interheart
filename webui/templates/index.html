@@ -1,177 +1,338 @@
 <!doctype html>
-<html lang="no">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>{{ app_name }}</title>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>interheart</title>
 
-    <link rel="stylesheet" href="/static/app.css" />
-    <script src="/static/app.js" defer></script>
-  </head>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 
-  <body>
-    <header class="topbar">
-      <div class="container topbar__inner">
-        <div class="brand">
-          <div class="brand__dot"></div>
-          <div class="brand__text">
-            <div class="brand__title">{{ app_name }}</div>
-            <div class="brand__subtitle">Targets & health checks</div>
-          </div>
+  <!-- Runtime config for app.js -->
+  <script>
+    window.__INTERHEART__ = {
+      uiVersion: {{ ui_version|tojson }},
+      copyrightYear: {{ copyright_year|tojson }},
+      bindHost: {{ bind_host|tojson }},
+      bindPort: {{ bind_port|tojson }},
+      pollSeconds: {{ poll_seconds|tojson }},
+      logLinesDefault: {{ log_lines|tojson }},
+    };
+  </script>
+</head>
+
+<body>
+  <div class="toasts" id="toasts"></div>
+
+  <!-- Logs modal -->
+  <div class="modal" id="logModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logs">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Logs</b>
+          <span>Last <span id="logLinesLbl">{{ log_lines }}</span> lines</span>
         </div>
 
-        <div class="topbar__actions">
-          <button class="btn btn--primary" id="btnAdd">Add target</button>
+        <div class="modal-actions">
+          <input id="logFilter" placeholder="filter (e.g. anl-0161)" class="log-filter">
+
+          <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">
+            <span class="ico" data-ico="refresh"></span>
+            Reload
+          </button>
+
+          <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
+            <span class="ico" data-ico="copy"></span>
+            Copy
+          </button>
+
+          <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">
+            <span class="ico" data-ico="close"></span>
+            Close
+          </button>
         </div>
       </div>
-    </header>
 
-    <main class="container">
-      <section class="card">
-        <div class="card__header">
-          <div>
-            <h2 class="card__title">Targets</h2>
-            <p class="card__hint" id="hintLine">Loading…</p>
-          </div>
+      <div class="modal-body">
+        <div class="logbox" id="logBox">Loading logs…</div>
+        <div class="hint" id="logMeta">-</div>
+      </div>
 
-          <div class="card__headerRight">
-            <button class="btn btn--ghost" id="btnRefresh">Refresh</button>
-          </div>
-        </div>
-
-        <div class="tableWrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th style="width: 44px;">On</th>
-                <th>Name</th>
-                <th style="width: 200px;">IP</th>
-                <th class="col-interval">Interval</th>
-                <th style="width: 200px;">Status</th>
-                <th style="width: 120px; text-align:right;">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="tbodyTargets">
-              <tr>
-                <td colspan="6" class="td-muted">Loading…</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <footer class="footer">
-        <span class="footer__pill">Default interval: {{ default_interval }}s</span>
-        <span class="footer__pill">Max interval: {{ max_interval }}s</span>
-        <a class="footer__link" href="/api/health" target="_blank" rel="noreferrer">API health</a>
-      </footer>
-    </main>
-
-    <!-- Toast -->
-    <div class="toast" id="toast" aria-live="polite" aria-atomic="true">
-      <div class="toast__inner" id="toastInner"></div>
-    </div>
-
-    <!-- MODAL: Add/Edit -->
-    <div class="modal" id="modalEdit" aria-hidden="true">
-      <div class="modal__backdrop" data-close="modalEdit"></div>
-      <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modalEditTitle">
-        <div class="modal__header">
-          <h3 class="modal__title" id="modalEditTitle">Add target</h3>
-          <button class="iconbtn" title="Close" data-close="modalEdit">✕</button>
-        </div>
-
-        <div class="modal__body">
-          <div class="grid">
-            <div class="field">
-              <label class="label" for="fName">Name</label>
-              <input class="input" id="fName" placeholder="core-router-01" autocomplete="off" />
-              <div class="help">2–64 chars: a-z A-Z 0-9 . _ -</div>
-            </div>
-
-            <div class="field">
-              <label class="label" for="fIP">IP</label>
-              <input class="input" id="fIP" placeholder="10.5.0.10" autocomplete="off" />
-            </div>
-
-            <div class="field">
-              <label class="label" for="fEndpoint">Endpoint URL</label>
-              <input class="input" id="fEndpoint" placeholder="https://example.com/health" autocomplete="off" />
-              <div class="help">Used by the worker. Not shown in the main table.</div>
-            </div>
-
-            <div class="field">
-              <label class="label" for="fInterval">Interval (seconds)</label>
-              <input
-                class="input"
-                id="fInterval"
-                type="number"
-                min="5"
-                max="{{ max_interval }}"
-                value="{{ default_interval }}"
-              />
-              <div class="help">Keep it sane. 5s – {{ max_interval }}s.</div>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="row row--space">
-            <div class="muted" id="editModeHint">Creates a new target.</div>
-            <div class="row">
-              <button class="btn" data-close="modalEdit">Cancel</button>
-              <button class="btn btn--primary" id="btnSaveTarget">Save</button>
-            </div>
-          </div>
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div>
+          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
+          © {{ copyright_year }} All rights reserved
         </div>
       </div>
     </div>
+  </div>
 
-    <!-- MODAL: Remove -->
-    <div class="modal" id="modalRemove" aria-hidden="true">
-      <div class="modal__backdrop" data-close="modalRemove"></div>
-      <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modalRemoveTitle">
-        <div class="modal__header">
-          <h3 class="modal__title" id="modalRemoveTitle">Remove target</h3>
-          <!-- (Intentionally no X/Close button here – you wanted only Cancel) -->
+  <!-- Run summary modal -->
+  <div class="modal" id="runModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Run summary">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Run summary</b>
+          <span id="runTitleMeta">-</span>
+        </div>
+        <div class="modal-actions">
+          <div class="run-live" id="runLive" style="display:none;">
+            <span class="pulse"></span>
+            <span id="runLiveText">Running…</span>
+          </div>
+          <button class="btn btn-ghost btn-mini" id="btnCloseRun" type="button">
+            <span class="ico" data-ico="close"></span>
+            Close
+          </button>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="summary-wrap">
+          <div class="metric"><b>Total</b><div class="v" id="mTotal">-</div></div>
+          <div class="metric"><b>Checked</b><div class="v" id="mDue">-</div></div>
+          <div class="metric"><b>Skipped</b><div class="v" id="mSkipped">-</div></div>
+          <div class="metric"><b>Ping OK</b><div class="v" id="mOk">-</div></div>
+          <div class="metric"><b>Ping fail</b><div class="v" id="mFail">-</div></div>
         </div>
 
-        <div class="modal__body">
-          <p class="modal__text">
-            You’re about to remove <strong id="removeName">—</strong>.
-            This deletes it from the database.
-          </p>
-
-          <div class="divider"></div>
-
-          <div class="row row--end">
-            <!-- Rekkefølge: Remove først, Cancel etterpå -->
-            <button class="btn btn--danger" id="btnConfirmRemove">Remove</button>
-            <button class="btn" data-close="modalRemove">Cancel</button>
+        <div class="metric">
+          <b>Progress</b>
+          <div class="bar"><div id="runBar"></div></div>
+          <div class="summary-sub">
+            <span id="runNowLine">Idle</span>
+            <span id="runDoneLine">done: 0 / 0</span>
           </div>
+        </div>
+
+        <div class="metric">
+          <b>Endpoint</b>
+          <div class="summary-sub" style="margin-top:0;">
+            <span>Responses</span><span id="mSent">-</span>
+          </div>
+          <div class="summary-sub" style="margin-top:4px;">
+            <span>Endpoint failures</span><span id="mCurlFail">-</span>
+          </div>
+        </div>
+
+        <div class="danger-box" id="runHintBox" style="display:none;">
+          <b style="display:block; margin-bottom:6px;">Note</b>
+          <div class="hint" id="runHintText" style="color:rgba(255,255,255,.80)"></div>
+        </div>
+
+        <div class="hint" id="runRaw" style="display:none;"></div>
+      </div>
+
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div>
+          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
+          © {{ copyright_year }} All rights reserved
         </div>
       </div>
     </div>
+  </div>
 
-    <!-- MODAL: Information -->
-    <div class="modal" id="modalInfo" aria-hidden="true">
-      <div class="modal__backdrop" data-close="modalInfo"></div>
-      <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modalInfoTitle">
-        <div class="modal__header">
-          <h3 class="modal__title" id="modalInfoTitle">Target information</h3>
-          <button class="iconbtn" title="Close" data-close="modalInfo">✕</button>
+  <!-- Add modal -->
+  <div class="modal" id="addModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Add target</b>
+          <span>Ping target, then call endpoint on success</span>
         </div>
+        <div class="modal-actions"></div>
+      </div>
 
-        <div class="modal__body">
-          <div class="infoGrid" id="infoGrid"></div>
+      <div class="modal-body">
+        <form id="addForm">
+          <div class="grid3">
+            <div class="field">
+              <label>Name</label>
+              <input name="name" placeholder="e.g. anl-0161-core-gw" required>
+            </div>
 
-          <div class="divider"></div>
+            <div class="field">
+              <label>IP address</label>
+              <input name="ip" placeholder="e.g. 10.5.0.1" required>
+            </div>
 
-          <div class="row row--end">
-            <button class="btn" data-close="modalInfo">Close</button>
+            <div class="field">
+              <label>Interval (sec)</label>
+              <input name="interval" type="number" min="10" max="86400" step="1" placeholder="60" required>
+            </div>
           </div>
+
+          <div class="field" style="margin-top:12px;">
+            <label>Endpoint URL</label>
+            <input name="endpoint" placeholder="https://..." required>
+          </div>
+
+          <div class="modal-foot-actions">
+            <button class="btn btn-primary" type="submit" id="btnAddSubmit" data-default-html="">
+              <span class="ico" data-ico="plus"></span>
+              Add target
+            </button>
+            <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
+          </div>
+
+          <div class="hint" style="margin-top:10px;">
+            Tip: critical targets 30–120s • less critical 300–900s
+          </div>
+        </form>
+      </div>
+
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div>
+          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
+          © {{ copyright_year }} All rights reserved
         </div>
       </div>
     </div>
-  </body>
+  </div>
+
+  <!-- Confirm remove modal -->
+  <div class="modal" id="confirmModal" aria-hidden="true">
+    <div class="modal-card small" role="dialog" aria-modal="true" aria-label="Confirm remove">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Confirm remove</b>
+          <span>This cannot be undone</span>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost btn-mini" id="btnCloseConfirm" type="button">
+            <span class="ico" data-ico="close"></span>
+            Close
+          </button>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="danger-box">
+          You are about to remove:
+          <div style="margin-top:8px;">
+            <code id="confirmName" class="mono"></code>
+          </div>
+        </div>
+
+        <div class="modal-foot-actions" style="margin-top:14px;">
+          <button class="btn btn-danger" id="btnConfirmRemove" type="button">Remove</button>
+          <button class="btn btn-ghost" id="btnCancelRemove" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div>
+          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
+          © {{ copyright_year }} All rights reserved
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">
+        <div class="title">interheart <span class="badge">targets</span></div>
+        <div class="subtitle">
+          Powered by <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
+        </div>
+      </div>
+
+      <div class="right-actions">
+        <button class="btn btn-ghost btn-mini" id="openLogs" type="button">
+          <span class="ico" data-ico="logs"></span>
+          Logs
+        </button>
+        <button class="btn btn-ghost btn-mini" id="openAdd" type="button">
+          <span class="ico" data-ico="plus"></span>
+          Add
+        </button>
+        <button class="btn btn-primary btn-mini" id="btnRunNow" type="button" data-default-html="">
+          <span class="ico" data-ico="play"></span>
+          Run now
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="hint">“Last ping” / “Last response” updates live ({{ poll_seconds }}s refresh)</div>
+      <div class="sep"></div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 210px;">Name</th>
+            <th style="width: 130px;">IP</th>
+            <th style="width: 140px;">Status</th>
+            <th style="width: 150px;">Interval</th>
+            <th style="width: 200px;">Last ping</th>
+            <th style="width: 200px;">Last response</th>
+            <th>Endpoint</th>
+            <th style="width: 90px;">Actions</th>
+          </tr>
+        </thead>
+
+        <tbody id="targetsBody">
+          {% for t in targets %}
+          <tr data-name="{{ t.name }}" data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
+            <td><code class="mono">{{ t.name }}</code></td>
+            <td><code class="mono">{{ t.ip }}</code></td>
+
+            <td>
+              <span class="chip status-chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
+                <span class="dot"></span>
+                <span class="status-text">{{ t.status|upper }}</span>
+              </span>
+            </td>
+
+            <td>
+              <div class="interval-wrap">
+                <input class="interval-input" data-interval="{{ t.interval }}" value="{{ t.interval }}" inputmode="numeric" />
+                <span class="interval-suffix">s</span>
+              </div>
+            </td>
+
+            <td><code class="mono last-ping">{{ t.last_ping_human }}</code></td>
+            <td><code class="mono last-resp">{{ t.last_response_human }}</code></td>
+            <td><code class="mono endpoint">{{ t.endpoint_masked }}</code></td>
+
+            <td style="text-align:right;">
+              <div class="menu">
+                <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">
+                  <span class="ico" data-ico="more"></span>
+                </button>
+                <div class="menu-dd" role="menu">
+                  <button class="menu-item" data-action="test" type="button">
+                    <span class="ico" data-ico="test"></span>
+                    Test
+                  </button>
+                  <button class="menu-item danger" data-action="remove" type="button">
+                    <span class="ico" data-ico="trash"></span>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="footer">
+        <div class="hint">
+          WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code>
+        </div>
+        <div>
+          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
+          © {{ copyright_year }} All rights reserved
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
 </html>
