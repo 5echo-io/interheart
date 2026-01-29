@@ -1,822 +1,564 @@
-(() => {
-  "use strict";
-
-  // ---------- helpers ----------
+(function(){
   const $ = (sel, root=document) => root.querySelector(sel);
   const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 
-  const state = {
-    targets: [],
-    filter: "",
-    menusOpenFor: null,
-    pendingRemove: null,
-    infoTarget: null,
-    editTarget: null,
-    run: {
-      runtimePoll: null,
-      statusPoll: null,
-      lastRuntimeUpdated: 0
-    }
-  };
-
+  // ---- Toasts ----
+  const toasts = $("#toasts");
   function escapeHtml(s){
     return String(s ?? "")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
+      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
   }
-
-  // ---------- toast ----------
-  let toastTimer = null;
-  function toast(kind, msg){
-    const el = $("#toast");
-    const inner = $("#toastInner");
-    if (!el || !inner) return;
-
-    el.dataset.kind = kind || "ok";
-    inner.textContent = msg || "";
-    el.classList.add("toast--show");
-
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove("toast--show"), 2600);
-  }
-
-  // ---------- modal ----------
-  function openModal(id){
-    const m = document.getElementById(id);
-    if (!m) return;
-    m.classList.add("modal--open");
-    document.body.style.overflow = "hidden";
-  }
-  function closeModal(id){
-    const m = document.getElementById(id);
-    if (!m) return;
-    m.classList.remove("modal--open");
-    document.body.style.overflow = "";
-  }
-  function closeAllModals(){
-    $$(".modal.modal--open").forEach(m => m.classList.remove("modal--open"));
-    document.body.style.overflow = "";
-  }
-
-  // close on backdrop click
-  function bindModalBackdrop(id){
-    const m = document.getElementById(id);
-    if (!m) return;
-    const backdrop = $(".modal__backdrop", m);
-    if (!backdrop) return;
-    backdrop.addEventListener("click", () => closeModal(id));
-  }
-
-  // ---------- API ----------
-  async function apiGet(url){
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  }
-  async function apiPost(url, formObj){
-    const fd = new FormData();
-    Object.entries(formObj || {}).forEach(([k,v]) => fd.set(k, String(v)));
-    const res = await fetch(url, { method: "POST", body: fd });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  }
-
-  // ---------- rendering ----------
-  function statusBadgeClass(st){
-    if (st === "up") return "badge badge--up";
-    if (st === "down") return "badge badge--down";
-    return "badge badge--warn";
-  }
-
-  function rowHtml(t){
-    // Endpoint skal IKKE være kolonne i tabell lenger.
-    // "Information" modal viser endpoint + extra.
-    const enabled = Number(t.enabled ?? 1) === 1;
-
-    return `
-      <tr data-name="${escapeHtml(t.name)}">
-        <td class="td-mono td-strong">${escapeHtml(t.name)}</td>
-        <td class="td-mono">${escapeHtml(t.ip || "-")}</td>
-
-        <td>
-          <span class="${statusBadgeClass(t.status)}">
-            <span class="dot"></span>
-            <span class="status-text">${escapeHtml((t.status || "unknown").toUpperCase())}</span>
-          </span>
-        </td>
-
-        <td class="col-interval">
-          <div class="intervalWrap">
-            <input class="input intervalInput" type="number" min="10" max="86400" step="1"
-                   value="${escapeHtml(String(t.interval ?? 60))}"
-                   data-interval="${escapeHtml(String(t.interval ?? 60))}"
-                   data-name="${escapeHtml(t.name)}" />
-            <span class="intervalSuffix">s</span>
-          </div>
-        </td>
-
-        <td class="td-mono"><span class="last-ping">${escapeHtml(t.last_ping_human || "-")}</span></td>
-        <td class="td-mono"><span class="last-resp">${escapeHtml(t.last_response_human || "-")}</span></td>
-
-        <td style="text-align:right;">
-          <div class="dropdown" data-dd="${escapeHtml(t.name)}">
-            <button class="iconbtn" type="button" data-ddbtn="${escapeHtml(t.name)}" aria-label="Actions">⋯</button>
-            <div class="dropdown__menu" data-ddmenu="${escapeHtml(t.name)}" role="menu">
-              <button class="dropdown__item" data-action="info" data-name="${escapeHtml(t.name)}">Information</button>
-              <button class="dropdown__item" data-action="edit" data-name="${escapeHtml(t.name)}">Edit</button>
-              <div class="dropdown__sep"></div>
-              <button class="dropdown__item" data-action="${enabled ? "disable" : "enable"}" data-name="${escapeHtml(t.name)}">
-                ${enabled ? "Disable" : "Enable"}
-              </button>
-              <button class="dropdown__item" data-action="test" data-name="${escapeHtml(t.name)}">Test</button>
-              <button class="dropdown__item dropdown__item--danger" data-action="remove" data-name="${escapeHtml(t.name)}">Remove</button>
-            </div>
-          </div>
-        </td>
-      </tr>
+  function toast(title, msg){
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.innerHTML = `
+      <div>
+        <b>${escapeHtml(title)}</b>
+        <p>${escapeHtml(msg || "")}</p>
+      </div>
+      <button class="x" aria-label="Close">×</button>
     `;
+    el.querySelector(".x").onclick = () => el.remove();
+    toasts.appendChild(el);
+    setTimeout(() => { if (el && el.parentNode) el.remove(); }, 5200);
   }
 
-  function applyFilter(list){
-    const q = (state.filter || "").trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(t => {
-      const blob = [
-        t.name, t.ip, t.status,
-        t.last_ping_human, t.last_response_human,
-      ].join(" ").toLowerCase();
-      return blob.includes(q);
+  // ---- Modals ----
+  function show(el){ el.classList.add("show"); el.setAttribute("aria-hidden","false"); }
+  function hide(el){ el.classList.remove("show"); el.setAttribute("aria-hidden","true"); }
+
+  // ---- API helpers ----
+  async function apiPost(url, fd){
+    const res = await fetch(url, {method:"POST", body: fd});
+    return await res.json();
+  }
+  async function apiGet(url){
+    const res = await fetch(url, {cache:"no-store"});
+    return await res.json();
+  }
+
+  // ---- Logs modal ----
+  const logModal = $("#logModal");
+  const openLogs = $("#openLogs");
+  const closeLogs = $("#btnCloseLogs");
+  const reloadLogs = $("#btnReloadLogs");
+  const copyLogs = $("#btnCopyLogs");
+  const logBox = $("#logBox");
+  const logMeta = $("#logMeta");
+  const logFilter = $("#logFilter");
+  const logLinesLbl = $("#logLinesLbl");
+  let rawLog = "";
+
+  async function loadLogs(){
+    const lines = logLinesLbl ? Number(logLinesLbl.textContent || "200") : 200;
+    try{
+      const data = await apiGet(`/logs?lines=${encodeURIComponent(lines)}`);
+      rawLog = data.text || "";
+      logMeta.textContent = `${data.source || "log"} • ${(data.lines || 0)} lines • ${(data.updated || "")}`;
+      applyLogFilter();
+      logBox.scrollTop = logBox.scrollHeight;
+    }catch(e){
+      rawLog = "";
+      logBox.textContent = "Failed to fetch logs";
+      logMeta.textContent = "error";
+    }
+  }
+
+  function applyLogFilter(){
+    const q = (logFilter.value || "").trim().toLowerCase();
+    if (!q){
+      logBox.textContent = rawLog || "(empty)";
+      return;
+    }
+    const lines = (rawLog || "").split("\n").filter(l => l.toLowerCase().includes(q));
+    logBox.textContent = lines.join("\n") || "(no matches)";
+  }
+
+  openLogs?.addEventListener("click", async () => { show(logModal); logFilter?.focus(); await loadLogs(); });
+  closeLogs?.addEventListener("click", () => hide(logModal));
+  reloadLogs?.addEventListener("click", async () => await loadLogs());
+  copyLogs?.addEventListener("click", async () => {
+    try{ await navigator.clipboard.writeText(logBox.textContent || ""); toast("Copied", "Logs copied to clipboard"); }catch(e){}
+  });
+  logFilter?.addEventListener("input", applyLogFilter);
+  logModal?.addEventListener("click", (e) => { if (e.target === logModal) hide(logModal); });
+
+  // ---- Filter targets ----
+  const filterInput = $("#filterInput");
+  const table = $("#targetsTable");
+  function applyTargetFilter(){
+    const q = (filterInput?.value || "").trim().toLowerCase();
+    $$("tbody tr[data-name]", table).forEach(row => {
+      const name = (row.getAttribute("data-name") || "").toLowerCase();
+      const ip = (row.getAttribute("data-ip") || "").toLowerCase();
+      const status = (row.getAttribute("data-status") || "").toLowerCase();
+      const ok = !q || name.includes(q) || ip.includes(q) || status.includes(q);
+      row.style.display = ok ? "" : "none";
+    });
+  }
+  filterInput?.addEventListener("input", applyTargetFilter);
+
+  // ---- Add modal ----
+  const addModal = $("#addModal");
+  const openAdd = $("#openAdd");
+  const addCancel = $("#btnAddCancel");
+  const addForm = $("#addForm");
+  const btnAddSubmit = $("#btnAddSubmit");
+
+  openAdd?.addEventListener("click", () => show(addModal));
+  addCancel?.addEventListener("click", () => hide(addModal));
+  addModal?.addEventListener("click", (e) => { if (e.target === addModal) hide(addModal); });
+
+  addForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    btnAddSubmit.disabled = true;
+    btnAddSubmit.textContent = "Adding…";
+    try{
+      const fd = new FormData(addForm);
+      const data = await apiPost("/api/add", fd);
+      if (data.ok){
+        toast("Added", data.message || "Target added");
+        hide(addModal);
+        addForm.reset();
+        await refreshState(true);
+      } else {
+        toast("Error", data.message || "Failed to add");
+      }
+    }catch(err){
+      toast("Error", err?.message || "Failed to add");
+    }finally{
+      btnAddSubmit.disabled = false;
+      btnAddSubmit.textContent = "Add target";
+    }
+  });
+
+  // ---- Confirm remove modal ----
+  const confirmModal = $("#confirmModal");
+  const btnCloseConfirm = $("#btnCloseConfirm");
+  const btnCancelRemove = $("#btnCancelRemove");
+  const btnConfirmRemove = $("#btnConfirmRemove");
+  const confirmName = $("#confirmName");
+  let pendingRemoveName = null;
+
+  function openConfirmRemove(name){
+    pendingRemoveName = name;
+    confirmName.textContent = name;
+    show(confirmModal);
+  }
+  function closeConfirmRemove(){
+    pendingRemoveName = null;
+    hide(confirmModal);
+  }
+
+  btnCloseConfirm?.addEventListener("click", closeConfirmRemove);
+  btnCancelRemove?.addEventListener("click", closeConfirmRemove);
+  confirmModal?.addEventListener("click", (e) => { if (e.target === confirmModal) closeConfirmRemove(); });
+
+  btnConfirmRemove?.addEventListener("click", async () => {
+    const name = pendingRemoveName;
+    if (!name) return;
+    btnConfirmRemove.disabled = true;
+    btnConfirmRemove.textContent = "Removing…";
+    try{
+      const fd = new FormData();
+      fd.set("name", name);
+      const data = await apiPost("/api/remove", fd);
+      toast(data.ok ? "Removed" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+      closeConfirmRemove();
+    }catch(e){
+      toast("Error", e?.message || "Failed");
+    }finally{
+      btnConfirmRemove.disabled = false;
+      btnConfirmRemove.textContent = "Remove";
+      await refreshState(true);
+    }
+  });
+
+  // ---- Info modal ----
+  const infoModal = $("#infoModal");
+  const btnCloseInfo = $("#btnCloseInfo");
+  const infoTitle = $("#infoTitle");
+  const infoBox = $("#infoBox");
+
+  btnCloseInfo?.addEventListener("click", () => hide(infoModal));
+  infoModal?.addEventListener("click", (e) => { if (e.target === infoModal) hide(infoModal); });
+
+  async function openInfo(name){
+    infoTitle.textContent = name;
+    infoBox.textContent = "Loading…";
+    show(infoModal);
+    const data = await apiGet(`/api/get?name=${encodeURIComponent(name)}`);
+    infoBox.textContent = data.message || "(empty)";
+  }
+
+  // ---- Edit modal ----
+  const editModal = $("#editModal");
+  const btnCloseEdit = $("#btnCloseEdit");
+  const btnEditCancel = $("#btnEditCancel");
+  const editForm = $("#editForm");
+  const editTitle = $("#editTitle");
+  const editOldName = $("#editOldName");
+  const editName = $("#editName");
+  const editIp = $("#editIp");
+  const editInterval = $("#editInterval");
+  const editEndpoint = $("#editEndpoint");
+  const editEnabled = $("#editEnabled");
+  const btnEditSubmit = $("#btnEditSubmit");
+
+  function closeEdit(){ hide(editModal); }
+
+  btnCloseEdit?.addEventListener("click", closeEdit);
+  btnEditCancel?.addEventListener("click", closeEdit);
+  editModal?.addEventListener("click", (e) => { if (e.target === editModal) closeEdit(); });
+
+  async function openEdit(name){
+    editTitle.textContent = name;
+    show(editModal);
+
+    // Best effort: pull current values using /state map + /api/get raw
+    const row = $(`tr[data-name="${CSS.escape(name)}"]`);
+    const ip = row ? (row.getAttribute("data-ip") || "") : "";
+
+    editOldName.value = name;
+    editName.value = name;
+    editIp.value = ip;
+    editInterval.value = row ? (row.querySelector(".interval-input")?.getAttribute("data-interval") || "60") : "60";
+
+    // Try to extract endpoint from /api/get output (raw)
+    const data = await apiGet(`/api/get?name=${encodeURIComponent(name)}`);
+    const msg = data.message || "";
+    const m = msg.match(/https?:\/\/\S+/);
+    editEndpoint.value = m ? m[0] : "";
+    // Enabled: if output mentions "enabled=0" etc. If not, keep 1.
+    const m2 = msg.match(/enabled\s*[:=]\s*(0|1)/i);
+    editEnabled.value = m2 ? m2[1] : "1";
+  }
+
+  editForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    btnEditSubmit.disabled = true;
+    btnEditSubmit.textContent = "Saving…";
+    try{
+      const fd = new FormData(editForm);
+      const data = await apiPost("/api/edit", fd);
+      toast(data.ok ? "Saved" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+      if (data.ok) hide(editModal);
+    }catch(err){
+      toast("Error", err?.message || "Failed");
+    }finally{
+      btnEditSubmit.disabled = false;
+      btnEditSubmit.textContent = "Save";
+      await refreshState(true);
+    }
+  });
+
+  // ---- Dropdown menus ----
+  function closeAllMenus(){
+    $$(".menu.show").forEach(m => m.classList.remove("show"));
+  }
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".menu-btn");
+    if (btn){
+      const menu = btn.closest(".menu");
+      const isOpen = menu.classList.contains("show");
+      closeAllMenus();
+      if (!isOpen) menu.classList.add("show");
+      return;
+    }
+    if (!e.target.closest(".menu")) closeAllMenus();
+  });
+
+  // ---- Inline interval editing ----
+  async function setIntervalFor(name, seconds){
+    const fd = new FormData();
+    fd.set("name", name);
+    fd.set("seconds", String(seconds));
+    return await apiPost("/api/set-target-interval", fd);
+  }
+
+  function attachIntervalHandlers(){
+    $$("tr[data-name]").forEach(row => {
+      const name = row.getAttribute("data-name");
+      const input = row.querySelector(".interval-input");
+      if (!input || input.dataset.bound === "1") return;
+      input.dataset.bound = "1";
+
+      const commit = async () => {
+        const v = String(input.value || "").trim();
+        const n = parseInt(v, 10);
+        if (!Number.isFinite(n) || n < 10 || n > 86400){
+          toast("Invalid interval", "Use 10–86400 seconds");
+          input.value = input.getAttribute("data-interval") || "60";
+          return;
+        }
+        if (String(n) === String(input.getAttribute("data-interval"))){
+          return;
+        }
+
+        input.disabled = true;
+        try{
+          const r = await setIntervalFor(name, n);
+          if (r.ok){
+            toast("Updated", r.message || `Interval set to ${n}s`);
+            input.setAttribute("data-interval", String(n));
+          }else{
+            toast("Error", r.message || "Failed to set interval");
+            input.value = input.getAttribute("data-interval") || "60";
+          }
+        }catch(e){
+          toast("Error", e?.message || "Failed to set interval");
+          input.value = input.getAttribute("data-interval") || "60";
+        }finally{
+          input.disabled = false;
+        }
+      };
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter"){ e.preventDefault(); commit(); input.blur(); }
+        if (e.key === "Escape"){ input.value = input.getAttribute("data-interval") || "60"; input.blur(); }
+      });
+      input.addEventListener("blur", commit);
     });
   }
 
-  function render(){
-    const tbody = $("#targetsBody");
-    if (!tbody) return;
+  // ---- Menu actions ----
+  function attachMenuActions(){
+    $$("tr[data-name]").forEach(row => {
+      const name = row.getAttribute("data-name");
+      row.querySelectorAll(".menu-item").forEach(btn => {
+        if (btn.dataset.bound === "1") return;
+        btn.dataset.bound = "1";
+        btn.addEventListener("click", async () => {
+          closeAllMenus();
+          const action = btn.getAttribute("data-action");
+          const fd = new FormData();
+          fd.set("name", name);
 
-    const filtered = applyFilter(state.targets);
-    tbody.innerHTML = filtered.map(rowHtml).join("");
+          if (action === "remove"){
+            openConfirmRemove(name);
+            return;
+          }
+          if (action === "info"){
+            await openInfo(name);
+            return;
+          }
+          if (action === "edit"){
+            await openEdit(name);
+            return;
+          }
 
-    bindIntervalInputs();
-    bindDropdowns();
-
-    $("#filterCount").textContent = String(filtered.length);
-    $("#totalCount").textContent = String(state.targets.length);
+          try{
+            let data;
+            if (action === "test"){
+              toast("Testing", `Running test for ${name}…`);
+              data = await apiPost("/api/test", fd);
+            } else if (action === "enable"){
+              data = await apiPost("/api/enable", fd);
+            } else if (action === "disable"){
+              data = await apiPost("/api/disable", fd);
+            } else {
+              return;
+            }
+            toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+          }catch(e){
+            toast("Error", e?.message || "Failed");
+          }finally{
+            await refreshState(true);
+          }
+        });
+      });
+    });
   }
 
-  // ---------- fetch state ----------
-  async function refreshState(){
+  // ---- Real-time-ish refresh + row blink ----
+  function setStatusChip(row, status){
+    const chip = row.querySelector(".status-chip");
+    const text = row.querySelector(".status-text");
+    if (!chip || !text) return;
+
+    chip.classList.remove("status-up","status-down","status-unknown");
+    if (status === "up") chip.classList.add("status-up");
+    else if (status === "down") chip.classList.add("status-down");
+    else chip.classList.add("status-unknown");
+
+    text.textContent = (status || "unknown").toUpperCase();
+    row.setAttribute("data-status", status || "unknown");
+  }
+
+  function flashIfChanged(el, newText){
+    if (!el) return false;
+    if (el.textContent !== newText){
+      el.textContent = newText;
+      return true;
+    }
+    return false;
+  }
+
+  async function refreshState(force=false){
     try{
       const data = await apiGet("/state");
-      state.targets = data.targets || [];
-      render();
+      const map = new Map();
+      (data.targets || []).forEach(t => map.set(t.name, t));
+
+      $$("tr[data-name]").forEach(row => {
+        const name = row.getAttribute("data-name");
+        const t = map.get(name);
+        if (!t) return;
+
+        setStatusChip(row, t.status);
+
+        flashIfChanged(row.querySelector(".last-ping"), t.last_ping_human || "-");
+        flashIfChanged(row.querySelector(".last-resp"), t.last_response_human || "-");
+
+        const iv = row.querySelector(".interval-input");
+        if (iv && force){
+          iv.value = String(t.interval || 60);
+          iv.setAttribute("data-interval", String(t.interval || 60));
+        }
+      });
+
+      applyTargetFilter();
+      attachIntervalHandlers();
+      attachMenuActions();
     }catch(e){
       // silent
     }
   }
 
-  // ---------- interval editing ----------
-  function bindIntervalInputs(){
-    $$(".intervalInput").forEach(inp => {
-      if (inp.dataset.bound === "1") return;
-      inp.dataset.bound = "1";
+  // ---- Run now modal ----
+  const runModal = $("#runModal");
+  const btnCloseRun = $("#btnCloseRun");
+  const btnRunNow = $("#btnRunNow");
 
-      const name = inp.dataset.name;
+  const runTitleMeta = $("#runTitleMeta");
+  const runLive = $("#runLive");
+  const runLiveText = $("#runLiveText");
+  const runOutBox = $("#runOutBox");
 
-      const commit = async () => {
-        const raw = String(inp.value || "").trim();
-        const n = parseInt(raw, 10);
-        const prev = parseInt(inp.dataset.interval || "60", 10);
+  const mTotal = $("#mTotal");
+  const mDue = $("#mDue");
+  const mSkipped = $("#mSkipped");
+  const mOk = $("#mOk");
+  const mFail = $("#mFail");
+  const mSent = $("#mSent");
+  const mCurlFail = $("#mCurlFail");
+  const runBar = $("#runBar");
+  const runNowLine = $("#runNowLine");
+  const runDoneLine = $("#runDoneLine");
 
-        if (!Number.isFinite(n) || n < 10 || n > 86400){
-          toast("err", "Invalid interval (10–86400s)");
-          inp.value = String(prev);
-          return;
-        }
-        if (n === prev) return;
+  let runPoll = null;
 
-        inp.disabled = true;
-        try{
-          const r = await apiPost("/api/set-target-interval", { name, seconds: n });
-          if (r.ok){
-            inp.dataset.interval = String(n);
-            toast("ok", r.message || `Interval set to ${n}s`);
-            await refreshState();
-          }else{
-            inp.value = String(prev);
-            toast("err", r.message || "Failed to set interval");
-          }
-        }catch(err){
-          inp.value = String(prev);
-          toast("err", err?.message || "Failed to set interval");
-        }finally{
-          inp.disabled = false;
-        }
-      };
-
-      inp.addEventListener("keydown", (e) => {
-        if (e.key === "Enter"){ e.preventDefault(); commit(); inp.blur(); }
-        if (e.key === "Escape"){ inp.value = inp.dataset.interval || "60"; inp.blur(); }
-      });
-      inp.addEventListener("blur", commit);
-    });
+  function setBar(done, due){
+    const pct = (!due || due <= 0) ? 0 : Math.max(0, Math.min(100, Math.round((done / due) * 100)));
+    runBar.style.width = pct + "%";
   }
 
-  // ---------- dropdown ----------
-  function closeAllDropdowns(){
-    $$(".dropdown__menu").forEach(m => m.classList.remove("dropdown__menu--open"));
-    state.menusOpenFor = null;
+  function setRunInitial(){
+    runTitleMeta.textContent = "running…";
+    runLive.style.display = "inline-flex";
+    runLiveText.textContent = "Running…";
+    runOutBox.textContent = "(starting…)";
+
+    mTotal.textContent = "-";
+    mDue.textContent = "-";
+    mSkipped.textContent = "-";
+    mOk.textContent = "-";
+    mFail.textContent = "-";
+    mSent.textContent = "-";
+    mCurlFail.textContent = "-";
+    runNowLine.textContent = "Starting…";
+    runDoneLine.textContent = "done: 0 / 0";
+    setBar(0, 0);
   }
 
-  function bindDropdowns(){
-    // open/close
-    $$(".iconbtn[data-ddbtn]").forEach(btn => {
-      if (btn.dataset.bound === "1") return;
-      btn.dataset.bound = "1";
-
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const name = btn.dataset.ddbtn;
-        const menu = document.querySelector(`.dropdown__menu[data-ddmenu="${CSS.escape(name)}"]`);
-        if (!menu) return;
-
-        const open = menu.classList.contains("dropdown__menu--open");
-        closeAllDropdowns();
-        if (!open){
-          menu.classList.add("dropdown__menu--open");
-          state.menusOpenFor = name;
-        }
-      });
-    });
-
-    // menu actions
-    $$(".dropdown__item[data-action]").forEach(item => {
-      if (item.dataset.bound === "1") return;
-      item.dataset.bound = "1";
-
-      item.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        closeAllDropdowns();
-
-        const action = item.dataset.action;
-        const name = item.dataset.name;
-
-        try{
-          if (action === "remove"){
-            openConfirmRemove(name);
-            return;
-          }
-
-          if (action === "info"){
-            openInformation(name);
-            return;
-          }
-
-          if (action === "edit"){
-            openEdit(name);
-            return;
-          }
-
-          if (action === "test"){
-            toast("ok", `Testing ${name}…`);
-            const r = await apiPost("/api/test", { name });
-            toast(r.ok ? "ok" : "err", r.message || (r.ok ? "OK" : "Failed"));
-            await refreshState();
-            return;
-          }
-
-          if (action === "disable"){
-            toast("ok", `Disabling ${name}…`);
-            const r = await apiPost("/api/disable", { name });
-            toast(r.ok ? "ok" : "err", r.message || (r.ok ? "Disabled" : "Failed"));
-            await refreshState();
-            return;
-          }
-
-          if (action === "enable"){
-            toast("ok", `Enabling ${name}…`);
-            const r = await apiPost("/api/enable", { name });
-            toast(r.ok ? "ok" : "err", r.message || (r.ok ? "Enabled" : "Failed"));
-            await refreshState();
-            return;
-          }
-
-        }catch(err){
-          toast("err", err?.message || "Action failed");
-        }
-      });
-    });
-  }
-
-  document.addEventListener("click", () => closeAllDropdowns());
-
-  // ---------- filtering ----------
-  function bindFilter(){
-    const inp = $("#filterInput");
-    if (!inp) return;
-
-    inp.addEventListener("input", () => {
-      state.filter = inp.value || "";
-      render();
-    });
-  }
-
-  // ---------- logs ----------
-  let rawLogs = "";
-  function bindLogs(){
-    bindModalBackdrop("logsModal");
-
-    const btnOpen = $("#btnOpenLogs");
-    const btnClose = $("#btnCloseLogs");
-    const btnReload = $("#btnReloadLogs");
-    const btnCopy = $("#btnCopyLogs");
-    const box = $("#logsBox");
-    const meta = $("#logsMeta");
-    const filter = $("#logsFilter");
-    const linesLbl = $("#logsLinesLbl");
-
-    if (!btnOpen || !btnClose || !btnReload || !btnCopy || !box || !meta || !filter || !linesLbl) return;
-
-    async function loadLogs(){
-      const lines = parseInt(linesLbl.textContent || "200", 10) || 200;
-      try{
-        const data = await apiGet(`/logs?lines=${lines}`);
-        rawLogs = data.text || "";
-        meta.textContent = `${data.source || "logs"} • ${data.lines || 0} lines • ${data.updated || ""}`;
-        applyFilterLogs();
-        box.scrollTop = box.scrollHeight;
-      }catch(e){
-        rawLogs = "";
-        box.textContent = `Failed to fetch logs: ${e?.message || "unknown"}`;
-        meta.textContent = "error";
+  async function pollRun(){
+    // show output live and update summary when present
+    const out = await apiGet("/api/run-output?lines=160");
+    if (out && out.ok){
+      runOutBox.textContent = out.text || "(no output yet)";
+      const s = out.summary;
+      if (s){
+        mTotal.textContent = String(s.total ?? "-");
+        mDue.textContent = String(s.due ?? "-");
+        mSkipped.textContent = String(s.skipped ?? "-");
+        mOk.textContent = String(s.ping_ok ?? "-");
+        mFail.textContent = String(s.ping_fail ?? "-");
+        mSent.textContent = String(s.sent ?? "-");
+        mCurlFail.textContent = String(s.curl_fail ?? "-");
+        setBar(Number(s.due || 0), Number(s.due || 0));
+        runDoneLine.textContent = `done: ${Number(s.due||0)} / ${Number(s.due||0)}`;
       }
     }
 
-    function applyFilterLogs(){
-      const q = (filter.value || "").trim().toLowerCase();
-      if (!q){
-        box.textContent = rawLogs || "(empty)";
-        return;
-      }
-      const lines = (rawLogs || "").split("\n").filter(l => l.toLowerCase().includes(q));
-      box.textContent = lines.join("\n") || "(no matches)";
-    }
-
-    btnOpen.addEventListener("click", async () => {
-      openModal("logsModal");
-      filter.focus();
-      await loadLogs();
-    });
-    btnClose.addEventListener("click", () => closeModal("logsModal"));
-    btnReload.addEventListener("click", async () => await loadLogs());
-    btnCopy.addEventListener("click", async () => {
-      try{
-        await navigator.clipboard.writeText(box.textContent || "");
-        toast("ok", "Logs copied");
-      }catch(_){}
-    });
-    filter.addEventListener("input", applyFilterLogs);
-  }
-
-  // ---------- add target ----------
-  function bindAdd(){
-    bindModalBackdrop("addModal");
-
-    const btnOpen = $("#btnOpenAdd");
-    const btnCancel = $("#btnAddCancel");
-    const form = $("#addForm");
-    const btnSubmit = $("#btnAddSubmit");
-
-    if (!btnOpen || !btnCancel || !form || !btnSubmit) return;
-
-    btnOpen.addEventListener("click", () => openModal("addModal"));
-    btnCancel.addEventListener("click", () => closeModal("addModal"));
-
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      btnSubmit.disabled = true;
-      const prev = btnSubmit.textContent;
-      btnSubmit.textContent = "Adding…";
-
-      try{
-        const fd = new FormData(form);
-        const payload = {
-          name: fd.get("name") || "",
-          ip: fd.get("ip") || "",
-          endpoint: fd.get("endpoint") || "",
-          interval: fd.get("interval") || "60"
-        };
-        const r = await apiPost("/api/add", payload);
-        if (r.ok){
-          toast("ok", r.message || "Target added");
-          form.reset();
-          closeModal("addModal");
-          await refreshState();
-        }else{
-          toast("err", r.message || "Failed to add");
-        }
-      }catch(err){
-        toast("err", err?.message || "Failed to add");
-      }finally{
-        btnSubmit.disabled = false;
-        btnSubmit.textContent = prev;
-      }
-    });
-  }
-
-  // ---------- remove confirm ----------
-  function bindConfirmRemove(){
-    bindModalBackdrop("removeModal");
-
-    const btnCancel = $("#btnRemoveCancel");
-    const btnConfirm = $("#btnRemoveConfirm");
-    const nameEl = $("#removeName");
-
-    if (!btnCancel || !btnConfirm || !nameEl) return;
-
-    btnCancel.addEventListener("click", () => {
-      state.pendingRemove = null;
-      closeModal("removeModal");
-    });
-
-    btnConfirm.addEventListener("click", async () => {
-      const name = state.pendingRemove;
-      if (!name) return;
-
-      btnConfirm.disabled = true;
-      const prev = btnConfirm.textContent;
-      btnConfirm.textContent = "Removing…";
-
-      try{
-        const r = await apiPost("/api/remove", { name });
-        toast(r.ok ? "ok" : "err", r.message || (r.ok ? "Removed" : "Failed"));
-        closeModal("removeModal");
-        state.pendingRemove = null;
-        await refreshState();
-      }catch(err){
-        toast("err", err?.message || "Failed");
-      }finally{
-        btnConfirm.disabled = false;
-        btnConfirm.textContent = prev;
-      }
-    });
-
-    function openConfirmRemove(name){
-      state.pendingRemove = name;
-      nameEl.textContent = name;
-      openModal("removeModal");
-    }
-
-    // expose
-    window.__interheartOpenRemove = openConfirmRemove;
-  }
-
-  function openConfirmRemove(name){
-    if (typeof window.__interheartOpenRemove === "function") window.__interheartOpenRemove(name);
-  }
-
-  // ---------- information modal ----------
-  function bindInformation(){
-    bindModalBackdrop("infoModal");
-    const btnClose = $("#btnInfoClose");
-    if (btnClose) btnClose.addEventListener("click", () => closeModal("infoModal"));
-  }
-
-  function openInformation(name){
-    const t = state.targets.find(x => x.name === name);
-    if (!t){
-      toast("err", "Target not found");
-      return;
-    }
-
-    $("#infoName").textContent = t.name || "-";
-    $("#infoIp").textContent = t.ip || "-";
-    $("#infoStatus").textContent = (t.status || "unknown").toUpperCase();
-    $("#infoInterval").textContent = String(t.interval ?? "-");
-    $("#infoLastPing").textContent = t.last_ping_human || "-";
-    $("#infoLastResp").textContent = t.last_response_human || "-";
-
-    // endpoint + extra (backend bør sende disse)
-    $("#infoEndpoint").textContent = t.endpoint || t.endpoint_masked || "-";
-    $("#infoLatency").textContent = (t.last_rtt_ms ?? t.latency_ms ?? "-") + "";
-    $("#infoEnabled").textContent = (Number(t.enabled ?? 1) === 1) ? "YES" : "NO";
-
-    openModal("infoModal");
-  }
-
-  // ---------- edit modal ----------
-  function bindEdit(){
-    bindModalBackdrop("editModal");
-
-    const btnCancel = $("#btnEditCancel");
-    const form = $("#editForm");
-    const btnSave = $("#btnEditSave");
-
-    if (btnCancel) btnCancel.addEventListener("click", () => closeModal("editModal"));
-    if (!form || !btnSave) return;
-
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      btnSave.disabled = true;
-      const prev = btnSave.textContent;
-      btnSave.textContent = "Saving…";
-
-      try{
-        const fd = new FormData(form);
-        const payload = {
-          old_name: fd.get("old_name") || "",
-          new_name: fd.get("new_name") || "",
-          ip: fd.get("ip") || "",
-          endpoint: fd.get("endpoint") || "",
-          interval: fd.get("interval") || "60",
-          enabled: fd.get("enabled") || "1"
-        };
-        const r = await apiPost("/api/edit", payload);
-        toast(r.ok ? "ok" : "err", r.message || (r.ok ? "Updated" : "Failed"));
-        if (r.ok){
-          closeModal("editModal");
-          await refreshState();
-        }
-      }catch(err){
-        toast("err", err?.message || "Failed to save");
-      }finally{
-        btnSave.disabled = false;
-        btnSave.textContent = prev;
-      }
-    });
-  }
-
-  function openEdit(name){
-    const t = state.targets.find(x => x.name === name);
-    if (!t){
-      toast("err", "Target not found");
-      return;
-    }
-
-    // fyll form
-    $("#editOldName").value = t.name || "";
-    $("#editNewName").value = t.name || "";
-    $("#editIp").value = t.ip || "";
-    $("#editEndpoint").value = t.endpoint || "";
-    $("#editInterval").value = String(t.interval ?? 60);
-    $("#editEnabled").value = String(Number(t.enabled ?? 1));
-
-    openModal("editModal");
-  }
-
-  // ---------- Run now (realtime) ----------
-  function bindRunNow(){
-    bindModalBackdrop("runModal");
-
-    const btn = $("#btnRunNow");
-    const btnClose = $("#btnRunClose");
-
-    if (btnClose) btnClose.addEventListener("click", () => closeModal("runModal"));
-    if (!btn) return;
-
-    const runLive = $("#runLive");
-    const runLiveText = $("#runLiveText");
-    const runTitleMeta = $("#runTitleMeta");
-
-    const mTotal = $("#mTotal");
-    const mDue = $("#mDue");
-    const mSkipped = $("#mSkipped");
-    const mOk = $("#mOk");
-    const mFail = $("#mFail");
-    const mSent = $("#mSent");
-    const mCurlFail = $("#mCurlFail");
-    const runBar = $("#runBar");
-    const runNowLine = $("#runNowLine");
-    const runDoneLine = $("#runDoneLine");
-    const runRaw = $("#runRaw");
-    const runHintBox = $("#runHintBox");
-    const runHintText = $("#runHintText");
-
-    function setBar(done, due){
-      const d = Number(done || 0);
-      const du = Number(due || 0);
-      const pct = (!du || du <= 0) ? 0 : Math.max(0, Math.min(100, Math.round((d / du) * 100)));
-      runBar.style.width = pct + "%";
-    }
-
-    function clearWorking(){
-      $$("tr[data-name]").forEach(r => r.classList.remove("working"));
-    }
-    function highlightWorking(name){
-      $$("tr[data-name]").forEach(r => {
-        if (r.getAttribute("data-name") === name) r.classList.add("working");
-        else r.classList.remove("working");
-      });
-    }
-
-    function setRunModalInitial(){
+    const st = await apiGet("/api/run-status");
+    if (st && st.running){
+      runNowLine.textContent = "Running…";
       runTitleMeta.textContent = "running…";
       runLive.style.display = "inline-flex";
       runLiveText.textContent = "Running…";
-
-      mTotal.textContent = "-";
-      mDue.textContent = "-";
-      mSkipped.textContent = "-";
-      mOk.textContent = "-";
-      mFail.textContent = "-";
-      mSent.textContent = "-";
-      mCurlFail.textContent = "-";
-
-      runNowLine.textContent = "Starting…";
-      runDoneLine.textContent = "done: 0 / 0";
-      runRaw.style.display = "none";
-      runHintBox.style.display = "none";
-      setBar(0, 0);
+      await refreshState(false);
+      return;
     }
 
-    function applyRunResult(data){
-      const ts = new Date().toLocaleString();
-      runTitleMeta.textContent = ts;
+    // finished
+    clearInterval(runPoll);
+    runPoll = null;
+    runLive.style.display = "none";
 
-      const summary = data.summary || null;
+    const res = await apiGet("/api/run-result");
+    runTitleMeta.textContent = new Date().toLocaleString();
+    toast(res.ok ? "Run completed" : "Run failed", res.ok ? "Done" : (res.message || "Error"));
+    runNowLine.textContent = res.ok ? "Completed" : "Failed";
+    await refreshState(true);
+  }
 
-      if (summary){
-        mTotal.textContent = String(summary.total ?? "-");
-        mDue.textContent = String(summary.due ?? "-");
-        mSkipped.textContent = String(summary.skipped ?? "-");
-        mOk.textContent = String(summary.ping_ok ?? "-");
-        mFail.textContent = String(summary.ping_fail ?? "-");
-        mSent.textContent = String(summary.sent ?? "-");
-        mCurlFail.textContent = String(summary.curl_fail ?? "-");
+  btnCloseRun?.addEventListener("click", () => hide(runModal));
+  runModal?.addEventListener("click", (e) => { if (e.target === runModal) hide(runModal); });
 
-        const due = Number(summary.due || 0);
-        setBar(due, due);
-        runNowLine.textContent = data.ok ? "Completed" : "Failed";
-        runDoneLine.textContent = `done: ${due} / ${due}`;
+  btnRunNow?.addEventListener("click", async () => {
+    btnRunNow.disabled = true;
+    setRunInitial();
+    show(runModal);
 
-        if (due === 0 && Number(summary.total || 0) > 0){
-          runHintBox.style.display = "block";
-          runHintText.textContent = "Nothing was checked. Verify timer permissions and runtime state.";
-        }
-      }else{
-        runRaw.textContent = data.message || "-";
-        runRaw.style.display = "block";
-        runNowLine.textContent = data.ok ? "Completed" : "Failed";
-      }
-
-      toast(data.ok ? "ok" : "err", data.ok ? "Run completed" : (data.message || "Run failed"));
-    }
-
-    async function fetchRuntime(){
-      try{
-        return await apiGet("/runtime");
-      }catch(_){
-        return null;
-      }
-    }
-    async function fetchRunStatus(){
-      try{
-        return await apiGet("/api/run-status");
-      }catch(_){
-        return null;
-      }
-    }
-    async function fetchRunResult(){
-      try{
-        return await apiGet("/api/run-result");
-      }catch(_){
-        return null;
-      }
-    }
-
-    function stopRuntimePoll(){
-      if (state.run.runtimePoll){
-        clearInterval(state.run.runtimePoll);
-        state.run.runtimePoll = null;
-      }
-    }
-    function stopStatusPoll(){
-      if (state.run.statusPoll){
-        clearInterval(state.run.statusPoll);
-        state.run.statusPoll = null;
-      }
-    }
-
-    function startRuntimePoll(){
-      stopRuntimePoll();
-      state.run.lastRuntimeUpdated = 0;
-
-      state.run.runtimePoll = setInterval(async () => {
-        const rt = await fetchRuntime();
-        if (!rt) return;
-
-        const upd = Number(rt.updated || 0);
-        if (upd && upd === state.run.lastRuntimeUpdated) return;
-        if (upd) state.run.lastRuntimeUpdated = upd;
-
-        if (rt.status === "running"){
-          runLive.style.display = "inline-flex";
-          runLiveText.textContent = "Running…";
-
-          const cur = String(rt.current || "").trim();
-          if (cur){
-            highlightWorking(cur);
-            runNowLine.textContent = "Now checking: " + cur;
-          }else{
-            runNowLine.textContent = "Running…";
-          }
-
-          const done = Number(rt.done || 0);
-          const due = Number(rt.due || 0);
-          runDoneLine.textContent = `done: ${done} / ${due}`;
-          setBar(done, due);
-        }
-      }, 250);
-    }
-
-    function startStatusPoll(){
-      stopStatusPoll();
-      state.run.statusPoll = setInterval(async () => {
-        const st = await fetchRunStatus();
-        if (!st) return;
-
-        if (st.running){
-          runTitleMeta.textContent = "running…";
-          runLive.style.display = "inline-flex";
-          return;
-        }
-
-        if (st.finished){
-          stopStatusPoll();
-          stopRuntimePoll();
-          clearWorking();
-          runLive.style.display = "none";
-          const result = await fetchRunResult();
-          if (result) applyRunResult(result);
-        }
-      }, 300);
-    }
-
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      setRunModalInitial();
-      openModal("runModal");
-
-      startRuntimePoll();
-      startStatusPoll();
-
-      try{
-        const r = await apiPost("/api/run-now", {});
-        if (!r.ok){
-          stopStatusPoll();
-          stopRuntimePoll();
-          clearWorking();
-          runLive.style.display = "none";
-          runRaw.textContent = r.message || "Failed to start run";
-          runRaw.style.display = "block";
-          runNowLine.textContent = "Failed";
-          toast("err", r.message || "Run failed");
-        }else{
-          runNowLine.textContent = "Started…";
-        }
-      }catch(err){
-        stopStatusPoll();
-        stopRuntimePoll();
-        clearWorking();
-        runLive.style.display = "none";
-        runRaw.textContent = err?.message || "Run failed";
-        runRaw.style.display = "block";
+    try{
+      const data = await apiPost("/api/run-now", new FormData());
+      if (!data.ok){
+        toast("Run failed", data.message || "Failed to start run");
         runNowLine.textContent = "Failed";
-        toast("err", err?.message || "Run failed");
-      }finally{
-        btn.disabled = false;
-        await refreshState();
+        runLive.style.display = "none";
+      } else {
+        // poll frequently while running
+        if (runPoll) clearInterval(runPoll);
+        runPoll = setInterval(pollRun, 600);
+        await pollRun();
       }
-    });
-  }
+    }catch(e){
+      toast("Run failed", e?.message || "Error");
+      runNowLine.textContent = "Failed";
+      runLive.style.display = "none";
+    }finally{
+      btnRunNow.disabled = false;
+    }
+  });
 
-  // ---------- init ----------
-  function init(){
-    bindFilter();
-    bindLogs();
-    bindAdd();
-    bindConfirmRemove();
-    bindInformation();
-    bindEdit();
-    bindRunNow();
+  // init
+  attachIntervalHandlers();
+  attachMenuActions();
+  applyTargetFilter();
+  setInterval(() => refreshState(false), 2000);
 
-    // esc closes
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape"){
-        closeAllDropdowns();
-        closeAllModals();
-      }
-    });
-
-    refreshState();
-    setInterval(refreshState, 2000);
-  }
-
-  // expose remove open helper
-  window.openConfirmRemove = openConfirmRemove;
-
-  init();
+  // ESC closes modals
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape"){
+      if (logModal?.classList.contains("show")) hide(logModal);
+      if (addModal?.classList.contains("show")) hide(addModal);
+      if (runModal?.classList.contains("show")) hide(runModal);
+      if (confirmModal?.classList.contains("show")) hide(confirmModal);
+      if (infoModal?.classList.contains("show")) hide(infoModal);
+      if (editModal?.classList.contains("show")) hide(editModal);
+      closeAllMenus();
+    }
+  });
 
 })();
