@@ -1,4 +1,3 @@
-# webui/systemd/interheart-webui.service
 [Unit]
 Description=5echo interheart web UI
 After=network-online.target
@@ -7,8 +6,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/interheart/webui
-Environment=PORT=8080
+
+Environment=PORT=8088
 Environment=INTERHEART_DB=/var/lib/interheart/state.db
+Environment=PYTHONUNBUFFERED=1
+
 ExecStart=/opt/interheart/webui/.venv/bin/python /opt/interheart/webui/app.py
 Restart=always
 RestartSec=2
