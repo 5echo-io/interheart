@@ -1,759 +1,628 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# interheart v4.8.0
-# 5echo.io © 2026 All rights reserved
+# interheart CLI
+# Stores state in /var/lib/interheart/state.db
+# Requires: sqlite3, curl, ping
 
-APP_NAME="interheart"
-
-CONFIG_FILE="/etc/5echo/interheart.conf"
-LOG_FILE="/var/log/interheart.log"
 STATE_DIR="/var/lib/interheart"
-STATE_FILE="${STATE_DIR}/state.db"
+DB="${STATE_DIR}/state.db"
+LOG_TAG="interheart"
 
-RUNTIME_FILE="${STATE_DIR}/runtime.json"
-RUN_META_FILE="${STATE_DIR}/run_meta.json"
-RUN_OUT_FILE="${STATE_DIR}/run_last_output.txt"
+mkdir -p "${STATE_DIR}" >/dev/null 2>&1 || true
 
-LAT_DIR="${STATE_DIR}/latency"
-LAT_KEEP=20
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
-# Defaults
-DEFAULT_INTERVAL_SEC=60
-RUNNER_DEFAULT_SEC=10   # how often systemd timer triggers
-PING_COUNT_DEFAULT=1
-PING_TIMEOUT_DEFAULT=1
-CURL_TIMEOUT_DEFAULT=6
+die() {
+  echo "$*" >&2
+  exit 1
+}
 
-BIN_PATH="/usr/local/bin/${APP_NAME}"
-SERVICE_PATH="/etc/systemd/system/${APP_NAME}.service"
-TIMER_PATH="/etc/systemd/system/${APP_NAME}.timer"
-
-VERSION_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/VERSION"
-VERSION="4.8.0"
-if [[ -f "$VERSION_FILE" ]]; then
-  VERSION="$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]' || echo "4.8.0")"
-fi
-
-require_root() {
-  if [[ "${EUID}" -ne 0 ]]; then
-    echo "This must run as root. Use: sudo $0 $*" >&2
-    exit 1
+mask_endpoint() {
+  # Keep scheme + host, hide path/query
+  # https://host/path?x=1  -> https://host/***
+  local url="${1:-}"
+  if [[ -z "$url" ]]; then
+    echo "-"
+    return
+  fi
+  # extract scheme://host[:port]
+  local scheme host rest
+  scheme="$(echo "$url" | awk -F:// '{print $1}')"
+  rest="$(echo "$url" | sed -E 's#^[a-zA-Z]+://##')"
+  host="$(echo "$rest" | awk -F/ '{print $1}')"
+  if [[ -n "$scheme" && -n "$host" ]]; then
+    echo "${scheme}://${host}/***"
+  else
+    echo "***"
   fi
 }
 
-ensure_paths() {
-  mkdir -p "$(dirname "$CONFIG_FILE")"
-  touch "$CONFIG_FILE"
-  chmod 600 "$CONFIG_FILE"
-
-  mkdir -p "$STATE_DIR" "$LAT_DIR"
-  chmod 700 "$STATE_DIR"
-  touch "$STATE_FILE"
-  chmod 600 "$STATE_FILE"
-
-  # runtime files (used by WebUI)
-  : > "$RUNTIME_FILE" 2>/dev/null || true
-  : > "$RUN_META_FILE" 2>/dev/null || true
-  : > "$RUN_OUT_FILE" 2>/dev/null || true
-  chmod 666 "$RUNTIME_FILE" "$RUN_META_FILE" "$RUN_OUT_FILE" 2>/dev/null || true
+require_deps() {
+  have_cmd sqlite3 || die "ERROR: Missing sqlite3"
+  have_cmd curl    || die "ERROR: Missing curl"
+  have_cmd ping    || die "ERROR: Missing ping"
 }
 
-log() {
-  local msg="$1"
-  local line
-  line="$(date '+%Y-%m-%d %H:%M:%S') - ${msg}"
+init_db() {
+  require_deps
+  mkdir -p "${STATE_DIR}" >/dev/null 2>&1 || true
+  sqlite3 "${DB}" <<'SQL'
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
 
-  # avoid syslog prefix pollution in content; keep message clean
-  if command -v systemd-cat >/dev/null 2>&1; then
-    echo "$line" | systemd-cat -t "$APP_NAME" >/dev/null 2>&1 || true
-  fi
-  echo "$line" >> "$LOG_FILE" 2>/dev/null || true
+CREATE TABLE IF NOT EXISTS targets (
+  name TEXT PRIMARY KEY,
+  ip TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  interval INTEGER NOT NULL DEFAULT 60,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+  updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+CREATE TABLE IF NOT EXISTS runtime (
+  name TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'unknown',
+  next_due INTEGER NOT NULL DEFAULT 0,
+  last_ping INTEGER NOT NULL DEFAULT 0,
+  last_sent INTEGER NOT NULL DEFAULT 0,
+  last_rtt_ms INTEGER NOT NULL DEFAULT -1
+);
+
+CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);
+CREATE INDEX IF NOT EXISTS idx_runtime_next_due ON runtime(next_due);
+SQL
+}
+
+sql_one() {
+  local q="$1"
+  sqlite3 -noheader -batch "${DB}" "${q}"
+}
+
+sql_exec() {
+  local q="$1"
+  sqlite3 -batch "${DB}" "${q}"
+}
+
+ensure_exists() {
+  [[ -f "${DB}" ]] || init_db
+}
+
+now_epoch() {
+  date +%s
+}
+
+log_info() {
+  # journal tag
+  # If called by systemd/journal, stdout may be captured; keep it simple.
+  echo "$*"
 }
 
 usage() {
   cat <<EOF
-5echo ${APP_NAME} v${VERSION}
+interheart
 
-Config formats supported:
-  NAME|IP|ENDPOINT_URL
-  NAME|IP|ENDPOINT_URL|INTERVAL_SEC
-  NAME|IP|ENDPOINT_URL|INTERVAL_SEC|ENABLED   (ENABLED: 1 or 0)
+Usage:
+  interheart init-db
+  interheart add <name> <ip> <endpoint> <interval_seconds>
+  interheart remove <name>
+  interheart list
+  interheart status
+  interheart get <name>
+  interheart edit <old_name> <new_name> <ip> <endpoint> <interval_seconds> <enabled 0|1>
+  interheart disable <name>
+  interheart enable <name>
+  interheart set-target-interval <name> <interval_seconds>
+  interheart test <name>
+  interheart run-now [--targets name1,name2,...] [--force]
 
-Targets:
-  $0 add <name> <ip> <endpoint_url> [interval_sec]
-  $0 remove <name>
-  $0 list
-  $0 status
-  $0 test <name>
-  $0 set-target-interval <name> <seconds>
-  $0 disable <name>
-  $0 enable <name>
-
-Run:
-  $0 run
-  $0 run-now [--targets name1,name2,...] [--force 1]
-
-Systemd:
-  $0 install
-  $0 uninstall
-  $0 enable-timer
-  $0 disable-timer
-  $0 sys-status
-
+Notes:
+  - Data stored in: ${DB}
 EOF
 }
 
 validate_name() {
   local name="$1"
-  if [[ ! "$name" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-    echo "Invalid name '$name'. Use only a-zA-Z0-9._-" >&2
-    exit 1
-  fi
+  [[ -n "$name" ]] || return 1
+  # allow: letters, numbers, dash, underscore, dot
+  [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] || return 1
+  return 0
 }
 
 validate_ip() {
   local ip="$1"
-  if [[ ! "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    echo "Invalid IP '$ip'." >&2
-    exit 1
-  fi
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  local o1 o2 o3 o4
   IFS='.' read -r o1 o2 o3 o4 <<<"$ip"
   for o in "$o1" "$o2" "$o3" "$o4"; do
-    if (( o < 0 || o > 255 )); then
-      echo "Invalid IP '$ip' (octet out of range)." >&2
-      exit 1
-    fi
+    [[ "$o" -ge 0 && "$o" -le 255 ]] || return 1
   done
-}
-
-validate_url() {
-  local url="$1"
-  if [[ ! "$url" =~ ^https?:// ]]; then
-    echo "Invalid URL '$url'. Must start with http:// or https://." >&2
-    exit 1
-  fi
-}
-
-validate_interval() {
-  local sec="$1"
-  [[ "$sec" =~ ^[0-9]+$ ]] || { echo "Interval must be an integer (seconds)."; exit 1; }
-  (( sec >= 10 && sec <= 86400 )) || { echo "Interval must be 10..86400 seconds."; exit 1; }
-}
-
-config_has_name() {
-  local name="$1"
-  grep -qE "^${name}\|" "$CONFIG_FILE"
-}
-
-# returns: name|ip|url|interval|enabled
-parse_config_line() {
-  local line="$1"
-  local name ip url interval enabled
-  IFS='|' read -r name ip url interval enabled <<<"$line"
-  interval="${interval:-$DEFAULT_INTERVAL_SEC}"
-  enabled="${enabled:-1}"
-  [[ "$enabled" != "0" ]] && enabled="1"
-  echo "${name}|${ip}|${url}|${interval}|${enabled}"
-}
-
-# State db format:
-# NAME|NEXT_DUE_EPOCH|LAST_STATUS|LAST_PING_EPOCH|LAST_SENT_EPOCH|LAST_LAT_MS
-state_get_line() {
-  local name="$1"
-  grep -E "^${name}\|" "$STATE_FILE" 2>/dev/null || true
-}
-
-state_set_line() {
-  local newline="$1"
-  local name
-  IFS='|' read -r name _ <<<"$newline"
-
-  local tmp
-  tmp="$(mktemp)"
-  grep -vE "^${name}\|" "$STATE_FILE" 2>/dev/null > "$tmp" || true
-  echo "$newline" >> "$tmp"
-  cat "$tmp" > "$STATE_FILE"
-  rm -f "$tmp"
-  chmod 600 "$STATE_FILE"
-}
-
-mask_url() {
-  local url="$1"
-  echo "$url" | sed -E 's#(https?://[^/]+/).{4,}#\1***#'
-}
-
-ping_latency_ms() {
-  local ip="$1"
-  # Use ping -c 1 -W 1 and parse "time=XX ms"
-  local out
-  if ! out="$(ping -c "$PING_COUNT_DEFAULT" -W "$PING_TIMEOUT_DEFAULT" "$ip" 2>/dev/null)"; then
-    echo ""
-    return 1
-  fi
-  local t
-  t="$(echo "$out" | sed -nE 's/.*time=([0-9.]+) ms.*/\1/p' | head -n1 || true)"
-  if [[ -z "$t" ]]; then
-    echo ""
-    return 1
-  fi
-  # convert to int ms (round)
-  python3 - <<PY 2>/dev/null || true
-import math
-t=float("$t")
-print(int(round(t)))
-PY
   return 0
 }
 
-lat_push() {
-  local name="$1"
-  local ms="$2"
-  local f="${LAT_DIR}/${name}.json"
-  python3 - <<PY 2>/dev/null || true
-import json, os
-f="$f"
-ms=int("$ms")
-keep=int("$LAT_KEEP")
-arr=[]
-try:
-  if os.path.exists(f):
-    with open(f,"r",encoding="utf-8") as fh:
-      arr=json.load(fh) or []
-except Exception:
-  arr=[]
-arr.append(ms)
-arr=arr[-keep:]
-os.makedirs(os.path.dirname(f), exist_ok=True)
-with open(f,"w",encoding="utf-8") as fh:
-  json.dump(arr, fh)
-PY
+validate_interval() {
+  local s="$1"
+  [[ "$s" =~ ^[0-9]+$ ]] || return 1
+  [[ "$s" -ge 10 && "$s" -le 86400 ]] || return 1
+  return 0
 }
 
-send_endpoint() {
-  local url="$1"
-  curl -fsS --max-time "$CURL_TIMEOUT_DEFAULT" "$url" > /dev/null
+validate_endpoint() {
+  local u="$1"
+  [[ -n "$u" ]] || return 1
+  [[ "$u" =~ ^https?:// ]] || return 1
+  return 0
 }
 
-add_target() {
-  require_root add
-  ensure_paths
-
+cmd_add() {
+  ensure_exists
   local name="${1:-}"
   local ip="${2:-}"
-  local url="${3:-}"
-  local interval="${4:-$DEFAULT_INTERVAL_SEC}"
+  local endpoint="${3:-}"
+  local interval="${4:-}"
 
-  [[ -z "$name" || -z "$ip" || -z "$url" ]] && { usage; exit 1; }
+  validate_name "$name" || die "ERROR: Invalid name (allowed: a-zA-Z0-9._-)"
+  validate_ip "$ip" || die "ERROR: Invalid IP"
+  validate_endpoint "$endpoint" || die "ERROR: Endpoint must start with http:// or https://"
+  validate_interval "$interval" || die "ERROR: Interval must be 10-86400 seconds"
 
-  validate_name "$name"
-  validate_ip "$ip"
-  validate_url "$url"
-  validate_interval "$interval"
+  local exists
+  exists="$(sql_one "SELECT 1 FROM targets WHERE name='$(printf "%q" "$name" | sed "s/^'//;s/'$//")' LIMIT 1;")" || true
+  # (printf %q quote is shell-ish; use sqlite safe quoting below)
+  # We'll do safe quoting by replacing single quotes.
+  local n_esc ip_esc ep_esc
+  n_esc="${name//\'/\'\'}"
+  ip_esc="${ip//\'/\'\'}"
+  ep_esc="${endpoint//\'/\'\'}"
 
-  if config_has_name "$name"; then
-    echo "Target already exists: $name. Remove first: sudo $0 remove $name" >&2
-    exit 1
-  fi
-
-  echo "${name}|${ip}|${url}|${interval}|1" >> "$CONFIG_FILE"
-  chmod 600 "$CONFIG_FILE"
-
-  local now
-  now="$(date +%s)"
-  state_set_line "${name}|${now}|unknown|0|0|0"
-
-  log "ADD name=$name ip=$ip interval=${interval}s enabled=1"
-  echo "Added: $name ($ip) interval=${interval}s"
-}
-
-remove_target() {
-  require_root remove
-  ensure_paths
-
-  local name="${1:-}"
-  [[ -z "$name" ]] && { usage; exit 1; }
-  validate_name "$name"
-
-  if ! config_has_name "$name"; then
-    echo "Not found: $name" >&2
-    exit 1
-  fi
-
-  local tmp
-  tmp="$(mktemp)"
-  grep -vE "^${name}\|" "$CONFIG_FILE" > "$tmp" || true
-  cat "$tmp" > "$CONFIG_FILE"
-  rm -f "$tmp"
-  chmod 600 "$CONFIG_FILE"
-
-  tmp="$(mktemp)"
-  grep -vE "^${name}\|" "$STATE_FILE" > "$tmp" || true
-  cat "$tmp" > "$STATE_FILE"
-  rm -f "$tmp"
-  chmod 600 "$STATE_FILE"
-
-  rm -f "${LAT_DIR}/${name}.json" 2>/dev/null || true
-
-  log "REMOVE name=$name"
-  echo "Removed: $name"
-}
-
-set_target_interval() {
-  require_root set-target-interval
-  ensure_paths
-
-  local name="${1:-}"
-  local sec="${2:-}"
-  [[ -z "$name" || -z "$sec" ]] && { echo "Usage: sudo $0 set-target-interval <name> <seconds>"; exit 1; }
-  validate_name "$name"
-  validate_interval "$sec"
-
-  if ! config_has_name "$name"; then
-    echo "Not found: $name" >&2
-    exit 1
-  fi
-
-  local tmp
-  tmp="$(mktemp)"
-  while IFS= read -r line; do
-    [[ -z "$line" || "$line" =~ ^# ]] && continue
-    parsed="$(parse_config_line "$line")"
-    IFS='|' read -r n ip url interval enabled <<<"$parsed"
-    if [[ "$n" == "$name" ]]; then
-      echo "${n}|${ip}|${url}|${sec}|${enabled}" >> "$tmp"
-    else
-      echo "${n}|${ip}|${url}|${interval}|${enabled}" >> "$tmp"
-    fi
-  done < "$CONFIG_FILE"
-
-  cat "$tmp" > "$CONFIG_FILE"
-  rm -f "$tmp"
-  chmod 600 "$CONFIG_FILE"
+  local exists2
+  exists2="$(sql_one "SELECT 1 FROM targets WHERE name='${n_esc}' LIMIT 1;")" || true
+  [[ -z "$exists2" ]] || die "ERROR: Target already exists: ${name}"
 
   local now
-  now="$(date +%s)"
-  local old
-  old="$(state_get_line "$name")"
-  if [[ -n "$old" ]]; then
-    IFS='|' read -r _n _due last_status last_ping last_sent last_lat <<<"$old"
-    state_set_line "${name}|${now}|${last_status:-unknown}|${last_ping:-0}|${last_sent:-0}|${last_lat:-0}"
-  else
-    state_set_line "${name}|${now}|unknown|0|0|0"
-  fi
+  now="$(now_epoch)"
 
-  log "SET_INTERVAL name=$name interval=${sec}s"
-  echo "Updated: $name interval=${sec}s"
+  sql_exec "INSERT INTO targets(name,ip,endpoint,interval,enabled,created_at,updated_at)
+            VALUES('${n_esc}','${ip_esc}','${ep_esc}',${interval},1,${now},${now});"
+
+  # create runtime baseline
+  sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
+            VALUES('${n_esc}','unknown',0,0,0,-1);"
+
+  log_info "OK: Added ${name}"
 }
 
-set_target_enabled() {
-  require_root enable-disable
-  ensure_paths
+cmd_remove() {
+  ensure_exists
   local name="${1:-}"
-  local en="${2:-}"
-  [[ -z "$name" || -z "$en" ]] && { echo "Usage: sudo $0 enable|disable <name>"; exit 1; }
-  validate_name "$name"
-  [[ "$en" != "0" ]] && en="1"
+  validate_name "$name" || die "ERROR: Invalid name"
+  local n_esc="${name//\'/\'\'}"
 
-  if ! config_has_name "$name"; then
-    echo "Not found: $name" >&2
-    exit 1
-  fi
+  local exists
+  exists="$(sql_one "SELECT 1 FROM targets WHERE name='${n_esc}' LIMIT 1;")" || true
+  [[ -n "$exists" ]] || die "ERROR: Not found: ${name}"
 
-  local tmp
-  tmp="$(mktemp)"
-  while IFS= read -r line; do
-    [[ -z "$line" || "$line" =~ ^# ]] && continue
-    parsed="$(parse_config_line "$line")"
-    IFS='|' read -r n ip url interval enabled <<<"$parsed"
-    if [[ "$n" == "$name" ]]; then
-      echo "${n}|${ip}|${url}|${interval}|${en}" >> "$tmp"
-    else
-      echo "${n}|${ip}|${url}|${interval}|${enabled}" >> "$tmp"
-    fi
-  done < "$CONFIG_FILE"
-
-  cat "$tmp" > "$CONFIG_FILE"
-  rm -f "$tmp"
-  chmod 600 "$CONFIG_FILE"
-
-  log "SET_ENABLED name=$name enabled=$en"
-  echo "Updated: $name enabled=$en"
+  sql_exec "DELETE FROM targets WHERE name='${n_esc}';"
+  sql_exec "DELETE FROM runtime WHERE name='${n_esc}';"
+  log_info "OK: Removed ${name}"
 }
 
-enable_target(){ set_target_enabled "${1:-}" "1"; }
-disable_target(){ set_target_enabled "${1:-}" "0"; }
-
-list_targets() {
-  require_root list
-  ensure_paths
-
-  if [[ ! -s "$CONFIG_FILE" ]]; then
-    echo "No targets in $CONFIG_FILE"
-    exit 0
-  fi
+cmd_list() {
+  ensure_exists
 
   echo "Targets:"
-  echo "---------------------------------------------------------------------------------------------------------------"
-  printf "  %-26s %-15s %-10s %-9s %s\n" "NAME" "IP" "INTERVAL" "ENABLED" "ENDPOINT"
-  echo "---------------------------------------------------------------------------------------------------------------"
-  while IFS= read -r line; do
-    [[ -z "$line" || "$line" =~ ^# ]] && continue
-    parsed="$(parse_config_line "$line")"
-    IFS='|' read -r name ip url interval enabled <<<"$parsed"
-    printf "  %-26s %-15s %-10s %-9s %s\n" "$name" "$ip" "${interval}s" "$enabled" "$(mask_url "$url")"
-  done < "$CONFIG_FILE"
-  echo "---------------------------------------------------------------------------------------------------------------"
+  echo "--------------------------------------------------------------------------------"
+  echo "NAME                 IP               INTERVAL   ENABLED   ENDPOINT"
+  echo "--------------------------------------------------------------------------------"
+
+  # fixed-width-ish formatting
+  sqlite3 -noheader -batch "${DB}" \
+    "SELECT name, ip, interval, enabled, endpoint FROM targets ORDER BY name COLLATE NOCASE;" \
+  | while IFS='|' read -r name ip interval enabled endpoint; do
+      local masked
+      masked="$(mask_endpoint "$endpoint")"
+      printf "%-20s %-16s %-9ss %-8s %s\n" "$name" "$ip" "$interval" "$enabled" "$masked"
+    done
 }
 
-status_targets() {
-  require_root status
-  ensure_paths
-
+cmd_status() {
+  ensure_exists
   local now
-  now="$(date +%s)"
+  now="$(now_epoch)"
 
   echo "State:"
-  echo "-------------------------------------------------------------------------------------------------------------------------------"
-  printf "  %-26s %-10s %-12s %-14s %-14s %-14s %-10s\n" "NAME" "STATUS" "NEXT_IN" "NEXT_DUE" "LAST_PING" "LAST_RESP" "LAT_MS"
-  echo "-------------------------------------------------------------------------------------------------------------------------------"
+  echo "----------------------------------------------------------------------------------------------------------------------------"
+  echo "NAME                 STATUS     NEXT_IN     NEXT_DUE     LAST_PING   LAST_RESP   LAT_MS"
+  echo "----------------------------------------------------------------------------------------------------------------------------"
 
-  [[ ! -s "$CONFIG_FILE" ]] && { echo "  (no targets)"; exit 0; }
+  # Join targets + runtime
+  sqlite3 -noheader -batch "${DB}" \
+    "SELECT t.name,
+            CASE WHEN t.enabled=0 THEN 'disabled' ELSE COALESCE(r.status,'unknown') END AS status,
+            COALESCE(r.next_due,0) AS next_due,
+            COALESCE(r.last_ping,0) AS last_ping,
+            COALESCE(r.last_sent,0) AS last_sent,
+            COALESCE(r.last_rtt_ms,-1) AS last_rtt_ms
+     FROM targets t
+     LEFT JOIN runtime r ON r.name=t.name
+     ORDER BY t.name COLLATE NOCASE;" \
+  | while IFS='|' read -r name status next_due last_ping last_sent last_rtt_ms; do
+      local next_in
+      if [[ "$next_due" =~ ^[0-9]+$ && "$next_due" -gt 0 ]]; then
+        if [[ "$next_due" -le "$now" ]]; then next_in=0; else next_in=$((next_due - now)); fi
+      else
+        next_in=0
+        next_due=0
+      fi
 
-  while IFS= read -r line; do
-    [[ -z "$line" || "$line" =~ ^# ]] && continue
-    parsed="$(parse_config_line "$line")"
-    IFS='|' read -r name _ip _url _interval enabled <<<"$parsed"
-
-    st="$(state_get_line "$name")"
-    local next_due last_status last_ping last_sent last_lat
-    if [[ -n "$st" ]]; then
-      IFS='|' read -r _n next_due last_status last_ping last_sent last_lat <<<"$st"
-    else
-      next_due="0"; last_status="unknown"; last_ping="0"; last_sent="0"; last_lat="0"
-    fi
-
-    local next_in
-    if (( now < ${next_due:-0} )); then
-      next_in="$(( next_due - now ))s"
-    else
-      next_in="due"
-    fi
-
-    printf "  %-26s %-10s %-12s %-14s %-14s %-14s %-10s\n" \
-      "$name" "${last_status:-unknown}" "$next_in" "${next_due:-0}" "${last_ping:-0}" "${last_sent:-0}" "${last_lat:-0}"
-  done < "$CONFIG_FILE"
-
-  echo "-------------------------------------------------------------------------------------------------------------------------------"
+      printf "%-20s %-10s %-10s %-10s %-10s %-10s %-6s\n" \
+        "$name" "$status" "${next_in}" "${next_due}" "${last_ping:-0}" "${last_sent:-0}" "${last_rtt_ms:-1}"
+    done
 }
 
-test_target() {
-  require_root test
-  ensure_paths
-
+cmd_get() {
+  ensure_exists
   local name="${1:-}"
-  [[ -z "$name" ]] && { usage; exit 1; }
-  validate_name "$name"
+  validate_name "$name" || die "ERROR: Invalid name"
+  local n_esc="${name//\'/\'\'}"
 
-  local line
-  line="$(grep -E "^${name}\|" "$CONFIG_FILE" || true)"
-  [[ -z "$line" ]] && { echo "Not found: $name"; exit 1; }
+  local row
+  row="$(sqlite3 -noheader -batch "${DB}" \
+    "SELECT name, ip, endpoint, interval, enabled FROM targets WHERE name='${n_esc}' LIMIT 1;")" || true
 
-  local parsed ip url interval enabled
-  parsed="$(parse_config_line "$line")"
-  IFS='|' read -r _name ip url interval enabled <<<"$parsed"
+  [[ -n "$row" ]] || die "ERROR: Not found: ${name}"
 
-  echo "Testing: $name ($ip) interval=${interval}s enabled=${enabled}"
-  if [[ "$enabled" == "0" ]]; then
-    echo "DISABLED"
-    exit 4
-  fi
-
-  local ms
-  ms="$(ping_latency_ms "$ip" || true)"
-  if [[ -n "$ms" ]]; then
-    echo "PING: OK (${ms}ms)"
-    echo "Calling endpoint…"
-    if send_endpoint "$url"; then
-      echo "ENDPOINT: OK"
-      exit 0
-    else
-      echo "ENDPOINT: FAIL (curl)"
-      exit 2
-    fi
-  else
-    echo "PING: FAIL"
-    exit 3
-  fi
+  # Output format required by WebUI:
+  # name|ip|endpoint|interval|enabled
+  echo "$row"
 }
 
-write_runtime() {
-  # args: status current done due queue_json updated
-  local status="$1" current="$2" done="$3" due="$4" queue="$5"
-  python3 - <<PY 2>/dev/null || true
-import json, time
-data={
-  "status":"$status",
-  "current":"$current",
-  "done":int("$done"),
-  "due":int("$due"),
-  "queue":$queue,
-  "updated":int(time.time())
-}
-open("$RUNTIME_FILE","w",encoding="utf-8").write(json.dumps(data))
-PY
-  chmod 666 "$RUNTIME_FILE" 2>/dev/null || true
-}
+cmd_disable() {
+  ensure_exists
+  local name="${1:-}"
+  validate_name "$name" || die "ERROR: Invalid name"
+  local n_esc="${name//\'/\'\'}"
 
-run_checks_internal() {
-  # args: force(0/1) selected_csv(optional)
-  local force="${1:-0}"
-  local selected="${2:-}"
-
-  [[ ! -s "$CONFIG_FILE" ]] && { log "RUN: no targets"; echo "No targets"; exit 0; }
+  local exists
+  exists="$(sql_one "SELECT 1 FROM targets WHERE name='${n_esc}' LIMIT 1;")" || true
+  [[ -n "$exists" ]] || die "ERROR: Not found: ${name}"
 
   local now
-  now="$(date +%s)"
+  now="$(now_epoch)"
 
-  # build selection map
-  declare -A sel
-  if [[ -n "$selected" ]]; then
-    IFS=',' read -r -a arr <<<"$selected"
-    for n in "${arr[@]}"; do
-      n="$(echo "$n" | xargs || true)"
-      [[ -n "$n" ]] && sel["$n"]=1
-    done
+  sql_exec "UPDATE targets SET enabled=0, updated_at=${now} WHERE name='${n_esc}';"
+  # keep status coherent
+  sql_exec "UPDATE runtime SET status='disabled' WHERE name='${n_esc}';"
+  log_info "OK: Disabled ${name}"
+}
+
+cmd_enable() {
+  ensure_exists
+  local name="${1:-}"
+  validate_name "$name" || die "ERROR: Invalid name"
+  local n_esc="${name//\'/\'\'}"
+
+  local exists
+  exists="$(sql_one "SELECT 1 FROM targets WHERE name='${n_esc}' LIMIT 1;")" || true
+  [[ -n "$exists" ]] || die "ERROR: Not found: ${name}"
+
+  local now
+  now="$(now_epoch)"
+
+  sql_exec "UPDATE targets SET enabled=1, updated_at=${now} WHERE name='${n_esc}';"
+  # runtime will be recalculated at next run; set unknown now
+  sql_exec "UPDATE runtime SET status='unknown' WHERE name='${n_esc}';"
+  log_info "OK: Enabled ${name}"
+}
+
+cmd_set_interval() {
+  ensure_exists
+  local name="${1:-}"
+  local interval="${2:-}"
+  validate_name "$name" || die "ERROR: Invalid name"
+  validate_interval "$interval" || die "ERROR: Interval must be 10-86400 seconds"
+  local n_esc="${name//\'/\'\'}"
+  local now
+  now="$(now_epoch)"
+
+  local exists
+  exists="$(sql_one "SELECT 1 FROM targets WHERE name='${n_esc}' LIMIT 1;")" || true
+  [[ -n "$exists" ]] || die "ERROR: Not found: ${name}"
+
+  sql_exec "UPDATE targets SET interval=${interval}, updated_at=${now} WHERE name='${n_esc}';"
+  log_info "OK: Interval set for ${name} -> ${interval}s"
+}
+
+cmd_edit() {
+  ensure_exists
+  local old_name="${1:-}"
+  local new_name="${2:-}"
+  local ip="${3:-}"
+  local endpoint="${4:-}"
+  local interval="${5:-}"
+  local enabled="${6:-}"
+
+  validate_name "$old_name" || die "ERROR: Invalid old_name"
+  validate_name "$new_name" || die "ERROR: Invalid new_name"
+  validate_ip "$ip" || die "ERROR: Invalid IP"
+  validate_endpoint "$endpoint" || die "ERROR: Endpoint must start with http:// or https://"
+  validate_interval "$interval" || die "ERROR: Interval must be 10-86400 seconds"
+  [[ "$enabled" == "0" || "$enabled" == "1" ]] || die "ERROR: enabled must be 0 or 1"
+
+  local old_esc new_esc ip_esc ep_esc
+  old_esc="${old_name//\'/\'\'}"
+  new_esc="${new_name//\'/\'\'}"
+  ip_esc="${ip//\'/\'\'}"
+  ep_esc="${endpoint//\'/\'\'}"
+
+  local exists_old
+  exists_old="$(sql_one "SELECT 1 FROM targets WHERE name='${old_esc}' LIMIT 1;")" || true
+  [[ -n "$exists_old" ]] || die "ERROR: Not found: ${old_name}"
+
+  # if renaming, ensure new doesn't exist
+  if [[ "$old_name" != "$new_name" ]]; then
+    local exists_new
+    exists_new="$(sql_one "SELECT 1 FROM targets WHERE name='${new_esc}' LIMIT 1;")" || true
+    [[ -z "$exists_new" ]] || die "ERROR: Target exists: ${new_name}"
   fi
 
-  local total=0 due=0 skipped=0 ping_ok_count=0 ping_fail=0 sent=0 curl_fail=0 disabled=0
-  local queue_json="[]"
-  if [[ -n "$selected" ]]; then
-    # queue only selected
-    queue_json="$(python3 - <<PY 2>/dev/null
-import json
-s="$selected".split(",")
-s=[x.strip() for x in s if x.strip()]
-print(json.dumps(s))
-PY
-)"
+  local now
+  now="$(now_epoch)"
+
+  # Update targets (rename + values)
+  sql_exec "UPDATE targets
+            SET name='${new_esc}',
+                ip='${ip_esc}',
+                endpoint='${ep_esc}',
+                interval=${interval},
+                enabled=${enabled},
+                updated_at=${now}
+            WHERE name='${old_esc}';"
+
+  # runtime key rename if needed
+  if [[ "$old_name" != "$new_name" ]]; then
+    sql_exec "UPDATE runtime SET name='${new_esc}' WHERE name='${old_esc}';"
+  fi
+
+  # reflect enabled state into runtime status (best effort)
+  if [[ "$enabled" == "0" ]]; then
+    sql_exec "UPDATE runtime SET status='disabled' WHERE name='${new_esc}';"
   else
-    # queue all enabled targets
-    queue_json="$(python3 - <<PY 2>/dev/null
-import json
-cfg=open("$CONFIG_FILE","r",encoding="utf-8").read().splitlines()
-out=[]
-for line in cfg:
-  line=line.strip()
-  if not line or line.startswith("#"): continue
-  parts=line.split("|")
-  name=parts[0].strip()
-  enabled="1"
-  if len(parts)>=5:
-    enabled=parts[4].strip() or "1"
-  if enabled!="0":
-    out.append(name)
-print(json.dumps(out))
-PY
-)"
+    # don't force "up"; just set unknown
+    sql_exec "UPDATE runtime SET status='unknown' WHERE name='${new_esc}';"
   fi
 
-  write_runtime "running" "" 0 0 "$queue_json"
-
-  local done_count=0
-  local due_count=0
-
-  while IFS= read -r line; do
-    [[ -z "$line" || "$line" =~ ^# ]] && continue
-
-    local parsed name ip url interval enabled
-    parsed="$(parse_config_line "$line")"
-    IFS='|' read -r name ip url interval enabled <<<"$parsed"
-
-    # selection filter
-    if [[ -n "$selected" && -z "${sel[$name]+x}" ]]; then
-      continue
-    fi
-
-    total=$((total+1))
-
-    if [[ "$enabled" == "0" ]]; then
-      disabled=$((disabled+1))
-      continue
-    fi
-
-    local st next_due last_status last_ping last_sent last_lat
-    st="$(state_get_line "$name")"
-    if [[ -n "$st" ]]; then
-      IFS='|' read -r _n next_due last_status last_ping last_sent last_lat <<<"$st"
-      next_due="${next_due:-0}"
-    else
-      next_due="0"; last_status="unknown"; last_ping="0"; last_sent="0"; last_lat="0"
-    fi
-
-    if (( force == 0 )) && (( now < next_due )); then
-      skipped=$((skipped+1))
-      continue
-    fi
-
-    due=$((due+1))
-    due_count=$due
-
-    write_runtime "running" "$name" "$done_count" "$due_count" "$queue_json"
-
-    local ms
-    ms="$(ping_latency_ms "$ip" || true)"
-
-    if [[ -n "$ms" ]]; then
-      ping_ok_count=$((ping_ok_count+1))
-      last_status="up"
-      last_ping="$now"
-      last_lat="$ms"
-      lat_push "$name" "$ms"
-
-      if send_endpoint "$url"; then
-        sent=$((sent+1))
-        last_sent="$now"
-        log "OK name=$name ip=$ip latency=${ms}ms endpoint=sent"
-      else
-        curl_fail=$((curl_fail+1))
-        log "WARN name=$name ip=$ip latency=${ms}ms ping=ok endpoint=FAILED(curl)"
-      fi
-    else
-      ping_fail=$((ping_fail+1))
-      last_status="down"
-      last_ping="$now"
-      last_lat="0"
-      log "DOWN name=$name ip=$ip ping=failed endpoint=not_sent"
-    fi
-
-    next_due=$(( now + interval ))
-    state_set_line "${name}|${next_due}|${last_status}|${last_ping}|${last_sent}|${last_lat}"
-
-    done_count=$((done_count+1))
-    write_runtime "running" "$name" "$done_count" "$due_count" "$queue_json"
-  done < "$CONFIG_FILE"
-
-  write_runtime "idle" "" "$done_count" "$due_count" "$queue_json"
-
-  log "RUN summary total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail force=$force disabled=$disabled"
-  echo "OK: total=$total due=$due skipped=$skipped ping_ok=$ping_ok_count ping_fail=$ping_fail sent=$sent curl_fail=$curl_fail force=$force disabled=$disabled"
+  log_info "OK: Updated ${old_name} -> ${new_name}"
 }
 
-run_checks() {
-  require_root run
-  ensure_paths
-  run_checks_internal 0 ""
+cmd_test() {
+  ensure_exists
+  local name="${1:-}"
+  validate_name "$name" || die "ERROR: Invalid name"
+  local n_esc="${name//\'/\'\'}"
+
+  local row
+  row="$(sqlite3 -noheader -batch "${DB}" \
+    "SELECT ip, endpoint FROM targets WHERE name='${n_esc}' LIMIT 1;")" || true
+  [[ -n "$row" ]] || die "ERROR: Not found: ${name}"
+
+  local ip endpoint
+  IFS='|' read -r ip endpoint <<<"$row"
+
+  local ping_ok=0 ping_ms=-1
+  if ping -c 1 -W 1 "$ip" >/dev/null 2>&1; then
+    ping_ok=1
+    # crude RTT: use ping output if possible (not required)
+    ping_ms=0
+  fi
+
+  if [[ "$ping_ok" -eq 1 ]]; then
+    # curl endpoint
+    local code
+    code="$(curl -sS -o /dev/null -m 3 -w "%{http_code}" "$endpoint" || true)"
+    if [[ "$code" =~ ^2|3 ]]; then
+      echo "OK: ping_ok=1 curl_http=${code}"
+    else
+      echo "WARN: ping_ok=1 curl_http=${code}"
+    fi
+  else
+    echo "FAIL: ping_ok=0"
+  fi
 }
 
-run_now() {
-  require_root run-now
-  ensure_paths
+cmd_run_now() {
+  ensure_exists
 
-  local force="0"
   local targets_csv=""
+  local force=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --force) force="${2:-0}"; shift 2 ;;
-      --targets) targets_csv="${2:-}"; shift 2 ;;
-      *) shift 1 ;;
+      --targets)
+        targets_csv="${2:-}"
+        shift 2
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      *)
+        die "ERROR: Unknown arg: $1"
+        ;;
     esac
   done
 
-  run_checks_internal "$force" "$targets_csv"
-}
+  local start_ms end_ms dur_ms
+  start_ms="$(date +%s%3N 2>/dev/null || true)"
+  local start_epoch
+  start_epoch="$(now_epoch)"
 
-install_systemd() {
-  require_root install
-  ensure_paths
-  command -v systemctl >/dev/null 2>&1 || { echo "systemd not available"; exit 1; }
+  local total=0 due=0 skipped=0 ping_ok=0 ping_fail=0 sent=0 curl_fail=0 disabled=0
 
-  cp -f "$0" "$BIN_PATH"
-  chmod 755 "$BIN_PATH"
+  local now
+  now="$start_epoch"
 
-  cat > "$SERVICE_PATH" <<EOF
-[Unit]
-Description=5echo interheart - ping -> endpoint relay
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=$BIN_PATH run
-User=root
-EOF
-
-  cat > "$TIMER_PATH" <<EOF
-[Unit]
-Description=Run interheart every ${RUNNER_DEFAULT_SEC} seconds
-
-[Timer]
-OnBootSec=20
-OnUnitActiveSec=${RUNNER_DEFAULT_SEC}
-AccuracySec=2s
-Unit=${APP_NAME}.service
-
-[Install]
-WantedBy=timers.target
-EOF
-
-  systemctl daemon-reload
-  echo "Installed systemd: $APP_NAME.service + $APP_NAME.timer"
-  echo "Next: sudo $BIN_PATH enable-timer"
-}
-
-uninstall_systemd() {
-  require_root uninstall
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl disable --now "${APP_NAME}.timer" >/dev/null 2>&1 || true
-    rm -f "$SERVICE_PATH" "$TIMER_PATH"
-    systemctl daemon-reload || true
+  # Build target list
+  local list_sql
+  if [[ -n "$targets_csv" ]]; then
+    # selected targets => treat as force on those
+    IFS=',' read -ra arr <<<"$targets_csv"
+    local in_list=""
+    for t in "${arr[@]}"; do
+      t="$(echo "$t" | xargs)"
+      [[ -n "$t" ]] || continue
+      validate_name "$t" || die "ERROR: Invalid target name in --targets: $t"
+      local t_esc="${t//\'/\'\'}"
+      if [[ -z "$in_list" ]]; then in_list="'${t_esc}'"; else in_list="${in_list},'${t_esc}'"; fi
+    done
+    [[ -n "$in_list" ]] || die "ERROR: Empty --targets list"
+    list_sql="SELECT name, ip, endpoint, interval, enabled FROM targets WHERE name IN (${in_list}) ORDER BY name COLLATE NOCASE;"
+    force=1
+  else
+    list_sql="SELECT name, ip, endpoint, interval, enabled FROM targets ORDER BY name COLLATE NOCASE;"
   fi
-  rm -f "$BIN_PATH"
-  echo "Uninstalled. Config kept: $CONFIG_FILE"
-}
 
-enable_timer() {
-  require_root enable-timer
-  systemctl enable --now "${APP_NAME}.timer"
-  echo "Enabled: ${APP_NAME}.timer"
-}
+  # Iterate
+  sqlite3 -noheader -batch "${DB}" "${list_sql}" \
+  | while IFS='|' read -r name ip endpoint interval enabled; do
+      total=$((total+1))
 
-disable_timer() {
-  require_root disable-timer
-  systemctl disable --now "${APP_NAME}.timer"
-  echo "Disabled: ${APP_NAME}.timer"
-}
+      if [[ "$enabled" != "1" ]]; then
+        disabled=$((disabled+1))
+        skipped=$((skipped+1))
+        continue
+      fi
 
-sys_status() {
-  require_root sys-status
-  systemctl status "${APP_NAME}.timer" --no-pager || true
-  echo ""
-  journalctl -t "$APP_NAME" -n 25 --no-pager --output=cat || true
+      # due check
+      local next_due
+      next_due="$(sql_one "SELECT next_due FROM runtime WHERE name='${name//\'/\'\'}' LIMIT 1;" 2>/dev/null || true)"
+      next_due="${next_due:-0}"
+      local is_due=0
+
+      if [[ "$force" -eq 1 ]]; then
+        is_due=1
+      else
+        if [[ "$next_due" =~ ^[0-9]+$ && "$next_due" -gt 0 ]]; then
+          if [[ "$now" -ge "$next_due" ]]; then is_due=1; else is_due=0; fi
+        else
+          # first time: treat as due
+          is_due=1
+        fi
+      fi
+
+      if [[ "$is_due" -ne 1 ]]; then
+        skipped=$((skipped+1))
+        continue
+      fi
+
+      due=$((due+1))
+
+      # ping
+      local t0 t1 rtt_ms
+      t0="$(date +%s%3N 2>/dev/null || true)"
+      if ping -c 1 -W 1 "$ip" >/dev/null 2>&1; then
+        t1="$(date +%s%3N 2>/dev/null || true)"
+        if [[ -n "$t0" && -n "$t1" ]]; then
+          rtt_ms=$((t1 - t0))
+        else
+          rtt_ms=0
+        fi
+        ping_ok=$((ping_ok+1))
+
+        # curl endpoint on success
+        local http_code
+        http_code="$(curl -sS -o /dev/null -m 5 -w "%{http_code}" "$endpoint" || true)"
+        if [[ "$http_code" =~ ^2|3 ]]; then
+          sent=$((sent+1))
+          # status up
+          sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
+                    VALUES('${name//\'/\'\'}','up', $((now + interval)), ${now}, ${now}, ${rtt_ms});"
+          echo "run: ${name} ping_ok=1 curl_http=${http_code} rtt_ms=${rtt_ms}"
+        else
+          curl_fail=$((curl_fail+1))
+          # status down (endpoint)
+          sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
+                    VALUES('${name//\'/\'\'}','down', $((now + interval)), ${now}, ${now}, ${rtt_ms});"
+          echo "run: ${name} ping_ok=1 curl_fail=1 curl_http=${http_code} rtt_ms=${rtt_ms}"
+        fi
+      else
+        ping_fail=$((ping_fail+1))
+        # ping fail: down
+        sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
+                  VALUES('${name//\'/\'\'}','down', $((now + interval)), ${now}, 0, -1);"
+        echo "run: ${name} ping_ok=0"
+      fi
+    done
+
+  end_ms="$(date +%s%3N 2>/dev/null || true)"
+  if [[ -n "$start_ms" && -n "$end_ms" ]]; then
+    dur_ms=$((end_ms - start_ms))
+  else
+    dur_ms=$(( ($(now_epoch) - start_epoch) * 1000 ))
+  fi
+
+  # Print summary line (WebUI parses this)
+  echo "total=${total} due=${due} skipped=${skipped} ping_ok=${ping_ok} ping_fail=${ping_fail} sent=${sent} curl_fail=${curl_fail} disabled=${disabled} force=${force} duration_ms=${dur_ms}"
 }
 
 main() {
-  cmd="${1:-}"
+  local cmd="${1:-}"
   shift || true
 
   case "$cmd" in
-    add) add_target "${1:-}" "${2:-}" "${3:-}" "${4:-$DEFAULT_INTERVAL_SEC}" ;;
-    remove) remove_target "${1:-}" ;;
-    list) list_targets ;;
-    run) run_checks ;;
-    run-now) run_now "$@" ;;
-    test) test_target "${1:-}" ;;
-    set-target-interval) set_target_interval "${1:-}" "${2:-}" ;;
-    disable) disable_target "${1:-}" ;;
-    enable) enable_target "${1:-}" ;;
-    status) status_targets ;;
-    install) install_systemd ;;
-    uninstall) uninstall_systemd ;;
-    enable-timer) enable_timer ;;
-    disable-timer) disable_timer ;;
-    sys-status) sys_status ;;
-    ""|help|-h|--help) usage ;;
-    *) echo "Unknown command: $cmd"; usage; exit 1 ;;
+    ""|-h|--help|help)
+      usage
+      exit 0
+      ;;
+    init-db)
+      init_db
+      echo "OK: DB ready at ${DB}"
+      ;;
+    add)
+      [[ $# -ge 4 ]] || die "ERROR: Usage: interheart add <name> <ip> <endpoint> <interval_seconds>"
+      cmd_add "$1" "$2" "$3" "$4"
+      ;;
+    remove)
+      [[ $# -ge 1 ]] || die "ERROR: Usage: interheart remove <name>"
+      cmd_remove "$1"
+      ;;
+    list)
+      cmd_list
+      ;;
+    status)
+      cmd_status
+      ;;
+    get)
+      [[ $# -ge 1 ]] || die "ERROR: Usage: interheart get <name>"
+      cmd_get "$1"
+      ;;
+    edit)
+      [[ $# -ge 6 ]] || die "ERROR: Usage: interheart edit <old_name> <new_name> <ip> <endpoint> <interval_seconds> <enabled 0|1>"
+      cmd_edit "$1" "$2" "$3" "$4" "$5" "$6"
+      ;;
+    disable)
+      [[ $# -ge 1 ]] || die "ERROR: Usage: interheart disable <name>"
+      cmd_disable "$1"
+      ;;
+    enable)
+      [[ $# -ge 1 ]] || die "ERROR: Usage: interheart enable <name>"
+      cmd_enable "$1"
+      ;;
+    set-target-interval)
+      [[ $# -ge 2 ]] || die "ERROR: Usage: interheart set-target-interval <name> <interval_seconds>"
+      cmd_set_interval "$1" "$2"
+      ;;
+    test)
+      [[ $# -ge 1 ]] || die "ERROR: Usage: interheart test <name>"
+      cmd_test "$1"
+      ;;
+    run-now)
+      cmd_run_now "$@"
+      ;;
+    *)
+      die "ERROR: Unknown command: ${cmd} (try: interheart --help)"
+      ;;
   esac
 }
 
