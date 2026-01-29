@@ -81,10 +81,7 @@
           </div>
         </div>
 
-        <div class="metric">
-          <b>Live output</b>
-          <div class="logbox" id="runOutBox" style="min-height:220px;">(waiting…)</div>
-        </div>
+        <!-- Live output removed (v4.8.7): progress + summary is enough -->
       </div>
 
       <div class="footer footer--modal">
@@ -188,7 +185,40 @@
         </div>
       </div>
       <div class="modal-body">
-        <div class="logbox" id="infoBox" style="min-height:260px;">Loading…</div>
+        <div class="info-grid">
+          <div class="metric">
+            <b>Basics</b>
+            <div class="kv"><span>Name</span><code id="infoName">-</code></div>
+            <div class="kv"><span>IP</span><code id="infoIp">-</code></div>
+            <div class="kv"><span>Enabled</span><code id="infoEnabled">-</code></div>
+            <div class="kv"><span>Interval</span><code id="infoInterval">-</code></div>
+          </div>
+
+          <div class="metric">
+            <b>Endpoint</b>
+            <div class="kv"><span>URL</span><code id="infoEndpoint" style="word-break:break-all;">-</code></div>
+            <div class="hint" id="infoEndpointHint" style="margin-top:8px;">Shown as stored in interheart</div>
+          </div>
+
+          <div class="metric">
+            <b>Live status</b>
+            <div class="kv"><span>Status</span><code id="infoStatus">-</code></div>
+            <div class="kv"><span>Last ping</span><code id="infoLastPing">-</code></div>
+            <div class="kv"><span>Last response</span><code id="infoLastResp">-</code></div>
+            <div class="kv"><span>Latency</span><code id="infoLatency">-</code></div>
+          </div>
+        </div>
+
+        <div class="metric">
+          <b>Uptime (history samples)</b>
+          <div class="uptime-wrap" id="uptimeWrap">
+            <div class="uptime-row"><span>24h</span><div class="bar"><div id="u24"></div></div><code id="u24t">-</code></div>
+            <div class="uptime-row"><span>7d</span><div class="bar"><div id="u7"></div></div><code id="u7t">-</code></div>
+            <div class="uptime-row"><span>30d</span><div class="bar"><div id="u30"></div></div><code id="u30t">-</code></div>
+            <div class="uptime-row"><span>90d</span><div class="bar"><div id="u90"></div></div><code id="u90t">-</code></div>
+          </div>
+          <div class="hint" style="margin-top:10px;">Uptime is calculated from samples recorded when interheart runs or when you click Test.</div>
+        </div>
       </div>
       <div class="footer footer--modal">
         <div class="hint">interheart <code>{{ ui_version }}</code></div>
@@ -206,12 +236,13 @@
           <span id="editTitle">-</span>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-ghost btn-mini" id="btnCloseEdit" type="button">Close</button>
+          <!-- Close removed: Cancel is enough -->
         </div>
       </div>
       <div class="modal-body">
         <form id="editForm">
           <input type="hidden" name="old_name" id="editOldName">
+          <input type="hidden" name="enabled" id="editEnabled" value="1">
           <div class="grid3">
             <div class="field">
               <label>Name</label>
@@ -232,17 +263,15 @@
             <input class="input" name="endpoint" id="editEndpoint" required>
           </div>
 
-          <div class="field" style="margin-top:12px;">
-            <label>Enabled</label>
-            <select class="input" name="enabled" id="editEnabled">
-              <option value="1">Enabled</option>
-              <option value="0">Disabled</option>
-            </select>
-          </div>
-
-          <div class="modal-foot-actions">
-            <button class="btn btn-primary" type="submit" id="btnEditSubmit">Save</button>
-            <button class="btn btn-ghost" type="button" id="btnEditCancel">Cancel</button>
+          <div class="modal-foot-actions modal-foot-actions--split">
+            <div class="left">
+              <button class="btn btn-ghost" type="button" id="btnEditEnable">Enable</button>
+              <button class="btn btn-ghost" type="button" id="btnEditDisable">Disable</button>
+            </div>
+            <div class="right">
+              <button class="btn btn-primary" type="submit" id="btnEditSubmit">Save</button>
+              <button class="btn btn-ghost" type="button" id="btnEditCancel">Cancel</button>
+            </div>
           </div>
         </form>
       </div>
@@ -286,7 +315,7 @@
         </thead>
         <tbody>
         {% for t in targets %}
-          <tr data-name="{{ t.name }}" data-ip="{{ t.ip }}" data-status="{{ t.status }}"
+          <tr data-name="{{ t.name }}" data-ip="{{ t.ip }}" data-status="{{ t.status }}" data-enabled="{{ t.enabled }}"
               data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
             <td><code>{{ t.name }}</code></td>
             <td><code>{{ t.ip }}</code></td>

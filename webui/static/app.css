@@ -41,7 +41,9 @@ body{ margin:0; font-family:var(--sans); color:var(--text); background: var(--bg
   border-radius:var(--radius);
   box-shadow: var(--shadow);
   padding:16px;
-  overflow:hidden;
+  /* Allow dropdown menus to overflow outside the table/card (fixes Actions menu
+     being hidden when there are few rows). */
+  overflow:visible;
   backdrop-filter: blur(10px);
 }
 .hint{color:rgba(255,255,255,.52);font-size:12px}
@@ -91,7 +93,7 @@ code, .mono{font-family:var(--mono);font-size:12px;color:rgba(255,255,255,.88)}
 
 .right-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
-table{width:100%;border-collapse:collapse;border-radius:14px;overflow:hidden}
+table{width:100%;border-collapse:collapse;border-radius:14px;overflow:visible}
 th,td{padding:10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
 th{color:var(--muted);font-weight:850;text-align:left}
 
@@ -140,10 +142,38 @@ th{color:var(--muted);font-weight:850;text-align:left}
   box-shadow: 0 22px 60px rgba(0,0,0,.70);
   padding:6px;
   display:none;
-  z-index:50;
+  z-index:2000;
   transform-origin: top right;
   animation: pop .14s ease;
 }
+
+/* Row blink on ping */
+tr.flash-up{animation: flashUp 1s ease-in-out;}
+tr.flash-down{animation: flashDown 1s ease-in-out;}
+@keyframes flashUp{
+  0%{background: rgba(53,211,159,.0)}
+  25%{background: rgba(53,211,159,.12)}
+  70%{background: rgba(53,211,159,.06)}
+  100%{background: rgba(53,211,159,.0)}
+}
+@keyframes flashDown{
+  0%{background: rgba(255,59,92,.0)}
+  25%{background: rgba(255,59,92,.12)}
+  70%{background: rgba(255,59,92,.06)}
+  100%{background: rgba(255,59,92,.0)}
+}
+
+/* Info modal layout */
+.info-grid{display:grid;grid-template-columns:1fr;gap:12px}
+.kv{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px}
+.kv span{color:rgba(255,255,255,.58);font-size:12px}
+.uptime-wrap{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.uptime-row{display:grid;grid-template-columns: 44px 1fr auto;gap:10px;align-items:center}
+.uptime-row code{min-width:74px;text-align:right}
+
+/* Edit modal footer split */
+.modal-foot-actions--split{justify-content:space-between;align-items:center}
+.modal-foot-actions--split .left, .modal-foot-actions--split .right{display:flex;gap:10px;align-items:center}
 @keyframes pop{from{transform:translateY(-4px) scale(.98);opacity:.70}to{transform:translateY(0) scale(1);opacity:1}}
 .menu.show .menu-dd{display:block}
 .menu-item{

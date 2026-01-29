@@ -159,16 +159,20 @@ def parse_list_targets(list_output: str):
         if not line.strip():
             continue
         parts = line.split()
-        if len(parts) < 4:
+        # Expected columns from CLI `list`:
+        # NAME IP INTERVAL ENABLED ENDPOINT
+        if len(parts) < 5:
             continue
         name = parts[0]
         ip = parts[1]
         interval = parts[2].replace("s", "").strip()
-        endpoint_masked = parts[3]
+        enabled = parts[3]
+        endpoint_masked = parts[4]
         targets.append({
             "name": name,
             "ip": ip,
             "interval": int(interval) if interval.isdigit() else 60,
+            "enabled": 1 if str(enabled).strip() == "1" else 0,
             "endpoint_masked": endpoint_masked
         })
     return targets
@@ -187,16 +191,20 @@ def parse_status(status_output: str):
         if not line.strip():
             continue
         parts = line.split()
-        if len(parts) < 6:
+        # Expected columns from CLI `status`:
+        # NAME STATUS NEXT_IN NEXT_DUE LAST_PING LAST_RESP LAT_MS
+        if len(parts) < 7:
             continue
         name = parts[0]
         status = parts[1]
         last_ping = parts[4]
         last_sent = parts[5]
+        lat_ms = parts[6]
         state[name] = {
             "status": status,
             "last_ping_epoch": int(last_ping) if last_ping.isdigit() else 0,
             "last_sent_epoch": int(last_sent) if last_sent.isdigit() else 0,
+            "last_rtt_ms": int(lat_ms) if str(lat_ms).lstrip("-").isdigit() else -1,
         }
     return state
 
@@ -227,14 +235,128 @@ def merged_targets():
             "ip": t["ip"],
             "interval": t["interval"],
             "status": status,
+            "enabled": int(t.get("enabled") or 0),
             "last_ping_human": human_ts(last_ping_epoch),
             "last_response_human": human_ts(last_sent_epoch),
             "last_ping_epoch": last_ping_epoch,
             "last_response_epoch": last_sent_epoch,
+            "last_rtt_ms": int(st.get("last_rtt_ms", -1) or -1),
             # kept for info modal / masking
             "endpoint_masked": t.get("endpoint_masked") or "-",
         })
     return merged
+
+
+# ---- API: info (DB-backed, uses history samples if present) ----
+def _safe_int(v, default=0):
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+
+def compute_uptime_stats(db_path: Path, name: str, seconds: int):
+    """Return {samples, up, down, pct, avg_rtt_ms} for the given window.
+
+    Uses `history` table if present. If missing/empty, returns None.
+    """
+    import sqlite3
+
+    if not db_path.exists():
+        return None
+
+    since = int(time.time()) - int(seconds)
+    try:
+        con = sqlite3.connect(str(db_path))
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+        # Check table exists
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='history' LIMIT 1;")
+        if not cur.fetchone():
+            return None
+
+        cur.execute(
+            """
+            SELECT
+              SUM(CASE WHEN status='up' THEN 1 ELSE 0 END) AS up_cnt,
+              SUM(CASE WHEN status='down' THEN 1 ELSE 0 END) AS down_cnt,
+              AVG(CASE WHEN rtt_ms >= 0 THEN rtt_ms ELSE NULL END) AS avg_rtt
+            FROM history
+            WHERE name=? AND ts>=? AND status IN ('up','down');
+            """,
+            (name, since),
+        )
+        row = cur.fetchone()
+        up_cnt = _safe_int(row["up_cnt"], 0)
+        down_cnt = _safe_int(row["down_cnt"], 0)
+        samples = up_cnt + down_cnt
+        if samples <= 0:
+            return None
+
+        pct = round((up_cnt / samples) * 100.0, 2)
+        avg_rtt = row["avg_rtt"]
+        avg_rtt_ms = int(round(avg_rtt)) if avg_rtt is not None else None
+        return {
+            "samples": samples,
+            "up": up_cnt,
+            "down": down_cnt,
+            "pct": pct,
+            "avg_rtt_ms": avg_rtt_ms,
+        }
+    except Exception:
+        return None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+@APP.get("/api/info")
+def api_info():
+    name = (request.args.get("name") or "").strip()
+    if not name:
+        return die_json("Missing name", 400)
+
+    # Get base target info via CLI (source of truth)
+    rc, out = run_cmd(["get", name])
+    if rc != 0:
+        return jsonify({"ok": False, "message": out or "Not found"})
+
+    # CLI get returns: name|ip|endpoint|interval|enabled
+    parts = (out or "").split("|")
+    ip = parts[1] if len(parts) > 1 else "-"
+    endpoint = parts[2] if len(parts) > 2 else "-"
+    interval = _safe_int(parts[3] if len(parts) > 3 else 60, 60)
+    enabled = _safe_int(parts[4] if len(parts) > 4 else 1, 1)
+
+    # Attach current runtime-ish view from /state aggregation
+    cur = None
+    try:
+        cur = next((t for t in merged_targets() if t.get("name") == name), None)
+    except Exception:
+        cur = None
+
+    windows = [
+        ("24h", 24 * 3600),
+        ("7d", 7 * 24 * 3600),
+        ("30d", 30 * 24 * 3600),
+        ("90d", 90 * 24 * 3600),
+    ]
+    uptime = {}
+    for k, secs in windows:
+        uptime[k] = compute_uptime_stats(DB_PATH, name, secs)
+
+    return jsonify({
+        "ok": True,
+        "name": name,
+        "ip": ip,
+        "endpoint": endpoint,
+        "interval": interval,
+        "enabled": 1 if enabled else 0,
+        "current": cur or {},
+        "uptime": uptime,
+    })
 
 # ---- Routes ----
 @APP.get("/")

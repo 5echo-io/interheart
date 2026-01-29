@@ -70,6 +70,16 @@ CREATE TABLE IF NOT EXISTS runtime (
   last_rtt_ms INTEGER NOT NULL DEFAULT -1
 );
 
+CREATE TABLE IF NOT EXISTS history (
+  ts INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL,   -- 'up' | 'down' | 'disabled'
+  rtt_ms INTEGER NOT NULL DEFAULT -1,
+  curl_http INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_name_ts ON history(name, ts);
+
 CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);
 CREATE INDEX IF NOT EXISTS idx_runtime_next_due ON runtime(next_due);
 SQL
@@ -404,29 +414,56 @@ cmd_test() {
 
   local row
   row="$(sqlite3 -noheader -batch "${DB}" \
-    "SELECT ip, endpoint FROM targets WHERE name='${n_esc}' LIMIT 1;")" || true
+    "SELECT ip, endpoint, interval, enabled FROM targets WHERE name='${n_esc}' LIMIT 1;")" || true
   [[ -n "$row" ]] || die "ERROR: Not found: ${name}"
 
-  local ip endpoint
-  IFS='|' read -r ip endpoint <<<"$row"
+  local ip endpoint interval enabled
+  IFS='|' read -r ip endpoint interval enabled <<<"$row"
 
-  local ping_ok=0 ping_ms=-1
+  local now
+  now="$(now_epoch)"
+  # Keep history reasonably small (90 days)
+  sql_exec "DELETE FROM history WHERE ts < $((now - 90*24*3600));" >/dev/null 2>&1 || true
+
+  local ping_ok=0 rtt_ms=-1
+  local t0 t1
+  t0="$(date +%s%3N 2>/dev/null || true)"
   if ping -c 1 -W 1 "$ip" >/dev/null 2>&1; then
     ping_ok=1
-    # crude RTT: use ping output if possible (not required)
-    ping_ms=0
+    t1="$(date +%s%3N 2>/dev/null || true)"
+    if [[ -n "$t0" && -n "$t1" ]]; then rtt_ms=$((t1 - t0)); else rtt_ms=0; fi
+  fi
+
+  if [[ "$enabled" != "1" ]]; then
+    # Don't mutate schedule for disabled targets, but still allow a ping test.
+    :
   fi
 
   if [[ "$ping_ok" -eq 1 ]]; then
     # curl endpoint
     local code
-    code="$(curl -sS -o /dev/null -m 3 -w "%{http_code}" "$endpoint" || true)"
+    code="$(curl -sS -o /dev/null -m 5 -w "%{http_code}" "$endpoint" || true)"
     if [[ "$code" =~ ^2|3 ]]; then
+      # Mark up
+      sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
+                VALUES('${n_esc}','up', $((now + interval)), ${now}, ${now}, ${rtt_ms});" >/dev/null 2>&1 || true
+      sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
+                VALUES(${now},'${n_esc}','up',${rtt_ms},${code:-0});" >/dev/null 2>&1 || true
       echo "OK: ping_ok=1 curl_http=${code}"
     else
+      # Mark down (endpoint)
+      sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
+                VALUES('${n_esc}','down', $((now + interval)), ${now}, ${now}, ${rtt_ms});" >/dev/null 2>&1 || true
+      sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
+                VALUES(${now},'${n_esc}','down',${rtt_ms},${code:-0});" >/dev/null 2>&1 || true
       echo "WARN: ping_ok=1 curl_http=${code}"
     fi
   else
+    # Mark down (ping)
+    sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
+              VALUES('${n_esc}','down', $((now + interval)), ${now}, 0, -1);" >/dev/null 2>&1 || true
+    sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
+              VALUES(${now},'${n_esc}','down',-1,0);" >/dev/null 2>&1 || true
     echo "FAIL: ping_ok=0"
   fi
 }
@@ -463,6 +500,9 @@ cmd_run_now() {
   local now
   now="$start_epoch"
 
+  # Keep history reasonably small (90 days)
+  sql_exec "DELETE FROM history WHERE ts < $((now - 90*24*3600));" >/dev/null 2>&1 || true
+
   # Build target list
   local list_sql
   if [[ -n "$targets_csv" ]]; then
@@ -484,8 +524,7 @@ cmd_run_now() {
   fi
 
   # Iterate
-  sqlite3 -noheader -batch "${DB}" "${list_sql}" \
-  | while IFS='|' read -r name ip endpoint interval enabled; do
+  while IFS='|' read -r name ip endpoint interval enabled; do
       total=$((total+1))
 
       if [[ "$enabled" != "1" ]]; then
@@ -538,12 +577,16 @@ cmd_run_now() {
           # status up
           sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
                     VALUES('${name//\'/\'\'}','up', $((now + interval)), ${now}, ${now}, ${rtt_ms});"
+          sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
+                    VALUES(${now},'${name//\'/\'\'}','up',${rtt_ms},${http_code:-0});" >/dev/null 2>&1 || true
           echo "run: ${name} ping_ok=1 curl_http=${http_code} rtt_ms=${rtt_ms}"
         else
           curl_fail=$((curl_fail+1))
           # status down (endpoint)
           sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
                     VALUES('${name//\'/\'\'}','down', $((now + interval)), ${now}, ${now}, ${rtt_ms});"
+          sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
+                    VALUES(${now},'${name//\'/\'\'}','down',${rtt_ms},${http_code:-0});" >/dev/null 2>&1 || true
           echo "run: ${name} ping_ok=1 curl_fail=1 curl_http=${http_code} rtt_ms=${rtt_ms}"
         fi
       else
@@ -551,9 +594,11 @@ cmd_run_now() {
         # ping fail: down
         sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
                   VALUES('${name//\'/\'\'}','down', $((now + interval)), ${now}, 0, -1);"
+        sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
+                  VALUES(${now},'${name//\'/\'\'}','down',-1,0);" >/dev/null 2>&1 || true
         echo "run: ${name} ping_ok=0"
       fi
-    done
+    done < <(sqlite3 -noheader -batch "${DB}" "${list_sql}")
 
   end_ms="$(date +%s%3N 2>/dev/null || true)"
   if [[ -n "$start_ms" && -n "$end_ms" ]]; then

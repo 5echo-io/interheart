@@ -179,23 +179,81 @@
   const infoModal = $("#infoModal");
   const btnCloseInfo = $("#btnCloseInfo");
   const infoTitle = $("#infoTitle");
-  const infoBox = $("#infoBox");
+  const infoName = $("#infoName");
+  const infoIp = $("#infoIp");
+  const infoEnabled = $("#infoEnabled");
+  const infoInterval = $("#infoInterval");
+  const infoEndpoint = $("#infoEndpoint");
+  const infoStatus = $("#infoStatus");
+  const infoLastPing = $("#infoLastPing");
+  const infoLastResp = $("#infoLastResp");
+  const infoLatency = $("#infoLatency");
+
+  const u24 = $("#u24");
+  const u7 = $("#u7");
+  const u30 = $("#u30");
+  const u90 = $("#u90");
+  const u24t = $("#u24t");
+  const u7t = $("#u7t");
+  const u30t = $("#u30t");
+  const u90t = $("#u90t");
 
   btnCloseInfo?.addEventListener("click", () => hide(infoModal));
   infoModal?.addEventListener("click", (e) => { if (e.target === infoModal) hide(infoModal); });
 
+  function setUptimeRow(barEl, textEl, stat){
+    if (!barEl || !textEl) return;
+    if (!stat){
+      barEl.style.width = "0%";
+      textEl.textContent = "-";
+      return;
+    }
+    const pct = Number(stat.pct ?? 0);
+    barEl.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    const s = `${pct}% (${stat.up}/${stat.samples})`;
+    const rtt = (stat.avg_rtt_ms === null || stat.avg_rtt_ms === undefined) ? "" : ` • avg ${stat.avg_rtt_ms}ms`;
+    textEl.textContent = s + rtt;
+  }
+
   async function openInfo(name){
     infoTitle.textContent = name;
-    infoBox.textContent = "Loading…";
     show(infoModal);
-    const data = await apiGet(`/api/get?name=${encodeURIComponent(name)}`);
-    infoBox.textContent = data.message || "(empty)";
+
+    // Reset
+    [infoName,infoIp,infoEnabled,infoInterval,infoEndpoint,infoStatus,infoLastPing,infoLastResp,infoLatency].forEach(el => { if (el) el.textContent = "-"; });
+    [u24,u7,u30,u90].forEach(el => { if (el) el.style.width = "0%"; });
+    [u24t,u7t,u30t,u90t].forEach(el => { if (el) el.textContent = "-"; });
+
+    const data = await apiGet(`/api/info?name=${encodeURIComponent(name)}`);
+    if (!data || !data.ok){
+      toast("Error", data?.message || "Failed to load target information");
+      return;
+    }
+
+    infoName.textContent = data.name || name;
+    infoIp.textContent = data.ip || "-";
+    infoEnabled.textContent = (data.enabled ? "Yes" : "No");
+    infoInterval.textContent = String(data.interval ?? "-");
+    infoEndpoint.textContent = data.endpoint || "-";
+
+    const cur = data.current || {};
+    infoStatus.textContent = (cur.status || "unknown").toUpperCase();
+    infoLastPing.textContent = cur.last_ping_human || "-";
+    infoLastResp.textContent = cur.last_response_human || "-";
+    infoLatency.textContent = (cur.last_rtt_ms === undefined || cur.last_rtt_ms === null || Number(cur.last_rtt_ms) < 0) ? "-" : `${cur.last_rtt_ms} ms`;
+
+    const up = data.uptime || {};
+    setUptimeRow(u24, u24t, up["24h"]);
+    setUptimeRow(u7, u7t, up["7d"]);
+    setUptimeRow(u30, u30t, up["30d"]);
+    setUptimeRow(u90, u90t, up["90d"]);
   }
 
   // ---- Edit modal ----
   const editModal = $("#editModal");
-  const btnCloseEdit = $("#btnCloseEdit");
   const btnEditCancel = $("#btnEditCancel");
+  const btnEditEnable = $("#btnEditEnable");
+  const btnEditDisable = $("#btnEditDisable");
   const editForm = $("#editForm");
   const editTitle = $("#editTitle");
   const editOldName = $("#editOldName");
@@ -208,7 +266,6 @@
 
   function closeEdit(){ hide(editModal); }
 
-  btnCloseEdit?.addEventListener("click", closeEdit);
   btnEditCancel?.addEventListener("click", closeEdit);
   editModal?.addEventListener("click", (e) => { if (e.target === editModal) closeEdit(); });
 
@@ -225,15 +282,41 @@
     editIp.value = ip;
     editInterval.value = row ? (row.querySelector(".interval-input")?.getAttribute("data-interval") || "60") : "60";
 
-    // Try to extract endpoint from /api/get output (raw)
-    const data = await apiGet(`/api/get?name=${encodeURIComponent(name)}`);
-    const msg = data.message || "";
-    const m = msg.match(/https?:\/\/\S+/);
-    editEndpoint.value = m ? m[0] : "";
-    // Enabled: if output mentions "enabled=0" etc. If not, keep 1.
-    const m2 = msg.match(/enabled\s*[:=]\s*(0|1)/i);
-    editEnabled.value = m2 ? m2[1] : "1";
+    // Pull current values via /api/info (clean fields)
+    const data = await apiGet(`/api/info?name=${encodeURIComponent(name)}`);
+    if (data && data.ok){
+      editEndpoint.value = data.endpoint || "";
+      editEnabled.value = data.enabled ? "1" : "0";
+    } else {
+      editEndpoint.value = "";
+      editEnabled.value = "1";
+    }
+
+    // Toggle Enable/Disable buttons
+    const isEnabled = editEnabled.value === "1";
+    if (btnEditEnable) btnEditEnable.style.display = isEnabled ? "none" : "inline-flex";
+    if (btnEditDisable) btnEditDisable.style.display = isEnabled ? "inline-flex" : "none";
   }
+
+  async function setEnabledFromEdit(enabled){
+    const name = editOldName.value;
+    if (!name) return;
+    const fd = new FormData();
+    fd.set("name", name);
+    try{
+      const data = await apiPost(enabled ? "/api/enable" : "/api/disable", fd);
+      toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+      editEnabled.value = enabled ? "1" : "0";
+      if (btnEditEnable) btnEditEnable.style.display = enabled ? "none" : "inline-flex";
+      if (btnEditDisable) btnEditDisable.style.display = enabled ? "inline-flex" : "none";
+      await refreshState(true);
+    }catch(e){
+      toast("Error", e?.message || "Failed");
+    }
+  }
+
+  btnEditEnable?.addEventListener("click", () => setEnabledFromEdit(true));
+  btnEditDisable?.addEventListener("click", () => setEnabledFromEdit(false));
 
   editForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -401,12 +484,37 @@
       const map = new Map();
       (data.targets || []).forEach(t => map.set(t.name, t));
 
+      function setActionVisibility(row, enabled){
+        // Dropdown Enable/Disable
+        const btnEnable = row.querySelector('.menu-item[data-action="enable"]');
+        const btnDisable = row.querySelector('.menu-item[data-action="disable"]');
+        if (btnEnable) btnEnable.style.display = enabled ? "none" : "block";
+        if (btnDisable) btnDisable.style.display = enabled ? "block" : "none";
+      }
+
       $$("tr[data-name]").forEach(row => {
         const name = row.getAttribute("data-name");
         const t = map.get(name);
         if (!t) return;
 
         setStatusChip(row, t.status);
+
+        // Track enabled + keep Actions menu consistent
+        const enabled = Number(t.enabled ?? 0) === 1 && String(t.status || "") !== "disabled";
+        row.setAttribute("data-enabled", enabled ? "1" : "0");
+        setActionVisibility(row, enabled);
+
+        // Blink row for 1s when a new ping happens
+        const prevPing = Number(row.getAttribute("data-last-ping") || "0");
+        const nextPing = Number(t.last_ping_epoch || 0);
+        if (nextPing && nextPing !== prevPing){
+          row.setAttribute("data-last-ping", String(nextPing));
+          row.classList.remove("flash-up","flash-down");
+          row.classList.add((t.status === "up") ? "flash-up" : "flash-down");
+          setTimeout(() => row.classList.remove("flash-up","flash-down"), 1000);
+        }
+        const nextResp = Number(t.last_response_epoch || 0);
+        row.setAttribute("data-last-resp", String(nextResp));
 
         flashIfChanged(row.querySelector(".last-ping"), t.last_ping_human || "-");
         flashIfChanged(row.querySelector(".last-resp"), t.last_response_human || "-");
@@ -434,7 +542,6 @@
   const runTitleMeta = $("#runTitleMeta");
   const runLive = $("#runLive");
   const runLiveText = $("#runLiveText");
-  const runOutBox = $("#runOutBox");
 
   const mTotal = $("#mTotal");
   const mDue = $("#mDue");
@@ -458,7 +565,6 @@
     runTitleMeta.textContent = "running…";
     runLive.style.display = "inline-flex";
     runLiveText.textContent = "Running…";
-    runOutBox.textContent = "(starting…)";
 
     mTotal.textContent = "-";
     mDue.textContent = "-";
@@ -473,23 +579,33 @@
   }
 
   async function pollRun(){
-    // show output live and update summary when present
-    const out = await apiGet("/api/run-output?lines=160");
-    if (out && out.ok){
-      runOutBox.textContent = out.text || "(no output yet)";
-      const s = out.summary;
-      if (s){
-        mTotal.textContent = String(s.total ?? "-");
-        mDue.textContent = String(s.due ?? "-");
-        mSkipped.textContent = String(s.skipped ?? "-");
-        mOk.textContent = String(s.ping_ok ?? "-");
-        mFail.textContent = String(s.ping_fail ?? "-");
-        mSent.textContent = String(s.sent ?? "-");
-        mCurlFail.textContent = String(s.curl_fail ?? "-");
-        setBar(Number(s.due || 0), Number(s.due || 0));
-        runDoneLine.textContent = `done: ${Number(s.due||0)} / ${Number(s.due||0)}`;
+    // Use output tail only for progress counting (no live output UI)
+    let outText = "";
+    let summary = null;
+    try{
+      const out = await apiGet("/api/run-output?lines=220");
+      if (out && out.ok){
+        outText = out.text || "";
+        summary = out.summary || null;
       }
+    }catch(e){ /* ignore */ }
+
+    // Progress: count completed target lines (`run: <name> ...`)
+    const done = (outText.match(/^run:\s+/gm) || []).length;
+
+    // If summary exists (usually at end), prefer it
+    const due = summary ? Number(summary.due || 0) : Math.max(done, 0);
+    if (summary){
+      mTotal.textContent = String(summary.total ?? "-");
+      mDue.textContent = String(summary.due ?? "-");
+      mSkipped.textContent = String(summary.skipped ?? "-");
+      mOk.textContent = String(summary.ping_ok ?? "-");
+      mFail.textContent = String(summary.ping_fail ?? "-");
+      mSent.textContent = String(summary.sent ?? "-");
+      mCurlFail.textContent = String(summary.curl_fail ?? "-");
     }
+    setBar(done, due);
+    runDoneLine.textContent = `done: ${done} / ${due}`;
 
     const st = await apiGet("/api/run-status");
     if (st && st.running){
@@ -546,6 +662,8 @@
   attachIntervalHandlers();
   attachMenuActions();
   applyTargetFilter();
+  // Ensure Enable/Disable visibility + row datasets are synced immediately
+  refreshState(true);
   setInterval(() => refreshState(false), 2000);
 
   // ESC closes modals
