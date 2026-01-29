@@ -39,34 +39,30 @@ RUN_META_FILE = os.path.join(STATE_DIR, "run_meta.json")
 RUN_OUT_FILE = os.path.join(STATE_DIR, "run_last_output.txt")
 
 def ensure_state_dir():
-    """
-    Ensure runtime paths exist. WebUI is expected to run as root via systemd in v4.6.0,
-    so it can safely create/write in /var/lib/interheart without sudo.
-    """
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
+        # Make state dir + files readable/writable by webui user (www-data) in typical setups
+        # (local UI only; acceptable tradeoff)
+        try:
+            os.chmod(STATE_DIR, 0o777)
+        except Exception:
+            pass
+
         for p in [RUNTIME_FILE, RUN_META_FILE, RUN_OUT_FILE]:
             if not os.path.exists(p):
                 with open(p, "w", encoding="utf-8") as f:
                     f.write("")
-        try:
-            os.chmod(RUNTIME_FILE, 0o644)
-            os.chmod(RUN_META_FILE, 0o644)
-            os.chmod(RUN_OUT_FILE, 0o644)
-        except Exception:
-            pass
+            try:
+                os.chmod(p, 0o666)
+            except Exception:
+                pass
     except Exception:
         pass
 
 ensure_state_dir()
 
 def run_cmd(args):
-    """
-    v4.6.0: NO sudo here.
-    WebUI runs as root (systemd service) for local-only setups, so we can call the CLI directly.
-    This avoids sudo password prompts / TTY issues.
-    """
-    cmd = [CLI] + args
+    cmd = ["sudo", CLI] + args
     p = subprocess.run(cmd, capture_output=True, text=True)
     out = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
     return p.returncode, out.strip()
@@ -86,16 +82,19 @@ def parse_list_targets(list_output: str):
         if not line.strip():
             continue
         parts = line.split()
-        if len(parts) < 4:
+        # New list format includes ENABLED column: NAME IP INTERVAL ENABLED ENDPOINT
+        if len(parts) < 5:
             continue
         name = parts[0]
         ip = parts[1]
         interval = parts[2].replace("s", "").strip()
-        endpoint_masked = parts[3]
+        enabled = parts[3].strip()
+        endpoint_masked = parts[4]
         targets.append({
             "name": name,
             "ip": ip,
             "interval": int(interval) if interval.isdigit() else 60,
+            "enabled": True if enabled == "1" else False,
             "endpoint_masked": endpoint_masked
         })
     return targets
@@ -104,7 +103,7 @@ def parse_status(status_output: str):
     state = {}
     in_table = False
     for line in status_output.splitlines():
-        if line.startswith("--------------------------------------------------------------------------------------------------------------"):
+        if line.startswith("----------------------------------------------------------------------------------------------------------------------------"):
             in_table = True
             continue
         if not in_table:
@@ -115,16 +114,19 @@ def parse_status(status_output: str):
             continue
 
         parts = line.split()
-        if len(parts) < 6:
+        # NAME STATUS NEXT_IN NEXT_DUE LAST_PING LAST_RESP LAT(ms)
+        if len(parts) < 7:
             continue
         name = parts[0]
         status = parts[1]
         last_ping = parts[4]
         last_sent = parts[5]
+        last_rtt = parts[6]
         state[name] = {
             "status": status,
             "last_ping_epoch": int(last_ping) if last_ping.isdigit() else 0,
             "last_sent_epoch": int(last_sent) if last_sent.isdigit() else 0,
+            "last_rtt_ms": int(last_rtt) if last_rtt.lstrip("-").isdigit() else -1,
         }
     return state
 
@@ -136,77 +138,12 @@ def human_ts(epoch: int):
     except Exception:
         return "-"
 
-def journalctl_lines(lines: int) -> str:
-    """
-    v4.6.0: NO sudo here.
-    Also uses --output=cat so the UI shows clean interheart log lines without syslog prefixes.
-    """
-    cmd = ["journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=cat"]
+def sudo_journalctl(lines: int) -> str:
+    cmd = ["sudo", "journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=cat"]
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         raise RuntimeError((p.stderr or "journalctl failed").strip())
     return (p.stdout or "").strip()
-
-def merged_targets():
-    _, list_out = run_cmd(["list"])
-    targets = parse_list_targets(list_out)
-
-    _, st_out = run_cmd(["status"])
-    state = parse_status(st_out)
-
-    merged = []
-    for t in targets:
-        st = state.get(t["name"], {})
-        status = st.get("status", "unknown")
-        last_ping_epoch = st.get("last_ping_epoch", 0)
-        last_sent_epoch = st.get("last_sent_epoch", 0)
-
-        merged.append({
-            **t,
-            "status": status,
-            "last_ping_human": human_ts(last_ping_epoch),
-            "last_response_human": human_ts(last_sent_epoch),
-            "last_ping_epoch": last_ping_epoch,
-            "last_response_epoch": last_sent_epoch,
-        })
-    return merged
-
-SUMMARY_RE = re.compile(
-    r"total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)"
-)
-
-def parse_run_summary(text: str):
-    m = SUMMARY_RE.search(text or "")
-    if not m:
-        return None
-    return {
-        "total": int(m.group(1)),
-        "due": int(m.group(2)),
-        "skipped": int(m.group(3)),
-        "ping_ok": int(m.group(4)),
-        "ping_fail": int(m.group(5)),
-        "sent": int(m.group(6)),
-        "curl_fail": int(m.group(7)),
-    }
-
-def icon_svg(path_d: str, opacity: float = 0.95):
-    return Markup(
-        f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-        xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">
-        <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>"""
-    )
-
-ICONS = {
-    "plus": icon_svg("M12 5v14M5 12h14"),
-    "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
-    "close": icon_svg("M18 6L6 18M6 6l12 12"),
-    "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
-    "play": icon_svg("M8 5v14l11-7z"),
-    "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
-    "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
-    "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
-}
 
 def load_run_meta():
     try:
@@ -226,7 +163,7 @@ def save_run_meta(meta: dict):
         with open(RUN_META_FILE, "w", encoding="utf-8") as f:
             json.dump(meta, f)
         try:
-            os.chmod(RUN_META_FILE, 0o644)
+            os.chmod(RUN_META_FILE, 0o666)
         except Exception:
             pass
     except Exception:
@@ -240,6 +177,99 @@ def pid_is_running(pid: int):
         return True
     except Exception:
         return False
+
+SUMMARY_RE = re.compile(
+    r"total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)(?:\s+disabled=(\d+))?(?:\s+force=(\d+))?(?:\s+duration_ms=(\d+))?"
+)
+
+def parse_run_summary(text: str):
+    m = SUMMARY_RE.search(text or "")
+    if not m:
+        return None
+    return {
+        "total": int(m.group(1)),
+        "due": int(m.group(2)),
+        "skipped": int(m.group(3)),
+        "ping_ok": int(m.group(4)),
+        "ping_fail": int(m.group(5)),
+        "sent": int(m.group(6)),
+        "curl_fail": int(m.group(7)),
+        "disabled": int(m.group(8) or 0),
+        "force": int(m.group(9) or 0),
+        "duration_ms": int(m.group(10) or 0),
+    }
+
+def icon_svg(path_d: str, opacity: float = 0.95):
+    return Markup(
+        f"""<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+        xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">
+        <path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>"""
+    )
+
+ICONS = {
+    "plus": icon_svg("M12 5v14M5 12h14"),
+    "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
+    "close": icon_svg("M18 6L6 18M6 6l12 12"),
+    "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
+    "play": icon_svg("M8 5v14l11-7z"),
+    "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
+    "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
+    "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
+    "copy": icon_svg("M9 9h11v11H9zM4 4h11v11H4z"),
+    "search": icon_svg("M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15"),
+    "ban": icon_svg("M18 6L6 18M6 6l12 12"),
+    "check": icon_svg("M20 6 9 17l-5-5"),
+}
+
+def merged_targets():
+    _, list_out = run_cmd(["list"])
+    targets = parse_list_targets(list_out)
+
+    _, st_out = run_cmd(["status"])
+    state = parse_status(st_out)
+
+    merged = []
+    for t in targets:
+        st = state.get(t["name"], {})
+        status = st.get("status", "unknown")
+        last_ping_epoch = st.get("last_ping_epoch", 0)
+        last_sent_epoch = st.get("last_sent_epoch", 0)
+        last_rtt_ms = st.get("last_rtt_ms", -1)
+
+        # If config says disabled, prefer disabled status (some older states won't reflect it)
+        if not t.get("enabled", True):
+            status = "disabled"
+
+        merged.append({
+            **t,
+            "status": status,
+            "last_ping_human": human_ts(last_ping_epoch),
+            "last_response_human": human_ts(last_sent_epoch),
+            "last_ping_epoch": last_ping_epoch,
+            "last_response_epoch": last_sent_epoch,
+            "last_rtt_ms": last_rtt_ms,
+        })
+    return merged
+
+def stats_from_targets(ts):
+    up = sum(1 for t in ts if t.get("status") == "up")
+    down = sum(1 for t in ts if t.get("status") == "down")
+    unknown = sum(1 for t in ts if t.get("status") in ("unknown",))
+    disabled = sum(1 for t in ts if t.get("status") == "disabled")
+    return {"up": up, "down": down, "unknown": unknown, "disabled": disabled, "total": len(ts)}
+
+def format_duration_ms(ms: int):
+    if not ms or ms <= 0:
+        return "-"
+    if ms < 1000:
+        return f"{ms} ms"
+    sec = ms / 1000.0
+    if sec < 60:
+        return f"{sec:.1f}s"
+    m = int(sec // 60)
+    s = sec - (m * 60)
+    return f"{m}m {s:.0f}s"
 
 TEMPLATE = r"""
 <!doctype html>
@@ -262,6 +292,7 @@ TEMPLATE = r"""
       --good:#35d39f;
       --danger:#ff3b5c;
       --warn:#ffd34d;
+      --info:#73b7ff;
 
       --shadow: 0 18px 54px rgba(0,0,0,.60);
       --radius: 18px;
@@ -274,7 +305,7 @@ TEMPLATE = r"""
     body{ margin:0; font-family:var(--sans); color:var(--text); background: var(--bg); }
 
     .wrap{max-width:1280px;margin:34px auto;padding:0 18px}
-    .top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px}
+    .top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:14px}
     .brand{display:flex;flex-direction:column;gap:8px}
     .title{display:flex;align-items:center;gap:10px;font-size:22px;font-weight:900;letter-spacing:.2px}
     .badge{
@@ -310,6 +341,7 @@ TEMPLATE = r"""
       outline:none;
       transition: border-color .15s ease, filter .15s ease, background .15s ease;
       font-family:var(--sans);
+      height:36px;
     }
     input:focus{ border-color:rgba(255,255,255,.24); filter:brightness(1.03); background:rgba(255,255,255,.04); }
     input::placeholder{color:rgba(255,255,255,.30)}
@@ -330,6 +362,7 @@ TEMPLATE = r"""
       user-select:none;
       height:36px;
       line-height:1;
+      white-space:nowrap;
     }
     .btn:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.20); background:rgba(255,255,255,.04); filter:brightness(1.03); }
     .btn:active{transform: translateY(0px)}
@@ -339,6 +372,7 @@ TEMPLATE = r"""
     .btn-primary{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.06)}
     .btn-danger{ border-color:rgba(255,59,92,.28); background:rgba(255,59,92,.10); }
     .btn-danger:hover{ border-color:rgba(255,59,92,.40); background:rgba(255,59,92,.14); }
+    .btn-disabled{ opacity:.6; pointer-events:none; }
 
     .right-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
@@ -346,6 +380,7 @@ TEMPLATE = r"""
     th,td{padding:10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
     th{color:var(--muted);font-weight:850;text-align:left}
     td code{font-family:var(--mono);font-size:12px;color:rgba(255,255,255,.88)}
+    tr:hover td{background:rgba(255,255,255,.020)}
 
     .chip{
       display:inline-flex;align-items:center;gap:8px;
@@ -363,6 +398,8 @@ TEMPLATE = r"""
     .status-down .dot{background:var(--danger)}
     .status-unknown{border-color:rgba(255,211,77,.22);background:rgba(255,211,77,.06)}
     .status-unknown .dot{background:var(--warn)}
+    .status-disabled{border-color:rgba(115,183,255,.22);background:rgba(115,183,255,.06)}
+    .status-disabled .dot{background:var(--info)}
     @keyframes pulse{
       0%{box-shadow:0 0 0 0 rgba(53,211,159,.28)}
       70%{box-shadow:0 0 0 10px rgba(53,211,159,0)}
@@ -511,12 +548,68 @@ TEMPLATE = r"""
       color:rgba(255,255,255,.86);
     }
 
+    /* v4.7 mini cards + filter row */
+    .stats-row{
+      display:grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap:12px;
+      margin: 8px 0 14px 0;
+    }
+    .stat{
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.03);
+      border-radius:18px;
+      padding:12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      overflow:hidden;
+    }
+    .stat .k{font-size:12px;color:rgba(255,255,255,.62);font-weight:850}
+    .stat .v{font-size:22px;font-weight:950;letter-spacing:.2px}
+    .pill{
+      display:inline-flex;align-items:center;gap:8px;
+      border-radius:999px;padding:6px 10px;
+      background:rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.10);
+      color:rgba(255,255,255,.75);
+      font-size:12px;
+      font-family:var(--mono);
+      white-space:nowrap;
+    }
+    .pill.good{border-color:rgba(53,211,159,.22); background:rgba(53,211,159,.08)}
+    .pill.bad{border-color:rgba(255,59,92,.24); background:rgba(255,59,92,.08)}
+    .pill.warn{border-color:rgba(255,211,77,.20); background:rgba(255,211,77,.06)}
+    .pill.info{border-color:rgba(115,183,255,.22); background:rgba(115,183,255,.06)}
+
+    .filters{
+      display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+      margin: 6px 0 10px 0;
+    }
+    .filters-left{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .filters-right{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .chipbtn{
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.03);
+      color:rgba(255,255,255,.78);
+      padding:8px 10px;
+      cursor:pointer;
+      font-weight:900;
+      display:inline-flex;align-items:center;gap:8px;
+      height:36px;
+    }
+    .chipbtn.active{border-color:rgba(255,255,255,.22); background:rgba(255,255,255,.06)}
+    .selbox{width:18px;height:18px;accent-color:#ffffff;}
+
     @media (max-width: 940px){
       .footer{flex-direction:column;align-items:flex-start}
       .modal-head{flex-direction:column;align-items:stretch;gap:10px}
       .modal-actions{justify-content:flex-start;flex-wrap:wrap}
       .grid3{grid-template-columns:1fr}
       .summary-wrap{grid-template-columns:1fr 1fr}
+      .stats-row{grid-template-columns: 1fr 1fr}
     }
   </style>
 </head>
@@ -539,14 +632,8 @@ TEMPLATE = r"""
           {{ icons.refresh|safe }} Reload
         </button>
 
-        <!-- inline SVG for Copy (always shows) -->
         <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-               xmlns="http://www.w3.org/2000/svg" style="opacity:.98">
-            <path d="M9 9h11v11H9z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-            <path d="M4 4h11v11H4z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-          </svg>
-          Copy
+          {{ icons.copy|safe }} Copy
         </button>
 
         <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">
@@ -558,68 +645,6 @@ TEMPLATE = r"""
     <div class="modal-body">
       <div class="logbox" id="logBox">Loading logs…</div>
       <div class="hint" id="logMeta">-</div>
-    </div>
-
-    <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
-      <div class="hint">interheart <code>{{ ui_version }}</code></div>
-      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
-    </div>
-  </div>
-</div>
-
-<!-- Run summary modal -->
-<div class="modal" id="runModal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Run summary">
-    <div class="modal-head">
-      <div class="modal-title">
-        <b>Run summary</b>
-        <span id="runTitleMeta">-</span>
-      </div>
-      <div class="modal-actions">
-        <div class="run-live" id="runLive" style="display:none;">
-          <span class="pulse"></span>
-          <span id="runLiveText">Running…</span>
-        </div>
-        <button class="btn btn-ghost btn-mini" id="btnCloseRun" type="button">
-          {{ icons.close|safe }} Close
-        </button>
-      </div>
-    </div>
-
-    <div class="modal-body">
-      <div class="summary-wrap">
-        <div class="metric"><b>Total</b><div class="v" id="mTotal">-</div></div>
-        <div class="metric"><b>Checked</b><div class="v" id="mDue">-</div></div>
-        <div class="metric"><b>Skipped</b><div class="v" id="mSkipped">-</div></div>
-        <div class="metric"><b>Ping OK</b><div class="v" id="mOk">-</div></div>
-        <div class="metric"><b>Ping fail</b><div class="v" id="mFail">-</div></div>
-      </div>
-
-      <div class="metric">
-        <b>Progress</b>
-        <div class="bar"><div id="runBar"></div></div>
-        <div class="summary-sub">
-          <span id="runNowLine">Idle</span>
-          <span id="runDoneLine">done: 0 / 0</span>
-        </div>
-      </div>
-
-      <div class="metric">
-        <b>Endpoint</b>
-        <div class="summary-sub" style="margin-top:0;">
-          <span>Responses</span><span id="mSent">-</span>
-        </div>
-        <div class="summary-sub" style="margin-top:4px;">
-          <span>Endpoint failures</span><span id="mCurlFail">-</span>
-        </div>
-      </div>
-
-      <div class="danger-box" id="runHintBox" style="display:none;">
-        <b style="display:block; margin-bottom:6px;">Note</b>
-        <div class="hint" id="runHintText" style="color:rgba(255,255,255,.80)"></div>
-      </div>
-
-      <div class="hint" id="runRaw" style="display:none;"></div>
     </div>
 
     <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
@@ -665,10 +690,10 @@ TEMPLATE = r"""
         </div>
 
         <div class="modal-foot-actions">
+          <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
           <button class="btn btn-primary" type="submit" id="btnAddSubmit" data-default-html="">
             {{ icons.plus|safe }} Add target
           </button>
-          <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
         </div>
 
         <div class="hint" style="margin-top:10px;">
@@ -708,8 +733,8 @@ TEMPLATE = r"""
       </div>
 
       <div class="modal-foot-actions" style="margin-top:14px;">
-        <button class="btn btn-danger" id="btnConfirmRemove" type="button">Remove</button>
         <button class="btn btn-ghost" id="btnCancelRemove" type="button">Cancel</button>
+        <button class="btn btn-danger" id="btnConfirmRemove" type="button">Remove</button>
       </div>
     </div>
 
@@ -730,22 +755,80 @@ TEMPLATE = r"""
     <div class="right-actions">
       <button class="btn btn-ghost btn-mini" id="openLogs" type="button">{{ icons.logs|safe }} Logs</button>
       <button class="btn btn-ghost btn-mini" id="openAdd" type="button">{{ icons.plus|safe }} Add</button>
-      <button class="btn btn-primary btn-mini" id="btnRunNow" type="button" data-default-html="">
+      <button class="btn btn-primary btn-mini" id="btnRunNowAll" type="button">
         {{ icons.play|safe }} Run now
       </button>
     </div>
   </div>
 
+  <!-- Mini cards -->
+  <div class="stats-row">
+    <div class="stat">
+      <div>
+        <div class="k">Up</div>
+        <div class="v" id="statUp">{{ stats.up }}</div>
+      </div>
+      <div class="pill good"><span class="dot" style="background:var(--good)"></span> live</div>
+    </div>
+    <div class="stat">
+      <div>
+        <div class="k">Down</div>
+        <div class="v" id="statDown">{{ stats.down }}</div>
+      </div>
+      <div class="pill bad"><span class="dot" style="background:var(--danger)"></span> live</div>
+    </div>
+    <div class="stat">
+      <div>
+        <div class="k">Unknown</div>
+        <div class="v" id="statUnknown">{{ stats.unknown }}</div>
+      </div>
+      <div class="pill warn"><span class="dot" style="background:var(--warn)"></span> live</div>
+    </div>
+    <div class="stat">
+      <div>
+        <div class="k">Last run duration</div>
+        <div class="v" id="statDur">{{ last_run_duration }}</div>
+      </div>
+      <div class="pill info"><span class="dot" style="background:var(--info)"></span> meta</div>
+    </div>
+  </div>
+
   <div class="card">
+    <div class="filters">
+      <div class="filters-left">
+        <div style="position:relative;">
+          <div style="position:absolute;left:12px;top:9px;opacity:.85">{{ icons.search|safe }}</div>
+          <input id="searchBox" placeholder="Search (name / IP / status)" style="padding-left:38px; min-width:320px;">
+        </div>
+
+        <button class="chipbtn active" data-filter="all" type="button">All</button>
+        <button class="chipbtn" data-filter="up" type="button">Up</button>
+        <button class="chipbtn" data-filter="down" type="button">Down</button>
+        <button class="chipbtn" data-filter="unknown" type="button">Unknown</button>
+        <button class="chipbtn" data-filter="disabled" type="button">Disabled</button>
+      </div>
+
+      <div class="filters-right">
+        <button class="btn btn-ghost btn-mini btn-disabled" id="btnRunSelected" type="button">
+          {{ icons.play|safe }} Run selected
+        </button>
+        <button class="btn btn-ghost btn-mini btn-disabled" id="btnDisableSelected" type="button">
+          {{ icons.ban|safe }} Disable selected
+        </button>
+      </div>
+    </div>
+
     <div class="hint">“Last ping” / “Last response” updates live ({{ poll_seconds }}s refresh)</div>
     <div class="sep"></div>
 
     <table>
       <thead>
         <tr>
+          <th style="width: 42px;"><input type="checkbox" id="selAll" class="selbox"></th>
           <th style="width: 210px;">Name</th>
           <th style="width: 130px;">IP</th>
           <th style="width: 140px;">Status</th>
+          <th style="width: 120px;">Latency</th>
           <th style="width: 150px;">Interval</th>
           <th style="width: 200px;">Last ping</th>
           <th style="width: 200px;">Last response</th>
@@ -753,17 +836,22 @@ TEMPLATE = r"""
           <th style="width: 90px;">Actions</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="tbody">
       {% for t in targets %}
-        <tr data-name="{{ t.name }}" data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
+        <tr data-name="{{ t.name }}" data-ip="{{ t.ip }}" data-status="{{ t.status }}" data-enabled="{{ '1' if t.enabled else '0' }}"
+            data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
+          <td><input type="checkbox" class="selbox selRow"></td>
           <td><code>{{ t.name }}</code></td>
           <td><code>{{ t.ip }}</code></td>
           <td>
-            <span class="chip status-chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
+            <span class="chip status-chip
+              {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% elif t.status == 'disabled' %}status-disabled{% else %}status-unknown{% endif %}">
               <span class="dot"></span>
               <span class="status-text" style="font-weight:900; text-transform:uppercase;">{{ t.status }}</span>
             </span>
           </td>
+
+          <td><code class="lat">{{ (t.last_rtt_ms|string + ' ms') if t.last_rtt_ms is not none and t.last_rtt_ms >= 0 else '-' }}</code></td>
 
           <td>
             <div class="interval-wrap">
@@ -805,7 +893,7 @@ TEMPLATE = r"""
   function escapeHtml(s){
     return String(s ?? "")
       .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+      .replaceAll('"',"quot;").replaceAll("'","&#039;");
   }
   function toast(title, msg){
     const el = document.createElement("div");
@@ -823,13 +911,6 @@ TEMPLATE = r"""
   }
   function show(el){ el.classList.add("show"); el.setAttribute("aria-hidden","false"); }
   function hide(el){ el.classList.remove("show"); el.setAttribute("aria-hidden","true"); }
-
-  function captureDefaultHtml(btn){
-    if (!btn) return;
-    if (!btn.dataset.defaultHtml || btn.dataset.defaultHtml === ""){
-      btn.dataset.defaultHtml = btn.innerHTML;
-    }
-  }
 
   // ---- Logs modal ----
   const logModal = document.getElementById("logModal");
@@ -878,7 +959,7 @@ TEMPLATE = r"""
   const addCancel = document.getElementById("btnAddCancel");
   const addForm = document.getElementById("addForm");
   const btnAddSubmit = document.getElementById("btnAddSubmit");
-  captureDefaultHtml(btnAddSubmit);
+  btnAddSubmit.dataset.defaultHtml = btnAddSubmit.innerHTML;
 
   openAdd.addEventListener("click", () => show(addModal));
   addCancel.addEventListener("click", () => hide(addModal));
@@ -970,235 +1051,43 @@ TEMPLATE = r"""
     if (!e.target.closest(".menu")) closeAllMenus();
   });
 
-  // ---- Run summary modal ----
-  const runModal = document.getElementById("runModal");
-  const btnCloseRun = document.getElementById("btnCloseRun");
-  const runTitleMeta = document.getElementById("runTitleMeta");
-  const runLive = document.getElementById("runLive");
-  const runLiveText = document.getElementById("runLiveText");
-
-  const mTotal = document.getElementById("mTotal");
-  const mDue = document.getElementById("mDue");
-  const mSkipped = document.getElementById("mSkipped");
-  const mOk = document.getElementById("mOk");
-  const mFail = document.getElementById("mFail");
-  const mSent = document.getElementById("mSent");
-  const mCurlFail = document.getElementById("mCurlFail");
-  const runBar = document.getElementById("runBar");
-  const runNowLine = document.getElementById("runNowLine");
-  const runDoneLine = document.getElementById("runDoneLine");
-  const runRaw = document.getElementById("runRaw");
-  const runHintBox = document.getElementById("runHintBox");
-  const runHintText = document.getElementById("runHintText");
-
-  btnCloseRun.addEventListener("click", () => hide(runModal));
-  runModal.addEventListener("click", (e) => { if (e.target === runModal) hide(runModal); });
-
-  function setBar(done, due){
-    const pct = (!due || due <= 0) ? 0 : Math.max(0, Math.min(100, Math.round((done / due) * 100)));
-    runBar.style.width = pct + "%";
+  async function apiPost(url, fd){
+    const res = await fetch(url, {method:"POST", body: fd});
+    return await res.json();
   }
 
-  // runtime poll
-  let runtimePoll = null;
-  let statusPoll = null;
-  let lastRuntimeUpdated = 0;
+  function attachMenuActions(){
+    document.querySelectorAll("tr[data-name]").forEach(row => {
+      const name = row.getAttribute("data-name");
+      row.querySelectorAll(".menu-item").forEach(btn => {
+        if (btn.dataset.bound === "1") return;
+        btn.dataset.bound = "1";
+        btn.addEventListener("click", async () => {
+          closeAllMenus();
+          const action = btn.getAttribute("data-action");
+          const fd = new FormData();
+          fd.set("name", name);
 
-  async function fetchRuntime(){
-    try{
-      const res = await fetch("/runtime", {cache:"no-store"});
-      return await res.json();
-    }catch(e){
-      return null;
-    }
-  }
+          if (action === "remove"){
+            openConfirmRemove(name);
+            return;
+          }
 
-  async function fetchRunStatus(){
-    try{
-      const res = await fetch("/api/run-status", {cache:"no-store"});
-      return await res.json();
-    }catch(e){
-      return null;
-    }
-  }
-
-  async function fetchRunResult(){
-    try{
-      const res = await fetch("/api/run-result", {cache:"no-store"});
-      return await res.json();
-    }catch(e){
-      return null;
-    }
-  }
-
-  function highlightWorking(name){
-    document.querySelectorAll("tr[data-name]").forEach(r => {
-      if (r.getAttribute("data-name") === name) r.classList.add("working");
-      else r.classList.remove("working");
+          try{
+            if (action === "test"){
+              toast("Testing", `Running test for ${name}…`);
+              const data = await apiPost("/api/test", fd);
+              toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+            }
+          }catch(e){
+            toast("Error", e && e.message ? e.message : "Failed");
+          }finally{
+            await refreshState(true);
+          }
+        });
+      });
     });
   }
-  function clearWorking(){
-    document.querySelectorAll("tr[data-name]").forEach(r => r.classList.remove("working"));
-  }
-
-  function startRuntimePoll(){
-    stopRuntimePoll();
-    lastRuntimeUpdated = 0;
-    runtimePoll = setInterval(async () => {
-      const rt = await fetchRuntime();
-      if (!rt) return;
-
-      const upd = Number(rt.updated || 0);
-      if (upd && upd === lastRuntimeUpdated) return;
-      if (upd) lastRuntimeUpdated = upd;
-
-      if (rt.status === "running"){
-        runLive.style.display = "inline-flex";
-        runLiveText.textContent = "Running…";
-        const cur = (rt.current || "").trim();
-        if (cur){
-          highlightWorking(cur);
-          runNowLine.textContent = "Now checking: " + cur;
-        }else{
-          runNowLine.textContent = "Running…";
-        }
-
-        const done = Number(rt.done || 0);
-        const due = Number(rt.due || 0);
-        runDoneLine.textContent = `done: ${done} / ${due}`;
-        setBar(done, due);
-      }
-    }, 250);
-  }
-
-  function startStatusPoll(){
-    stopStatusPoll();
-    statusPoll = setInterval(async () => {
-      const st = await fetchRunStatus();
-      if (!st) return;
-      if (st.running){
-        runTitleMeta.textContent = "running…";
-        runLive.style.display = "inline-flex";
-      } else if (st.finished){
-        stopStatusPoll();
-        stopRuntimePoll();
-        clearWorking();
-        runLive.style.display = "none";
-        const result = await fetchRunResult();
-        if (result){
-          applyRunResult(result);
-        }
-      }
-    }, 300);
-  }
-
-  function stopRuntimePoll(){
-    if (runtimePoll){
-      clearInterval(runtimePoll);
-      runtimePoll = null;
-    }
-  }
-
-  function stopStatusPoll(){
-    if (statusPoll){
-      clearInterval(statusPoll);
-      statusPoll = null;
-    }
-  }
-
-  function setRunModalInitial(){
-    runTitleMeta.textContent = "running…";
-    runLive.style.display = "inline-flex";
-    runLiveText.textContent = "Running…";
-    mTotal.textContent = "-";
-    mDue.textContent = "-";
-    mSkipped.textContent = "-";
-    mOk.textContent = "-";
-    mFail.textContent = "-";
-    mSent.textContent = "-";
-    mCurlFail.textContent = "-";
-    runNowLine.textContent = "Starting…";
-    runDoneLine.textContent = "done: 0 / 0";
-    runRaw.style.display = "none";
-    runHintBox.style.display = "none";
-    setBar(0, 0);
-  }
-
-  function applyRunResult(data){
-    const ts = new Date().toLocaleString();
-    runTitleMeta.textContent = ts;
-
-    const summary = data.summary || null;
-
-    if (summary){
-      mTotal.textContent = String(summary.total ?? "-");
-      mDue.textContent = String(summary.due ?? "-");
-      mSkipped.textContent = String(summary.skipped ?? "-");
-      mOk.textContent = String(summary.ping_ok ?? "-");
-      mFail.textContent = String(summary.ping_fail ?? "-");
-      mSent.textContent = String(summary.sent ?? "-");
-      mCurlFail.textContent = String(summary.curl_fail ?? "-");
-
-      const due = Number(summary.due || 0);
-      setBar(due, due);
-      runNowLine.textContent = data.ok ? "Completed" : "Failed";
-      runDoneLine.textContent = `done: ${due} / ${due}`;
-
-      if (due === 0 && Number(summary.total || 0) > 0){
-        runHintBox.style.display = "block";
-        runHintText.textContent = "Nothing was checked. If this keeps happening, verify permissions and systemd timer state.";
-      }
-    }else{
-      runRaw.textContent = data.message || "-";
-      runRaw.style.display = "block";
-      runNowLine.textContent = data.ok ? "Completed" : "Failed";
-    }
-
-    toast(data.ok ? "Run completed" : "Run failed", data.ok ? "Done" : (data.message || "Error"));
-  }
-
-  // ---- Run Now (REAL-TIME) ----
-  const btnRunNow = document.getElementById("btnRunNow");
-  captureDefaultHtml(btnRunNow);
-
-  btnRunNow.addEventListener("click", async () => {
-    btnRunNow.disabled = true;
-
-    setRunModalInitial();
-    show(runModal);
-
-    startRuntimePoll();
-    startStatusPoll();
-
-    try{
-      const res = await fetch("/api/run-now", {method:"POST"});
-      const data = await res.json();
-      if (!data.ok){
-        stopStatusPoll();
-        stopRuntimePoll();
-        clearWorking();
-        runLive.style.display = "none";
-        toast("Run failed", data.message || "Failed to start run");
-        runRaw.textContent = data.message || "Failed to start run";
-        runRaw.style.display = "block";
-        runNowLine.textContent = "Failed";
-      }else{
-        runNowLine.textContent = "Started…";
-      }
-    }catch(e){
-      stopStatusPoll();
-      stopRuntimePoll();
-      clearWorking();
-      runLive.style.display = "none";
-      toast("Run failed", e && e.message ? e.message : "Error");
-      runRaw.textContent = e && e.message ? e.message : "Run failed";
-      runRaw.style.display = "block";
-      runNowLine.textContent = "Failed";
-    }finally{
-      btnRunNow.disabled = false;
-      await refreshState(true);
-    }
-  });
 
   // ---- Inline interval editing ----
   async function setIntervalFor(name, seconds){
@@ -1254,47 +1143,113 @@ TEMPLATE = r"""
     });
   }
 
-  // ---- Menu actions ----
-  async function apiPost(url, fd){
-    const res = await fetch(url, {method:"POST", body: fd});
+  // ---- Search + quick filter ----
+  const searchBox = document.getElementById("searchBox");
+  let statusFilter = "all";
+
+  function applyFilters(){
+    const q = (searchBox.value || "").trim().toLowerCase();
+    document.querySelectorAll("#tbody tr[data-name]").forEach(row => {
+      const name = (row.getAttribute("data-name") || "").toLowerCase();
+      const ip = (row.getAttribute("data-ip") || "").toLowerCase();
+      const st = (row.getAttribute("data-status") || "").toLowerCase();
+
+      const matchQ = !q || name.includes(q) || ip.includes(q) || st.includes(q);
+      const matchSt = (statusFilter === "all") || (st === statusFilter);
+
+      row.style.display = (matchQ && matchSt) ? "" : "none";
+    });
+    updateBulkButtons();
+  }
+
+  searchBox.addEventListener("input", applyFilters);
+
+  document.querySelectorAll(".chipbtn[data-filter]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".chipbtn[data-filter]").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      statusFilter = btn.getAttribute("data-filter") || "all";
+      applyFilters();
+    });
+  });
+
+  // ---- Selection + bulk actions ----
+  const selAll = document.getElementById("selAll");
+  const btnRunSelected = document.getElementById("btnRunSelected");
+  const btnDisableSelected = document.getElementById("btnDisableSelected");
+  const btnRunNowAll = document.getElementById("btnRunNowAll");
+
+  function selectedNames(){
+    const out = [];
+    document.querySelectorAll("#tbody tr[data-name]").forEach(row => {
+      if (row.style.display === "none") return;
+      const cb = row.querySelector(".selRow");
+      if (cb && cb.checked) out.push(row.getAttribute("data-name"));
+    });
+    return out;
+  }
+
+  function updateBulkButtons(){
+    const names = selectedNames();
+    const has = names.length > 0;
+
+    [btnRunSelected, btnDisableSelected].forEach(b => {
+      b.classList.toggle("btn-disabled", !has);
+    });
+    btnRunSelected.disabled = !has;
+    btnDisableSelected.disabled = !has;
+
+    // Master checkbox reflects visible rows only
+    const visibleRows = Array.from(document.querySelectorAll("#tbody tr[data-name]")).filter(r => r.style.display !== "none");
+    const visibleCbs = visibleRows.map(r => r.querySelector(".selRow")).filter(Boolean);
+    const allChecked = visibleCbs.length > 0 && visibleCbs.every(cb => cb.checked);
+    const anyChecked = visibleCbs.some(cb => cb.checked);
+    selAll.checked = allChecked;
+    selAll.indeterminate = !allChecked && anyChecked;
+  }
+
+  selAll.addEventListener("change", () => {
+    const visibleRows = Array.from(document.querySelectorAll("#tbody tr[data-name]")).filter(r => r.style.display !== "none");
+    visibleRows.forEach(row => {
+      const cb = row.querySelector(".selRow");
+      if (cb) cb.checked = selAll.checked;
+    });
+    updateBulkButtons();
+  });
+
+  document.querySelectorAll(".selRow").forEach(cb => cb.addEventListener("change", updateBulkButtons));
+
+  async function postJson(url, payload){
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload || {})
+    });
     return await res.json();
   }
 
-  function attachMenuActions(){
-    document.querySelectorAll("tr[data-name]").forEach(row => {
-      const name = row.getAttribute("data-name");
-      row.querySelectorAll(".menu-item").forEach(btn => {
-        if (btn.dataset.bound === "1") return;
-        btn.dataset.bound = "1";
-        btn.addEventListener("click", async () => {
-          closeAllMenus();
-          const action = btn.getAttribute("data-action");
-          const fd = new FormData();
-          fd.set("name", name);
+  btnRunSelected.addEventListener("click", async () => {
+    const names = selectedNames();
+    if (!names.length) return;
+    toast("Run selected", `Starting ${names.length} target(s)…`);
+    const data = await postJson("/api/run-selected", {targets: names});
+    toast(data.ok ? "Started" : "Error", data.message || (data.ok ? "Started" : "Failed"));
+  });
 
-          if (action === "remove"){
-            openConfirmRemove(name);
-            return;
-          }
+  btnDisableSelected.addEventListener("click", async () => {
+    const names = selectedNames();
+    if (!names.length) return;
+    toast("Disable selected", `Disabling ${names.length} target(s)…`);
+    const data = await postJson("/api/disable-selected", {targets: names});
+    toast(data.ok ? "Done" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+    await refreshState(true);
+  });
 
-          try{
-            let data;
-            if (action === "test"){
-              toast("Testing", `Running test for ${name}…`);
-              data = await apiPost("/api/test", fd);
-            } else {
-              return;
-            }
-            toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
-          }catch(e){
-            toast("Error", e && e.message ? e.message : "Failed");
-          }finally{
-            await refreshState(true);
-          }
-        });
-      });
-    });
-  }
+  btnRunNowAll.addEventListener("click", async () => {
+    toast("Run now", "Starting run…");
+    const data = await postJson("/api/run-selected", {targets: []}); // empty => run-all now
+    toast(data.ok ? "Started" : "Error", data.message || (data.ok ? "Started" : "Failed"));
+  });
 
   // ---- Real-time refresh + row blink ----
   function setStatusChip(row, status){
@@ -1302,9 +1257,10 @@ TEMPLATE = r"""
     const text = row.querySelector(".status-text");
     if (!chip || !text) return;
 
-    chip.classList.remove("status-up","status-down","status-unknown");
+    chip.classList.remove("status-up","status-down","status-unknown","status-disabled");
     if (status === "up") chip.classList.add("status-up");
     else if (status === "down") chip.classList.add("status-down");
+    else if (status === "disabled") chip.classList.add("status-disabled");
     else chip.classList.add("status-unknown");
 
     text.textContent = (status || "unknown").toUpperCase();
@@ -1330,18 +1286,29 @@ TEMPLATE = r"""
     setTimeout(() => row.classList.remove("blink-ok","blink-bad"), 1000);
   }
 
+  function recomputeStats(targets){
+    const up = targets.filter(t => t.status === "up").length;
+    const down = targets.filter(t => t.status === "down").length;
+    const unknown = targets.filter(t => t.status === "unknown").length;
+    document.getElementById("statUp").textContent = String(up);
+    document.getElementById("statDown").textContent = String(down);
+    document.getElementById("statUnknown").textContent = String(unknown);
+  }
+
   async function refreshState(force=false){
     try{
       const res = await fetch("/state", {cache:"no-store"});
       const data = await res.json();
       const map = new Map();
       (data.targets || []).forEach(t => map.set(t.name, t));
+      recomputeStats(data.targets || []);
 
       document.querySelectorAll("tr[data-name]").forEach(row => {
         const name = row.getAttribute("data-name");
         const t = map.get(name);
         if (!t) return;
 
+        row.setAttribute("data-status", t.status || "unknown");
         setStatusChip(row, t.status);
 
         const prevPing = parseInt(row.getAttribute("data-last-ping") || "0", 10);
@@ -1355,6 +1322,10 @@ TEMPLATE = r"""
         flashIfChanged(row.querySelector(".last-ping"), t.last_ping_human || "-");
         flashIfChanged(row.querySelector(".last-resp"), t.last_response_human || "-");
 
+        const latEl = row.querySelector(".lat");
+        const latTxt = (t.last_rtt_ms !== undefined && t.last_rtt_ms !== null && t.last_rtt_ms >= 0) ? (String(t.last_rtt_ms) + " ms") : "-";
+        flashIfChanged(latEl, latTxt);
+
         const iv = row.querySelector(".interval-input");
         if (iv && force){
           iv.value = String(t.interval || 60);
@@ -1367,6 +1338,7 @@ TEMPLATE = r"""
 
       attachIntervalHandlers();
       attachMenuActions();
+      applyFilters();
     }catch(e){
       // silent
     }
@@ -1375,6 +1347,8 @@ TEMPLATE = r"""
   // init
   attachIntervalHandlers();
   attachMenuActions();
+  applyFilters();
+  updateBulkButtons();
   setInterval(() => refreshState(false), {{ poll_seconds }} * 1000);
 
   // ESC closes modals
@@ -1382,7 +1356,6 @@ TEMPLATE = r"""
     if (e.key === "Escape"){
       if (logModal.classList.contains("show")) hide(logModal);
       if (addModal.classList.contains("show")) hide(addModal);
-      if (runModal.classList.contains("show")) hide(runModal);
       if (confirmModal.classList.contains("show")) hide(confirmModal);
       closeAllMenus();
     }
@@ -1396,9 +1369,26 @@ TEMPLATE = r"""
 
 @APP.get("/")
 def index():
+    ts = merged_targets()
+    meta = load_run_meta()
+    last_dur = ""
+    try:
+        # if we have latest output, parse duration_ms from it
+        if os.path.exists(RUN_OUT_FILE):
+            with open(RUN_OUT_FILE, "r", encoding="utf-8") as f:
+                out = f.read().strip()
+            s = parse_run_summary(out or "")
+            if s and s.get("duration_ms"):
+                last_dur = format_duration_ms(int(s.get("duration_ms") or 0))
+    except Exception:
+        pass
+    last_dur = last_dur or "-"
+
     return render_template_string(
         TEMPLATE,
-        targets=merged_targets(),
+        targets=ts,
+        stats=stats_from_targets(ts),
+        last_run_duration=last_dur,
         bind_host=BIND_HOST,
         bind_port=BIND_PORT,
         ui_version=UI_VERSION,
@@ -1412,24 +1402,6 @@ def index():
 def state():
     return jsonify({"updated": int(time.time()), "targets": merged_targets()})
 
-@APP.get("/runtime")
-def runtime():
-    try:
-        if os.path.exists(RUNTIME_FILE):
-            with open(RUNTIME_FILE, "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-            if raw:
-                data = json.loads(raw)
-                data.setdefault("status", "idle")
-                data.setdefault("current", "")
-                data.setdefault("done", 0)
-                data.setdefault("due", 0)
-                data.setdefault("updated", int(time.time()))
-                return jsonify(data)
-    except Exception:
-        pass
-    return jsonify({"status": "idle", "current": "", "done": 0, "due": 0, "updated": int(time.time())})
-
 @APP.get("/logs")
 def logs():
     try:
@@ -1440,95 +1412,12 @@ def logs():
     updated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(time.time())))
 
     try:
-        text = journalctl_lines(lines)
+        text = sudo_journalctl(lines)
         src = "journalctl -t interheart -o cat"
         actual = len(text.splitlines()) if text else 0
         return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
     except Exception as e:
         return jsonify({"source": "journalctl (error)", "lines": 1, "updated": updated, "text": f"(journalctl error: {str(e)})"})
-
-@APP.post("/api/run-now")
-def api_run_now():
-    """
-    Start run-now as background process so UI can poll /runtime while it runs.
-    v4.6.0: NO sudo here. WebUI runs as root (systemd service).
-    """
-    ensure_state_dir()
-
-    meta = load_run_meta()
-    existing_pid = int(meta.get("pid") or 0)
-    if existing_pid and pid_is_running(existing_pid):
-        return jsonify({"ok": True, "message": "Already running", "pid": existing_pid})
-
-    # mark runtime as running quickly (UI will show movement immediately)
-    try:
-        with open(RUNTIME_FILE, "w", encoding="utf-8") as f:
-            json.dump({"status":"running","current":"","done":0,"due":0,"updated":int(time.time())}, f)
-        try:
-            os.chmod(RUNTIME_FILE, 0o644)
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-    # start process (no sudo)
-    cmd = [CLI, "run-now"]
-    try:
-        with open(RUN_OUT_FILE, "w", encoding="utf-8") as out_f:
-            p = subprocess.Popen(cmd, stdout=out_f, stderr=subprocess.STDOUT, text=True)
-        save_run_meta({
-            "pid": p.pid,
-            "started": int(time.time()),
-            "finished": 0,
-            "rc": None
-        })
-        return jsonify({"ok": True, "message": "Started", "pid": p.pid})
-    except Exception as e:
-        save_run_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1})
-        return jsonify({"ok": False, "message": f"Failed to start run-now: {str(e)}"})
-
-@APP.get("/api/run-status")
-def api_run_status():
-    meta = load_run_meta()
-    pid = int(meta.get("pid") or 0)
-    started = int(meta.get("started") or 0)
-    finished = int(meta.get("finished") or 0)
-
-    if pid and pid_is_running(pid):
-        return jsonify({"running": True, "finished": False, "pid": pid, "started": started})
-
-    # if not running, consider finished if we have a started timestamp
-    if started and not finished:
-        meta["finished"] = int(time.time())
-        meta["pid"] = 0
-        save_run_meta(meta)
-
-    return jsonify({"running": False, "finished": bool(started), "pid": pid, "started": started, "finished_at": int(meta.get("finished") or 0)})
-
-@APP.get("/api/run-result")
-def api_run_result():
-    meta = load_run_meta()
-    # read last output file
-    try:
-        if os.path.exists(RUN_OUT_FILE):
-            with open(RUN_OUT_FILE, "r", encoding="utf-8") as f:
-                out = f.read().strip()
-        else:
-            out = ""
-    except Exception:
-        out = ""
-
-    summary = parse_run_summary(out)
-    ok = True
-    if "Unknown command" in out or ("Failed" in out and not out.startswith("OK:")):
-        ok = False
-
-    return jsonify({
-        "ok": ok,
-        "message": out or ("OK" if ok else "Failed"),
-        "summary": summary,
-        "meta": meta
-    })
 
 @APP.post("/api/test")
 def api_test():
@@ -1557,6 +1446,48 @@ def api_set_target_interval():
     sec = request.form.get("seconds", "")
     rc, out = run_cmd(["set-target-interval", name, sec])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
+@APP.post("/api/disable-selected")
+def api_disable_selected():
+    data = request.get_json(silent=True) or {}
+    targets = data.get("targets") or []
+    targets = [str(x) for x in targets if str(x).strip()]
+    if not targets:
+        return jsonify({"ok": False, "message": "No targets selected"})
+    rc, out = run_cmd(["disable-selected", ",".join(targets)])
+    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
+@APP.post("/api/run-selected")
+def api_run_selected():
+    """
+    Starts a run-now in background.
+    If targets list is empty => run all targets now.
+    """
+    ensure_state_dir()
+
+    data = request.get_json(silent=True) or {}
+    targets = data.get("targets") or []
+    targets = [str(x) for x in targets if str(x).strip()]
+    targets_arg = ",".join(targets)
+
+    meta = load_run_meta()
+    existing_pid = int(meta.get("pid") or 0)
+    if existing_pid and pid_is_running(existing_pid):
+        return jsonify({"ok": True, "message": "Already running", "pid": existing_pid})
+
+    # Start background run
+    cmd = ["sudo", CLI, "run-now"]
+    if targets_arg:
+        cmd += ["--targets", targets_arg]
+
+    try:
+        out_f = open(RUN_OUT_FILE, "w", encoding="utf-8")
+        p = subprocess.Popen(cmd, stdout=out_f, stderr=subprocess.STDOUT, text=True)
+        save_run_meta({"pid": p.pid, "started": int(time.time()), "finished": 0, "rc": None})
+        return jsonify({"ok": True, "message": "Started", "pid": p.pid})
+    except Exception as e:
+        save_run_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1})
+        return jsonify({"ok": False, "message": f"Failed to start run-now: {str(e)}"})
 
 if __name__ == "__main__":
     APP.run(host=BIND_HOST, port=BIND_PORT, threaded=True)
