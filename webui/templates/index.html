@@ -5,22 +5,23 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>interheart</title>
 
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
-
-  <!-- Runtime config for app.js -->
-  <script>
-    window.__INTERHEART__ = {
-      uiVersion: {{ ui_version|tojson }},
-      copyrightYear: {{ copyright_year|tojson }},
-      bindHost: {{ bind_host|tojson }},
-      bindPort: {{ bind_port|tojson }},
-      pollSeconds: {{ poll_seconds|tojson }},
-      logLinesDefault: {{ log_lines|tojson }},
-    };
-  </script>
+  <link rel="stylesheet" href="/static/app.css" />
 </head>
 
 <body>
+  <!-- JS config + icons -->
+  <script>
+    window.APP_CONFIG = {
+      poll_seconds: {{ poll_seconds|default(2)|int }},
+      log_lines: {{ log_lines|default(200)|int }},
+      bind_host: {{ bind_host|tojson }},
+      bind_port: {{ bind_port|tojson }},
+      ui_version: {{ ui_version|tojson }},
+      copyright_year: {{ copyright_year|tojson }}
+    };
+    window.ICONS = {{ icons|tojson }};
+  </script>
+
   <div class="toasts" id="toasts"></div>
 
   <!-- Logs modal -->
@@ -31,23 +32,25 @@
           <b>Logs</b>
           <span>Last <span id="logLinesLbl">{{ log_lines }}</span> lines</span>
         </div>
-
         <div class="modal-actions">
-          <input id="logFilter" placeholder="filter (e.g. anl-0161)" class="log-filter">
+          <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="height:34px; padding:0 12px; border-radius:12px; min-width:220px;">
 
           <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">
-            <span class="ico" data-ico="refresh"></span>
-            Reload
+            <span class="ico">{{ icons.refresh|safe }}</span> Reload
           </button>
 
           <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
-            <span class="ico" data-ico="copy"></span>
+            <!-- inline SVG for Copy (always shows) -->
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                 xmlns="http://www.w3.org/2000/svg" style="opacity:.98">
+              <path d="M9 9h11v11H9z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M4 4h11v11H4z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            </svg>
             Copy
           </button>
 
           <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">
-            <span class="ico" data-ico="close"></span>
-            Close
+            <span class="ico">{{ icons.close|safe }}</span> Close
           </button>
         </div>
       </div>
@@ -57,12 +60,9 @@
         <div class="hint" id="logMeta">-</div>
       </div>
 
-      <div class="footer footer--modal">
+      <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
         <div class="hint">interheart <code>{{ ui_version }}</code></div>
-        <div>
-          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
-          © {{ copyright_year }} All rights reserved
-        </div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
       </div>
     </div>
   </div>
@@ -81,8 +81,7 @@
             <span id="runLiveText">Running…</span>
           </div>
           <button class="btn btn-ghost btn-mini" id="btnCloseRun" type="button">
-            <span class="ico" data-ico="close"></span>
-            Close
+            <span class="ico">{{ icons.close|safe }}</span> Close
           </button>
         </div>
       </div>
@@ -123,12 +122,9 @@
         <div class="hint" id="runRaw" style="display:none;"></div>
       </div>
 
-      <div class="footer footer--modal">
+      <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
         <div class="hint">interheart <code>{{ ui_version }}</code></div>
-        <div>
-          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
-          © {{ copyright_year }} All rights reserved
-        </div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
       </div>
     </div>
   </div>
@@ -170,8 +166,7 @@
 
           <div class="modal-foot-actions">
             <button class="btn btn-primary" type="submit" id="btnAddSubmit" data-default-html="">
-              <span class="ico" data-ico="plus"></span>
-              Add target
+              <span class="ico">{{ icons.plus|safe }}</span> Add target
             </button>
             <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
           </div>
@@ -182,12 +177,9 @@
         </form>
       </div>
 
-      <div class="footer footer--modal">
+      <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
         <div class="hint">interheart <code>{{ ui_version }}</code></div>
-        <div>
-          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
-          © {{ copyright_year }} All rights reserved
-        </div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
       </div>
     </div>
   </div>
@@ -202,8 +194,7 @@
         </div>
         <div class="modal-actions">
           <button class="btn btn-ghost btn-mini" id="btnCloseConfirm" type="button">
-            <span class="ico" data-ico="close"></span>
-            Close
+            <span class="ico">{{ icons.close|safe }}</span> Close
           </button>
         </div>
       </div>
@@ -212,7 +203,7 @@
         <div class="danger-box">
           You are about to remove:
           <div style="margin-top:8px;">
-            <code id="confirmName" class="mono"></code>
+            <code id="confirmName" style="font-family:var(--mono); font-size:13px;"></code>
           </div>
         </div>
 
@@ -222,37 +213,30 @@
         </div>
       </div>
 
-      <div class="footer footer--modal">
+      <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
         <div class="hint">interheart <code>{{ ui_version }}</code></div>
-        <div>
-          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
-          © {{ copyright_year }} All rights reserved
-        </div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
       </div>
     </div>
   </div>
 
+  <!-- Main -->
   <div class="wrap">
     <div class="top">
       <div class="brand">
         <div class="title">interheart <span class="badge">targets</span></div>
-        <div class="subtitle">
-          Powered by <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
-        </div>
+        <div class="subtitle">Powered by <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a></div>
       </div>
 
       <div class="right-actions">
         <button class="btn btn-ghost btn-mini" id="openLogs" type="button">
-          <span class="ico" data-ico="logs"></span>
-          Logs
+          <span class="ico">{{ icons.logs|safe }}</span> Logs
         </button>
         <button class="btn btn-ghost btn-mini" id="openAdd" type="button">
-          <span class="ico" data-ico="plus"></span>
-          Add
+          <span class="ico">{{ icons.plus|safe }}</span> Add
         </button>
         <button class="btn btn-primary btn-mini" id="btnRunNow" type="button" data-default-html="">
-          <span class="ico" data-ico="play"></span>
-          Run now
+          <span class="ico">{{ icons.play|safe }}</span> Run now
         </button>
       </div>
     </div>
@@ -274,17 +258,16 @@
             <th style="width: 90px;">Actions</th>
           </tr>
         </thead>
-
-        <tbody id="targetsBody">
-          {% for t in targets %}
+        <tbody>
+        {% for t in targets %}
           <tr data-name="{{ t.name }}" data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
-            <td><code class="mono">{{ t.name }}</code></td>
-            <td><code class="mono">{{ t.ip }}</code></td>
-
+            <td><code>{{ t.name }}</code></td>
+            <td><code>{{ t.ip }}</code></td>
             <td>
-              <span class="chip status-chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
+              <span class="chip status-chip
+                {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
                 <span class="dot"></span>
-                <span class="status-text">{{ t.status|upper }}</span>
+                <span class="status-text" style="font-weight:900; text-transform:uppercase;">{{ t.status }}</span>
               </span>
             </td>
 
@@ -295,29 +278,27 @@
               </div>
             </td>
 
-            <td><code class="mono last-ping">{{ t.last_ping_human }}</code></td>
-            <td><code class="mono last-resp">{{ t.last_response_human }}</code></td>
-            <td><code class="mono endpoint">{{ t.endpoint_masked }}</code></td>
+            <td><code class="last-ping">{{ t.last_ping_human }}</code></td>
+            <td><code class="last-resp">{{ t.last_response_human }}</code></td>
+            <td><code class="endpoint">{{ t.endpoint_masked }}</code></td>
 
             <td style="text-align:right;">
               <div class="menu">
                 <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">
-                  <span class="ico" data-ico="more"></span>
+                  <span class="ico">{{ icons.more|safe }}</span>
                 </button>
                 <div class="menu-dd" role="menu">
                   <button class="menu-item" data-action="test" type="button">
-                    <span class="ico" data-ico="test"></span>
-                    Test
+                    <span class="ico">{{ icons.test|safe }}</span> Test
                   </button>
                   <button class="menu-item danger" data-action="remove" type="button">
-                    <span class="ico" data-ico="trash"></span>
-                    Remove
+                    <span class="ico">{{ icons.trash|safe }}</span> Remove
                   </button>
                 </div>
               </div>
             </td>
           </tr>
-          {% endfor %}
+        {% endfor %}
         </tbody>
       </table>
 
@@ -326,13 +307,12 @@
           WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code>
         </div>
         <div>
-          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
-          © {{ copyright_year }} All rights reserved
+          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved
         </div>
       </div>
     </div>
   </div>
 
-  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>
