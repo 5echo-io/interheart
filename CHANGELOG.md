@@ -3,6 +3,43 @@ All notable changes to this project will be documented in this file.
 
 This project follows Semantic Versioning (SemVer).
 
+## [4.8.1] - 2026-01-29
+
+### Added
+- WebUI: **Target information** modal with full target details:
+  - Name, IP, endpoint (full URL)
+  - Enabled / disabled state
+  - Interval
+  - Last ping, last response, last latency
+  - Next due (parsed from runtime state)
+- WebUI: **Edit target** modal allowing live changes to:
+  - Name, IP, endpoint, interval, enabled state
+  - Validation before submit (IP + http/https endpoint)
+- WebUI: **Activate selected** bulk action.
+- WebUI: **Disable / Activate** per-target toggle in Actions menu.
+- WebUI: **Copy actions** inside Information modal (name, IP, endpoint).
+- WebUI: **Last run summary** dropdown/tooltip in top card
+  - Parses and displays: total, due, skipped, ping_ok, ping_fail, sent, curl_fail, disabled, force, duration_ms.
+- CLI: `get <name>` command for reading full target details.
+- CLI: `edit <old_name> <new_name> <ip> <endpoint_url> <interval_sec> <enabled>` command.
+- Runtime: `next_due` is now persisted and exposed to WebUI.
+
+### Changed
+- WebUI: Removed **Latency** and **Endpoint** columns from main table
+  - Moved to Target information modal for cleaner overview.
+- WebUI: Interval column width reduced.
+- WebUI: Checkbox styling improved to match dark UI.
+- WebUI: Table headers are now clickable for client-side sorting:
+  - Name, IP, Status, Interval, Last ping.
+- WebUI: Disable confirmation now uses a **toast with Undo** instead of a blocking modal.
+- CLI: `run-now` outputs a single-line summary parsed by WebUI.
+
+### Fixed
+- WebUI: Fixed error `Unknown command: disable-selected`
+  - Bulk disable/activate now iterates per target using existing CLI commands.
+- CLI: Runtime state now stays consistent when targets are edited or renamed.
+- UI: Action menu now correctly reflects enabled/disabled state.
+
 
 ## [4.7.0] - 2026-01-29
 
