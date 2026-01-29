@@ -1,303 +1,435 @@
-from __future__ import annotations
-
+from flask import Flask, request, jsonify, render_template
 import os
-import re
-import sqlite3
+import subprocess
 import time
-from typing import Any, Dict, List, Optional
+import json
+import re
+from typing import Dict, Any, List, Tuple
 
-from flask import Flask, jsonify, render_template, request
+APP = Flask(__name__, template_folder="templates", static_folder="static")
 
+def read_version() -> str:
+    try:
+        base = os.environ.get("INTERHEART_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        candidates = [
+            os.path.join(base, "VERSION"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION"),
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+    except Exception:
+        pass
+    return "0.0.0"
 
-APP_NAME = "interheart"
+UI_VERSION = read_version()
+COPYRIGHT_YEAR = "2026"
 
-# Må være samme DB som CLI bruker
-DEFAULT_DB_PATH = "/var/lib/interheart/state.db"
-DB_PATH = os.environ.get("INTERHEART_DB", DEFAULT_DB_PATH)
+CLI = os.environ.get("INTERHEART_CLI", "/usr/local/bin/interheart")
+BIND_HOST = os.environ.get("WEBUI_BIND", "0.0.0.0")
+BIND_PORT = int(os.environ.get("WEBUI_PORT", "8088"))
 
-DEFAULT_INTERVAL = int(os.environ.get("INTERHEART_DEFAULT_INTERVAL", "60"))
-MAX_INTERVAL = int(os.environ.get("INTERHEART_MAX_INTERVAL", "3600"))
+LOG_LINES_DEFAULT = 200
+STATE_POLL_SECONDS = 2
 
-NAME_RE = re.compile(r"^[a-zA-Z0-9._-]{2,64}$")
-IP_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
-
-
-def now_ts() -> int:
-    return int(time.time())
-
-
-def connect_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def db_init() -> None:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with connect_db() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS targets (
-              name TEXT PRIMARY KEY,
-              ip TEXT NOT NULL,
-              endpoint TEXT NOT NULL,
-              interval INTEGER NOT NULL,
-              enabled INTEGER NOT NULL DEFAULT 1,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL,
-              last_status TEXT DEFAULT NULL,
-              last_ping INTEGER DEFAULT NULL,
-              last_response INTEGER DEFAULT NULL,
-              last_latency_ms INTEGER DEFAULT NULL,
-              next_due_at INTEGER DEFAULT NULL
-            );
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_targets_enabled ON targets(enabled);")
+STATE_DIR = "/var/lib/interheart"
+RUNTIME_FILE = os.path.join(STATE_DIR, "runtime.json")
+RUN_META_FILE = os.path.join(STATE_DIR, "run_meta.json")
+RUN_OUT_FILE = os.path.join(STATE_DIR, "run_last_output.txt")
 
 
-def validate_name(name: str) -> None:
-    if not NAME_RE.match(name or ""):
-        raise ValueError("Invalid name (2-64 chars: a-z A-Z 0-9 . _ -)")
+# -------------------------
+# Helpers (files + process)
+# -------------------------
+def ensure_state_dir() -> None:
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        for p in [RUNTIME_FILE, RUN_META_FILE, RUN_OUT_FILE]:
+            if not os.path.exists(p):
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write("")
+        try:
+            os.chmod(RUNTIME_FILE, 0o644)
+            os.chmod(RUN_META_FILE, 0o644)
+            os.chmod(RUN_OUT_FILE, 0o644)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+ensure_state_dir()
 
 
-def validate_ip(ip: str) -> None:
-    if not IP_RE.match(ip or ""):
-        raise ValueError("Invalid IP format")
-    parts = ip.split(".")
-    if any(int(p) > 255 for p in parts):
-        raise ValueError("Invalid IP range")
+def run_cmd(args: List[str]) -> Tuple[int, str]:
+    """
+    WebUI runs as root via systemd, so NO sudo needed.
+    """
+    cmd = [CLI] + args
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    out = (p.stdout or "") + ("\n" + p.stderr if p.stderr else "")
+    return p.returncode, out.strip()
 
 
-def validate_interval(interval: int) -> None:
-    if interval < 5 or interval > MAX_INTERVAL:
-        raise ValueError(f"Interval must be between 5 and {MAX_INTERVAL} seconds")
+def journalctl_lines(lines: int) -> str:
+    cmd = ["journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=cat"]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode != 0:
+        raise RuntimeError((p.stderr or "journalctl failed").strip())
+    return (p.stdout or "").strip()
 
 
-def validate_endpoint(endpoint: str) -> None:
-    if not endpoint or not isinstance(endpoint, str):
-        raise ValueError("Endpoint is required")
-    if not (endpoint.startswith("http://") or endpoint.startswith("https://")):
-        raise ValueError("Endpoint must start with http:// or https://")
+def load_run_meta() -> Dict[str, Any]:
+    try:
+        if os.path.exists(RUN_META_FILE):
+            with open(RUN_META_FILE, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            if not raw:
+                return {}
+            return json.loads(raw)
+    except Exception:
+        return {}
+    return {}
 
 
-def row_to_dict(r: sqlite3.Row) -> Dict[str, Any]:
-    return {k: r[k] for k in r.keys()}
+def save_run_meta(meta: Dict[str, Any]) -> None:
+    ensure_state_dir()
+    try:
+        with open(RUN_META_FILE, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        try:
+            os.chmod(RUN_META_FILE, 0o644)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
-def list_targets() -> List[Dict[str, Any]]:
-    with connect_db() as conn:
-        rows = conn.execute("SELECT * FROM targets ORDER BY name COLLATE NOCASE ASC;").fetchall()
-    return [row_to_dict(r) for r in rows]
+def pid_is_running(pid: int) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
 
 
-def get_target(name: str) -> Optional[Dict[str, Any]]:
-    with connect_db() as conn:
-        row = conn.execute("SELECT * FROM targets WHERE name = ?;", (name,)).fetchone()
-    return row_to_dict(row) if row else None
+def human_ts(epoch: int) -> str:
+    if not epoch or epoch <= 0:
+        return "-"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(epoch))
+    except Exception:
+        return "-"
 
 
-def add_target(name: str, ip: str, endpoint: str, interval: int) -> None:
-    ts = now_ts()
-    with connect_db() as conn:
-        existing = conn.execute("SELECT name FROM targets WHERE name = ?;", (name,)).fetchone()
-        if existing:
-            raise ValueError("Target already exists")
-
-        conn.execute(
-            """
-            INSERT INTO targets
-              (name, ip, endpoint, interval, enabled, created_at, updated_at, next_due_at)
-            VALUES (?, ?, ?, ?, 1, ?, ?, ?);
-            """,
-            (name, ip, endpoint, interval, ts, ts, ts),
-        )
-
-
-def delete_target(name: str) -> None:
-    with connect_db() as conn:
-        cur = conn.execute("DELETE FROM targets WHERE name = ?;", (name,))
-        if cur.rowcount == 0:
-            raise ValueError("Target not found")
-
-
-def update_target(
-    name: str,
-    *,
-    new_name: Optional[str] = None,
-    ip: Optional[str] = None,
-    endpoint: Optional[str] = None,
-    interval: Optional[int] = None,
-    enabled: Optional[bool] = None,
-) -> Dict[str, Any]:
-    ts = now_ts()
-
-    with connect_db() as conn:
-        row = conn.execute("SELECT * FROM targets WHERE name = ?;", (name,)).fetchone()
-        if not row:
-            raise ValueError("Target not found")
-
-        current = row_to_dict(row)
-
-        if new_name and new_name != name:
-            exists = conn.execute("SELECT name FROM targets WHERE name = ?;", (new_name,)).fetchone()
-            if exists:
-                raise ValueError("New name already exists")
-
-        fields = []
-        params: List[Any] = []
-
-        if new_name is not None:
-            fields.append("name = ?")
-            params.append(new_name)
-        if ip is not None:
-            fields.append("ip = ?")
-            params.append(ip)
-        if endpoint is not None:
-            fields.append("endpoint = ?")
-            params.append(endpoint)
-        if interval is not None:
-            fields.append("interval = ?")
-            params.append(interval)
-        if enabled is not None:
-            fields.append("enabled = ?")
-            params.append(1 if enabled else 0)
-
-        if not fields:
-            return current
-
-        fields.append("updated_at = ?")
-        params.append(ts)
-        params.append(name)
-
-        conn.execute(f"UPDATE targets SET {', '.join(fields)} WHERE name = ?;", tuple(params))
-
-    return get_target(new_name or name) or {}
+# -------------------------
+# Parse CLI output (old UI)
+# -------------------------
+def parse_list_targets(list_output: str) -> List[Dict[str, Any]]:
+    targets = []
+    in_table = False
+    for line in (list_output or "").splitlines():
+        line = line.rstrip()
+        if line.startswith("--------------------------------------------------------------------------------"):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if line.strip().startswith("NAME") or line.strip().startswith("Targets:"):
+            continue
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        name = parts[0]
+        ip = parts[1]
+        interval = parts[2].replace("s", "").strip()
+        endpoint_masked = parts[3]
+        targets.append({
+            "name": name,
+            "ip": ip,
+            "interval": int(interval) if interval.isdigit() else 60,
+            "endpoint_masked": endpoint_masked
+        })
+    return targets
 
 
-def api_error(message: str, status: int = 400):
-    return jsonify({"ok": False, "error": message}), status
+def parse_status(status_output: str) -> Dict[str, Dict[str, Any]]:
+    state: Dict[str, Dict[str, Any]] = {}
+    in_table = False
+    for line in (status_output or "").splitlines():
+        if line.startswith("--------------------------------------------------------------------------------------------------------------"):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if line.strip().startswith("NAME") or line.strip().startswith("State:"):
+            continue
+        if not line.strip():
+            continue
+
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        name = parts[0]
+        status = parts[1]
+        last_ping = parts[4]
+        last_sent = parts[5]
+        state[name] = {
+            "status": status,
+            "last_ping_epoch": int(last_ping) if last_ping.isdigit() else 0,
+            "last_sent_epoch": int(last_sent) if last_sent.isdigit() else 0,
+        }
+    return state
 
 
-app = Flask(__name__, template_folder="templates", static_folder="static")
+def merged_targets() -> List[Dict[str, Any]]:
+    _, list_out = run_cmd(["list"])
+    targets = parse_list_targets(list_out)
 
-# Flask 3: before_first_request finnes ikke lenger.
-# Vi initialiserer DB ved import/start (idempotent).
-db_init()
+    _, st_out = run_cmd(["status"])
+    state = parse_status(st_out)
+
+    merged = []
+    for t in targets:
+        st = state.get(t["name"], {})
+        status = st.get("status", "unknown")
+        last_ping_epoch = st.get("last_ping_epoch", 0)
+        last_sent_epoch = st.get("last_sent_epoch", 0)
+
+        merged.append({
+            **t,
+            "status": status,
+            "last_ping_human": human_ts(last_ping_epoch),
+            "last_response_human": human_ts(last_sent_epoch),
+            "last_ping_epoch": last_ping_epoch,
+            "last_response_epoch": last_sent_epoch,
+        })
+    return merged
 
 
-@app.get("/")
+# -------------------------
+# Run summary parsing
+# -------------------------
+SUMMARY_RE = re.compile(
+    r"total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)"
+)
+
+def parse_run_summary(text: str):
+    m = SUMMARY_RE.search(text or "")
+    if not m:
+        return None
+    return {
+        "total": int(m.group(1)),
+        "due": int(m.group(2)),
+        "skipped": int(m.group(3)),
+        "ping_ok": int(m.group(4)),
+        "ping_fail": int(m.group(5)),
+        "sent": int(m.group(6)),
+        "curl_fail": int(m.group(7)),
+    }
+
+
+# -------------------------
+# Icons (as SVG strings)
+# -------------------------
+def icon_svg(path_d: str, opacity: float = 0.95) -> str:
+    return (
+        f'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" '
+        f'xmlns="http://www.w3.org/2000/svg" style="opacity:{opacity}">'
+        f'<path d="{path_d}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+        f"</svg>"
+    )
+
+ICONS = {
+    "plus": icon_svg("M12 5v14M5 12h14"),
+    "logs": icon_svg("M4 6h16M4 12h16M4 18h10"),
+    "close": icon_svg("M18 6L6 18M6 6l12 12"),
+    "refresh": icon_svg("M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"),
+    "play": icon_svg("M8 5v14l11-7z"),
+    "more": icon_svg("M12 5h.01M12 12h.01M12 19h.01"),
+    "test": icon_svg("M4 20h16M6 16l6-12 6 12"),
+    "trash": icon_svg("M3 6h18M8 6V4h8v2M9 6v14m6-14v14M6 6l1 16h10l1-16"),
+}
+
+
+# -------------------------
+# Routes (HTML + API)
+# -------------------------
+@APP.get("/")
 def index():
     return render_template(
         "index.html",
-        app_name=APP_NAME,
-        default_interval=DEFAULT_INTERVAL,
-        max_interval=MAX_INTERVAL,
+        targets=merged_targets(),
+        bind_host=BIND_HOST,
+        bind_port=BIND_PORT,
+        ui_version=UI_VERSION,
+        copyright_year=COPYRIGHT_YEAR,
+        log_lines=LOG_LINES_DEFAULT,
+        poll_seconds=STATE_POLL_SECONDS,
+        icons=ICONS,
     )
 
 
-@app.get("/api/targets")
-def api_list_targets():
-    return jsonify({"ok": True, "data": list_targets()})
+@APP.get("/state")
+def state():
+    return jsonify({"updated": int(time.time()), "targets": merged_targets()})
 
 
-@app.get("/api/targets/<name>")
-def api_get_target(name: str):
-    t = get_target(name)
-    if not t:
-        return api_error("Target not found", 404)
-    return jsonify({"ok": True, "data": t})
-
-
-@app.post("/api/targets")
-def api_add_target():
-    payload = request.get_json(silent=True) or {}
+@APP.get("/runtime")
+def runtime():
     try:
-        name = str(payload.get("name", "")).strip()
-        ip = str(payload.get("ip", "")).strip()
-        endpoint = str(payload.get("endpoint", "")).strip()
-        interval = int(payload.get("interval", DEFAULT_INTERVAL))
-
-        validate_name(name)
-        validate_ip(ip)
-        validate_endpoint(endpoint)
-        validate_interval(interval)
-
-        add_target(name, ip, endpoint, interval)
-        return jsonify({"ok": True, "data": get_target(name)})
-    except ValueError as e:
-        return api_error(str(e), 400)
+        if os.path.exists(RUNTIME_FILE):
+            with open(RUNTIME_FILE, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            if raw:
+                data = json.loads(raw)
+                data.setdefault("status", "idle")
+                data.setdefault("current", "")
+                data.setdefault("done", 0)
+                data.setdefault("due", 0)
+                data.setdefault("updated", int(time.time()))
+                return jsonify(data)
     except Exception:
-        return api_error("Unexpected error", 500)
+        pass
+    return jsonify({"status": "idle", "current": "", "done": 0, "due": 0, "updated": int(time.time())})
 
 
-@app.delete("/api/targets/<name>")
-def api_delete_target(name: str):
+@APP.get("/logs")
+def logs():
     try:
-        validate_name(name)
-        delete_target(name)
-        return jsonify({"ok": True})
-    except ValueError as e:
-        msg = str(e)
-        return api_error(msg, 404 if "not found" in msg.lower() else 400)
+        lines = int(request.args.get("lines", str(LOG_LINES_DEFAULT)))
     except Exception:
-        return api_error("Unexpected error", 500)
-
-
-@app.patch("/api/targets/<name>")
-def api_patch_target(name: str):
-    payload = request.get_json(silent=True) or {}
+        lines = LOG_LINES_DEFAULT
+    lines = max(50, min(1000, lines))
+    updated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(time.time())))
 
     try:
-        validate_name(name)
+        text = journalctl_lines(lines)
+        src = "journalctl -t interheart -o cat"
+        actual = len(text.splitlines()) if text else 0
+        return jsonify({"source": src, "lines": actual, "updated": updated, "text": text})
+    except Exception as e:
+        return jsonify({"source": "journalctl (error)", "lines": 1, "updated": updated, "text": f"(journalctl error: {str(e)})"})
 
-        new_name = payload.get("name")
-        ip = payload.get("ip")
-        endpoint = payload.get("endpoint")
-        interval = payload.get("interval")
-        enabled = payload.get("enabled")
 
-        if new_name is not None:
-            new_name = str(new_name).strip()
-            validate_name(new_name)
+@APP.post("/api/run-now")
+def api_run_now():
+    """
+    Start run-now as background process so UI can poll /runtime while it runs.
+    """
+    ensure_state_dir()
 
-        if ip is not None:
-            ip = str(ip).strip()
-            validate_ip(ip)
+    meta = load_run_meta()
+    existing_pid = int(meta.get("pid") or 0)
+    if existing_pid and pid_is_running(existing_pid):
+        return jsonify({"ok": True, "message": "Already running", "pid": existing_pid})
 
-        if endpoint is not None:
-            endpoint = str(endpoint).strip()
-            validate_endpoint(endpoint)
-
-        if interval is not None:
-            interval = int(interval)
-            validate_interval(interval)
-
-        if enabled is not None:
-            enabled = bool(enabled)
-
-        updated = update_target(
-            name,
-            new_name=new_name,
-            ip=ip,
-            endpoint=endpoint,
-            interval=interval,
-            enabled=enabled,
-        )
-        return jsonify({"ok": True, "data": updated})
-    except ValueError as e:
-        msg = str(e)
-        status = 404 if "not found" in msg.lower() else 400
-        return api_error(msg, status)
+    # mark runtime running
+    try:
+        with open(RUNTIME_FILE, "w", encoding="utf-8") as f:
+            json.dump({"status": "running", "current": "", "done": 0, "due": 0, "updated": int(time.time())}, f)
+        try:
+            os.chmod(RUNTIME_FILE, 0o644)
+        except Exception:
+            pass
     except Exception:
-        return api_error("Unexpected error", 500)
+        pass
+
+    cmd = [CLI, "run-now"]
+    try:
+        with open(RUN_OUT_FILE, "w", encoding="utf-8") as out_f:
+            p = subprocess.Popen(cmd, stdout=out_f, stderr=subprocess.STDOUT, text=True)
+        save_run_meta({"pid": p.pid, "started": int(time.time()), "finished": 0, "rc": None})
+        return jsonify({"ok": True, "message": "Started", "pid": p.pid})
+    except Exception as e:
+        save_run_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1})
+        return jsonify({"ok": False, "message": f"Failed to start run-now: {str(e)}"})
 
 
-@app.get("/api/health")
-def api_health():
-    return jsonify({"ok": True, "app": APP_NAME, "db": DB_PATH, "ts": now_ts()})
+@APP.get("/api/run-status")
+def api_run_status():
+    meta = load_run_meta()
+    pid = int(meta.get("pid") or 0)
+    started = int(meta.get("started") or 0)
+    finished = int(meta.get("finished") or 0)
+
+    if pid and pid_is_running(pid):
+        return jsonify({"running": True, "finished": False, "pid": pid, "started": started})
+
+    if started and not finished:
+        meta["finished"] = int(time.time())
+        meta["pid"] = 0
+        save_run_meta(meta)
+
+    return jsonify({
+        "running": False,
+        "finished": bool(started),
+        "pid": pid,
+        "started": started,
+        "finished_at": int(meta.get("finished") or 0)
+    })
+
+
+@APP.get("/api/run-result")
+def api_run_result():
+    meta = load_run_meta()
+    try:
+        if os.path.exists(RUN_OUT_FILE):
+            with open(RUN_OUT_FILE, "r", encoding="utf-8") as f:
+                out = f.read().strip()
+        else:
+            out = ""
+    except Exception:
+        out = ""
+
+    summary = parse_run_summary(out)
+    ok = True
+    if "Unknown command" in out or ("Failed" in out and not out.startswith("OK:")):
+        ok = False
+
+    return jsonify({
+        "ok": ok,
+        "message": out or ("OK" if ok else "Failed"),
+        "summary": summary,
+        "meta": meta,
+    })
+
+
+@APP.post("/api/test")
+def api_test():
+    name = request.form.get("name", "")
+    rc, out = run_cmd(["test", name])
+    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
+
+@APP.post("/api/remove")
+def api_remove():
+    name = request.form.get("name", "")
+    rc, out = run_cmd(["remove", name])
+    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
+
+@APP.post("/api/add")
+def api_add():
+    name = request.form.get("name", "")
+    ip = request.form.get("ip", "")
+    endpoint = request.form.get("endpoint", "")
+    interval = request.form.get("interval", "60")
+    rc, out = run_cmd(["add", name, ip, endpoint, interval])
+    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
+
+
+@APP.post("/api/set-target-interval")
+def api_set_target_interval():
+    name = request.form.get("name", "")
+    sec = request.form.get("seconds", "")
+    rc, out = run_cmd(["set-target-interval", name, sec])
+    return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8088"))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    APP.run(host=BIND_HOST, port=BIND_PORT, threaded=True)
