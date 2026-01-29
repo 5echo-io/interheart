@@ -9,289 +9,408 @@
 </head>
 
 <body>
-<div class="toasts" id="toasts"></div>
-
-<!-- Logs modal -->
-<div class="modal" id="logModal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logs">
-    <div class="modal-head">
-      <div class="modal-title">
-        <b>Logs</b>
-        <span>Last <span id="logLinesLbl">{{ log_lines }}</span> lines</span>
-      </div>
-      <div class="modal-actions">
-        <input id="logFilter" placeholder="filter (e.g. anl-0161)" style="height:34px; padding:0 12px; border-radius:12px; min-width:220px;">
-
-        <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">
-          {{ icons.refresh|safe }} Reload
-        </button>
-
-        <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-               xmlns="http://www.w3.org/2000/svg" style="opacity:.98">
-            <path d="M9 9h11v11H9z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-            <path d="M4 4h11v11H4z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-          </svg>
-          Copy
-        </button>
-
-        <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">
-          {{ icons.close|safe }} Close
-        </button>
-      </div>
-    </div>
-
-    <div class="modal-body">
-      <div class="logbox" id="logBox">Loading logs…</div>
-      <div class="hint" id="logMeta">-</div>
-    </div>
-
-    <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
-      <div class="hint">interheart <code>{{ ui_version }}</code></div>
-      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
-    </div>
+  <!-- Toast -->
+  <div id="toast" class="toast" data-kind="ok" aria-live="polite" aria-atomic="true">
+    <div id="toastInner" class="toast__inner"></div>
   </div>
-</div>
 
-<!-- Run summary modal -->
-<div class="modal" id="runModal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Run summary">
-    <div class="modal-head">
-      <div class="modal-title">
-        <b>Run summary</b>
-        <span id="runTitleMeta">-</span>
-      </div>
-      <div class="modal-actions">
-        <div class="run-live" id="runLive" style="display:none;">
-          <span class="pulse"></span>
-          <span id="runLiveText">Running…</span>
+  <div class="wrap">
+    <!-- Top -->
+    <div class="top">
+      <div class="brand">
+        <div class="title">
+          interheart
+          <span class="badgePill">targets</span>
         </div>
-        <button class="btn btn-ghost btn-mini" id="btnCloseRun" type="button">
-          {{ icons.close|safe }} Close
-        </button>
-      </div>
-    </div>
-
-    <div class="modal-body">
-      <div class="summary-wrap">
-        <div class="metric"><b>Total</b><div class="v" id="mTotal">-</div></div>
-        <div class="metric"><b>Checked</b><div class="v" id="mDue">-</div></div>
-        <div class="metric"><b>Skipped</b><div class="v" id="mSkipped">-</div></div>
-        <div class="metric"><b>Ping OK</b><div class="v" id="mOk">-</div></div>
-        <div class="metric"><b>Ping fail</b><div class="v" id="mFail">-</div></div>
-      </div>
-
-      <div class="metric">
-        <b>Progress</b>
-        <div class="bar"><div id="runBar"></div></div>
-        <div class="summary-sub">
-          <span id="runNowLine">Idle</span>
-          <span id="runDoneLine">done: 0 / 0</span>
+        <div class="subtitle">
+          Powered by <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a>
+          <span class="muted">•</span>
+          <span class="muted">WebUI: <code>{{ bind_host }}:{{ bind_port }}</code></span>
         </div>
       </div>
 
-      <div class="metric">
-        <b>Endpoint</b>
-        <div class="summary-sub" style="margin-top:0;">
-          <span>Responses</span><span id="mSent">-</span>
+      <div class="rightActions">
+        <button class="btn btn--ghost btn--mini" id="btnOpenLogs" type="button">Logs</button>
+        <button class="btn btn--ghost btn--mini" id="btnOpenAdd" type="button">Add</button>
+        <button class="btn btn--primary btn--mini" id="btnRunNow" type="button">Run now</button>
+      </div>
+    </div>
+
+    <!-- Card -->
+    <div class="card">
+      <div class="cardTop">
+        <div class="hint">
+          “Last ping” / “Last response” updates live (<span class="mono">{{ poll_seconds }}</span>s refresh)
         </div>
-        <div class="summary-sub" style="margin-top:4px;">
-          <span>Endpoint failures</span><span id="mCurlFail">-</span>
-        </div>
-      </div>
 
-      <div class="danger-box" id="runHintBox" style="display:none;">
-        <b style="display:block; margin-bottom:6px;">Note</b>
-        <div class="hint" id="runHintText" style="color:rgba(255,255,255,.80)"></div>
-      </div>
-
-      <div class="hint" id="runRaw" style="display:none;"></div>
-    </div>
-
-    <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
-      <div class="hint">interheart <code>{{ ui_version }}</code></div>
-      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
-    </div>
-  </div>
-</div>
-
-<!-- Add modal -->
-<div class="modal" id="addModal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
-    <div class="modal-head">
-      <div class="modal-title">
-        <b>Add target</b>
-        <span>Ping target, then call endpoint on success</span>
-      </div>
-      <div class="modal-actions"></div>
-    </div>
-
-    <div class="modal-body">
-      <form id="addForm">
-        <div class="grid3">
-          <div class="field">
-            <label>Name</label>
-            <input name="name" placeholder="e.g. anl-0161-core-gw" required>
+        <div class="filters">
+          <div class="filters__left">
+            <input id="filterInput" class="input input--filter" placeholder="Filter… (name, ip, status, timestamps)" />
           </div>
 
-          <div class="field">
-            <label>IP address</label>
-            <input name="ip" placeholder="e.g. 10.5.0.1" required>
-          </div>
-
-          <div class="field">
-            <label>Interval (sec)</label>
-            <input name="interval" type="number" min="10" max="86400" step="1" placeholder="60" required>
-          </div>
-        </div>
-
-        <div class="field" style="margin-top:12px;">
-          <label>Endpoint URL</label>
-          <input name="endpoint" placeholder="https://..." required>
-        </div>
-
-        <div class="modal-foot-actions">
-          <button class="btn btn-primary" type="submit" id="btnAddSubmit" data-default-html="">
-            {{ icons.plus|safe }} Add target
-          </button>
-          <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
-        </div>
-
-        <div class="hint" style="margin-top:10px;">
-          Tip: critical targets 30–120s • less critical 300–900s
-        </div>
-      </form>
-    </div>
-
-    <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
-      <div class="hint">interheart <code>{{ ui_version }}</code></div>
-      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
-    </div>
-  </div>
-</div>
-
-<!-- Confirm remove modal -->
-<div class="modal" id="confirmModal" aria-hidden="true">
-  <div class="modal-card small" role="dialog" aria-modal="true" aria-label="Confirm remove">
-    <div class="modal-head">
-      <div class="modal-title">
-        <b>Confirm remove</b>
-        <span>This cannot be undone</span>
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-ghost btn-mini" id="btnCloseConfirm" type="button">
-          {{ icons.close|safe }} Close
-        </button>
-      </div>
-    </div>
-
-    <div class="modal-body">
-      <div class="danger-box">
-        You are about to remove:
-        <div style="margin-top:8px;">
-          <code id="confirmName" style="font-family:var(--mono); font-size:13px;"></code>
-        </div>
-      </div>
-
-      <div class="modal-foot-actions" style="margin-top:14px;">
-        <button class="btn btn-danger" id="btnConfirmRemove" type="button">Remove</button>
-        <button class="btn btn-ghost" id="btnCancelRemove" type="button">Cancel</button>
-      </div>
-    </div>
-
-    <div class="footer" style="border-top:1px solid var(--line); padding:10px 14px; margin:0;">
-      <div class="hint">interheart <code>{{ ui_version }}</code></div>
-      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
-    </div>
-  </div>
-</div>
-
-<div class="wrap">
-  <div class="top">
-    <div class="brand">
-      <div class="title">interheart <span class="badge">targets</span></div>
-      <div class="subtitle">Powered by <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a></div>
-    </div>
-
-    <div class="right-actions">
-      <button class="btn btn-ghost btn-mini" id="openLogs" type="button">{{ icons.logs|safe }} Logs</button>
-      <button class="btn btn-ghost btn-mini" id="openAdd" type="button">{{ icons.plus|safe }} Add</button>
-      <button class="btn btn-primary btn-mini" id="btnRunNow" type="button" data-default-html="">
-        {{ icons.play|safe }} Run now
-      </button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="hint">“Last ping” / “Last response” updates live ({{ poll_seconds }}s refresh)</div>
-    <div class="sep"></div>
-
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 210px;">Name</th>
-          <th style="width: 130px;">IP</th>
-          <th style="width: 140px;">Status</th>
-          <th style="width: 150px;">Interval</th>
-          <th style="width: 200px;">Last ping</th>
-          <th style="width: 200px;">Last response</th>
-          <th>Endpoint</th>
-          <th style="width: 90px;">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for t in targets %}
-        <tr data-name="{{ t.name }}" data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
-          <td><code>{{ t.name }}</code></td>
-          <td><code>{{ t.ip }}</code></td>
-          <td>
-            <span class="chip status-chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
-              <span class="dot"></span>
-              <span class="status-text" style="font-weight:900; text-transform:uppercase;">{{ t.status }}</span>
+          <div class="filters__right">
+            <span class="stat">
+              <span class="muted">Filtered</span>
+              <span class="mono" id="filterCount">0</span>
             </span>
-          </td>
+            <span class="muted">/</span>
+            <span class="stat">
+              <span class="muted">Total</span>
+              <span class="mono" id="totalCount">0</span>
+            </span>
+          </div>
+        </div>
+      </div>
 
-          <td>
-            <div class="interval-wrap">
-              <input class="interval-input" data-interval="{{ t.interval }}" value="{{ t.interval }}" inputmode="numeric" />
-              <span class="interval-suffix">s</span>
-            </div>
-          </td>
+      <div class="sep"></div>
 
-          <td><code class="last-ping">{{ t.last_ping_human }}</code></td>
-          <td><code class="last-resp">{{ t.last_response_human }}</code></td>
-          <td><code class="endpoint">{{ t.endpoint_masked }}</code></td>
+      <div class="tableWrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th style="width: 240px;">Name</th>
+              <th style="width: 140px;">IP</th>
+              <th style="width: 150px;">Status</th>
+              <th style="width: 160px;">Interval</th>
+              <th style="width: 210px;">Last ping</th>
+              <th style="width: 210px;">Last response</th>
+              <th style="width: 90px; text-align:right;">Actions</th>
+            </tr>
+          </thead>
 
-          <td style="text-align:right;">
-            <div class="menu">
-              <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">
-                {{ icons.more|safe }}
-              </button>
-              <div class="menu-dd" role="menu">
-                <button class="menu-item" data-action="test" type="button">{{ icons.test|safe }} Test</button>
-                <button class="menu-item danger" data-action="remove" type="button">{{ icons.trash|safe }} Remove</button>
-              </div>
-            </div>
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+          <tbody id="targetsBody">
+            <!-- app.js renders rows here -->
+          </tbody>
+        </table>
+      </div>
 
-    <div class="footer">
-      <div class="hint">WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code></div>
-      <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      <div class="footer">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div class="hint">
+          <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved
+        </div>
+      </div>
     </div>
   </div>
-</div>
 
-<script>
-  window.__INTERHEART__ = {
-    pollSeconds: {{ poll_seconds|int }},
-    logLines: {{ log_lines|int }},
-    uiVersion: "{{ ui_version }}"
-  };
-</script>
-<script src="/static/app.js?v={{ ui_version }}"></script>
+  <!-- ============ MODALS ============ -->
+
+  <!-- Logs Modal -->
+  <div class="modal" id="logsModal" aria-hidden="true">
+    <div class="modal__backdrop"></div>
+    <div class="modal__card" role="dialog" aria-modal="true" aria-label="Logs">
+      <div class="modal__head">
+        <div class="modal__titleLine">
+          <div class="modal__title">
+            <b>Logs</b>
+          </div>
+          <div class="modal__metaInline">
+            <span class="muted">Last</span>
+            <span class="mono" id="logsLinesLbl">{{ log_lines }}</span>
+            <span class="muted">lines</span>
+          </div>
+        </div>
+
+        <div class="modal__actions">
+          <input id="logsFilter" class="input input--mini input--filter" placeholder="filter (e.g. anl-0161)" />
+          <button class="btn btn--ghost btn--mini" id="btnReloadLogs" type="button">Reload</button>
+          <button class="btn btn--ghost btn--mini" id="btnCopyLogs" type="button">Copy</button>
+          <button class="btn btn--ghost btn--mini" id="btnCloseLogs" type="button" onclick="document.getElementById('logsModal').classList.remove('modal--open');document.body.style.overflow='';">Close</button>
+        </div>
+      </div>
+
+      <div class="modal__body">
+        <pre class="logbox" id="logsBox">Loading logs…</pre>
+        <div class="hint" id="logsMeta">-</div>
+      </div>
+
+      <div class="modal__foot">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div class="hint"><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Modal -->
+  <div class="modal" id="addModal" aria-hidden="true">
+    <div class="modal__backdrop"></div>
+    <div class="modal__card" role="dialog" aria-modal="true" aria-label="Add target">
+      <div class="modal__head">
+        <div class="modal__title">
+          <b>Add target</b>
+          <span class="muted">Ping target, then call endpoint on success</span>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost btn--mini" type="button" onclick="document.getElementById('addModal').classList.remove('modal--open');document.body.style.overflow='';">Close</button>
+        </div>
+      </div>
+
+      <div class="modal__body">
+        <form id="addForm" class="form">
+          <div class="grid3">
+            <div class="field">
+              <label>Name</label>
+              <input class="input" name="name" placeholder="e.g. anl-0161-core-gw" required />
+            </div>
+
+            <div class="field">
+              <label>IP address</label>
+              <input class="input" name="ip" placeholder="e.g. 10.5.0.1" required />
+            </div>
+
+            <div class="field">
+              <label>Interval (sec)</label>
+              <input class="input" name="interval" type="number" min="10" max="86400" step="1" placeholder="60" required />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Endpoint URL</label>
+            <input class="input" name="endpoint" placeholder="https://..." required />
+          </div>
+
+          <div class="modalFootActions">
+            <button class="btn btn--primary" id="btnAddSubmit" type="submit">Add target</button>
+            <button class="btn btn--ghost" id="btnAddCancel" type="button" onclick="document.getElementById('addModal').classList.remove('modal--open');document.body.style.overflow='';">Cancel</button>
+          </div>
+
+          <div class="hint">
+            Tip: critical targets 30–120s • less critical 300–900s
+          </div>
+        </form>
+      </div>
+
+      <div class="modal__foot">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div class="hint"><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Remove Confirm Modal -->
+  <div class="modal" id="removeModal" aria-hidden="true">
+    <div class="modal__backdrop"></div>
+    <div class="modal__card modal__card--small" role="dialog" aria-modal="true" aria-label="Confirm remove">
+      <div class="modal__head">
+        <div class="modal__title">
+          <b>Confirm remove</b>
+          <span class="muted">This cannot be undone</span>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost btn--mini" type="button" onclick="document.getElementById('removeModal').classList.remove('modal--open');document.body.style.overflow='';">Close</button>
+        </div>
+      </div>
+
+      <div class="modal__body">
+        <div class="dangerBox">
+          You are about to remove:
+          <div class="mono dangerBox__name" id="removeName">-</div>
+        </div>
+
+        <div class="modalFootActions">
+          <button class="btn btn--danger" id="btnRemoveConfirm" type="button">Remove</button>
+          <button class="btn btn--ghost" id="btnRemoveCancel" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <div class="modal__foot">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div class="hint"><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Information Modal -->
+  <div class="modal" id="infoModal" aria-hidden="true">
+    <div class="modal__backdrop"></div>
+    <div class="modal__card" role="dialog" aria-modal="true" aria-label="Target information">
+      <div class="modal__head">
+        <div class="modal__title">
+          <b>Target information</b>
+          <span class="muted">Details about the selected target</span>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost btn--mini" id="btnInfoClose" type="button">Close</button>
+        </div>
+      </div>
+
+      <div class="modal__body">
+        <div class="infoGrid">
+          <div class="infoItem">
+            <div class="muted">Name</div>
+            <div class="mono" id="infoName">-</div>
+          </div>
+          <div class="infoItem">
+            <div class="muted">IP</div>
+            <div class="mono" id="infoIp">-</div>
+          </div>
+          <div class="infoItem">
+            <div class="muted">Status</div>
+            <div class="mono" id="infoStatus">-</div>
+          </div>
+          <div class="infoItem">
+            <div class="muted">Enabled</div>
+            <div class="mono" id="infoEnabled">-</div>
+          </div>
+
+          <div class="infoItem">
+            <div class="muted">Interval</div>
+            <div class="mono" id="infoInterval">-</div>
+          </div>
+          <div class="infoItem">
+            <div class="muted">Last ping</div>
+            <div class="mono" id="infoLastPing">-</div>
+          </div>
+          <div class="infoItem">
+            <div class="muted">Last response</div>
+            <div class="mono" id="infoLastResp">-</div>
+          </div>
+          <div class="infoItem">
+            <div class="muted">Latency (ms)</div>
+            <div class="mono" id="infoLatency">-</div>
+          </div>
+
+          <div class="infoItem infoItem--full">
+            <div class="muted">Endpoint</div>
+            <div class="mono" id="infoEndpoint">-</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal__foot">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div class="hint"><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Modal -->
+  <div class="modal" id="editModal" aria-hidden="true">
+    <div class="modal__backdrop"></div>
+    <div class="modal__card" role="dialog" aria-modal="true" aria-label="Edit target">
+      <div class="modal__head">
+        <div class="modal__title">
+          <b>Edit target</b>
+          <span class="muted">Rename, change IP/endpoint, interval & enabled state</span>
+        </div>
+        <div class="modal__actions">
+          <button class="btn btn--ghost btn--mini" type="button" onclick="document.getElementById('editModal').classList.remove('modal--open');document.body.style.overflow='';">Close</button>
+        </div>
+      </div>
+
+      <div class="modal__body">
+        <form id="editForm" class="form">
+          <input type="hidden" name="old_name" id="editOldName" />
+
+          <div class="grid3">
+            <div class="field">
+              <label>New name</label>
+              <input class="input" name="new_name" id="editNewName" required />
+            </div>
+
+            <div class="field">
+              <label>IP address</label>
+              <input class="input" name="ip" id="editIp" required />
+            </div>
+
+            <div class="field">
+              <label>Interval (sec)</label>
+              <input class="input" name="interval" id="editInterval" type="number" min="10" max="86400" step="1" required />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Endpoint</label>
+            <input class="input" name="endpoint" id="editEndpoint" required />
+          </div>
+
+          <div class="grid2">
+            <div class="field">
+              <label>Enabled (1/0)</label>
+              <input class="input" name="enabled" id="editEnabled" type="number" min="0" max="1" step="1" required />
+            </div>
+          </div>
+
+          <div class="modalFootActions">
+            <button class="btn btn--primary" id="btnEditSave" type="submit">Save</button>
+            <button class="btn btn--ghost" id="btnEditCancel" type="button">Cancel</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="modal__foot">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div class="hint"><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Run Modal -->
+  <div class="modal" id="runModal" aria-hidden="true">
+    <div class="modal__backdrop"></div>
+    <div class="modal__card" role="dialog" aria-modal="true" aria-label="Run summary">
+      <div class="modal__head">
+        <div class="modal__titleLine">
+          <div class="modal__title">
+            <b>Run summary</b>
+            <span class="muted" id="runTitleMeta">-</span>
+          </div>
+
+          <div class="modal__actions">
+            <div class="runLive" id="runLive" style="display:none;">
+              <span class="runLive__dot"></span>
+              <span class="mono" id="runLiveText">Running…</span>
+            </div>
+            <button class="btn btn--ghost btn--mini" id="btnRunClose" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal__body">
+        <div class="summaryGrid">
+          <div class="metric"><b>Total</b><div class="v" id="mTotal">-</div></div>
+          <div class="metric"><b>Checked</b><div class="v" id="mDue">-</div></div>
+          <div class="metric"><b>Skipped</b><div class="v" id="mSkipped">-</div></div>
+          <div class="metric"><b>Ping OK</b><div class="v" id="mOk">-</div></div>
+          <div class="metric"><b>Ping fail</b><div class="v" id="mFail">-</div></div>
+        </div>
+
+        <div class="metric">
+          <b>Progress</b>
+          <div class="bar"><div id="runBar"></div></div>
+          <div class="summarySub">
+            <span id="runNowLine">Idle</span>
+            <span id="runDoneLine">done: 0 / 0</span>
+          </div>
+        </div>
+
+        <div class="metric">
+          <b>Endpoint</b>
+          <div class="summarySub">
+            <span>Responses</span><span class="mono" id="mSent">-</span>
+          </div>
+          <div class="summarySub">
+            <span>Endpoint failures</span><span class="mono" id="mCurlFail">-</span>
+          </div>
+        </div>
+
+        <div class="dangerBox" id="runHintBox" style="display:none;">
+          <b>Note</b>
+          <div class="hint" id="runHintText" style="margin-top:6px;"></div>
+        </div>
+
+        <div class="hint" id="runRaw" style="display:none;"></div>
+      </div>
+
+      <div class="modal__foot">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div class="hint"><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- JS -->
+  <script src="/static/app.js?v={{ ui_version }}"></script>
+
 </body>
 </html>
