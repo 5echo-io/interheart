@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="no">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>{{ app_name }}</title>
+
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <div class="brand">
+          <div class="brand__dot"></div>
+          <div class="brand__text">
+            <div class="brand__title">{{ app_name }}</div>
+            <div class="brand__subtitle">Targets & health checks</div>
+          </div>
+        </div>
+
+        <div class="topbar__actions">
+          <button class="btn btn--primary" id="btnAdd">Add target</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <div class="card__header">
+          <div>
+            <h2 class="card__title">Targets</h2>
+            <p class="card__hint" id="hintLine">Loading…</p>
+          </div>
+
+          <div class="card__headerRight">
+            <button class="btn btn--ghost" id="btnRefresh">Refresh</button>
+          </div>
+        </div>
+
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th style="width: 44px;">On</th>
+                <th>Name</th>
+                <th style="width: 200px;">IP</th>
+                <th class="col-interval">Interval</th>
+                <th style="width: 200px;">Status</th>
+                <th style="width: 120px; text-align:right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyTargets">
+              <tr>
+                <td colspan="6" class="td-muted">Loading…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <span class="footer__pill">Default interval: {{ default_interval }}s</span>
+        <span class="footer__pill">Max interval: {{ max_interval }}s</span>
+        <a class="footer__link" href="/api/health" target="_blank" rel="noreferrer">API health</a>
+      </footer>
+    </main>
+
+    <!-- Toast -->
+    <div class="toast" id="toast" aria-live="polite" aria-atomic="true">
+      <div class="toast__inner" id="toastInner"></div>
+    </div>
+
+    <!-- MODAL: Add/Edit -->
+    <div class="modal" id="modalEdit" aria-hidden="true">
+      <div class="modal__backdrop" data-close="modalEdit"></div>
+      <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modalEditTitle">
+        <div class="modal__header">
+          <h3 class="modal__title" id="modalEditTitle">Add target</h3>
+          <button class="iconbtn" title="Close" data-close="modalEdit">✕</button>
+        </div>
+
+        <div class="modal__body">
+          <div class="grid">
+            <div class="field">
+              <label class="label" for="fName">Name</label>
+              <input class="input" id="fName" placeholder="core-router-01" autocomplete="off" />
+              <div class="help">2–64 chars: a-z A-Z 0-9 . _ -</div>
+            </div>
+
+            <div class="field">
+              <label class="label" for="fIP">IP</label>
+              <input class="input" id="fIP" placeholder="10.5.0.10" autocomplete="off" />
+            </div>
+
+            <div class="field">
+              <label class="label" for="fEndpoint">Endpoint URL</label>
+              <input class="input" id="fEndpoint" placeholder="https://example.com/health" autocomplete="off" />
+              <div class="help">Used by the worker. Not shown in the main table.</div>
+            </div>
+
+            <div class="field">
+              <label class="label" for="fInterval">Interval (seconds)</label>
+              <input class="input" id="fInterval" type="number" min="5" max="{{ max_interval }}" value="{{ default_interval }}" />
+              <div class="help">Keep it sane. 5s – {{ max_interval }}s.</div>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="row row--space">
+            <div class="muted" id="editModeHint">Creates a new target.</div>
+            <div class="row">
+              <button class="btn" data-close="modalEdit">Cancel</button>
+              <button class="btn btn--primary" id="btnSaveTarget">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Remove -->
+    <div class="modal" id="modalRemove" aria-hidden="true">
+      <div class="modal__backdrop" data-close="modalRemove"></div>
+      <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modalRemoveTitle">
+        <div class="modal__header">
+          <h3 class="modal__title" id="modalRemoveTitle">Remove target</h3>
+          <button class="iconbtn" title="Close" data-close="modalRemove">✕</button>
+        </div>
+
+        <div class="modal__body">
+          <p class="modal__text">
+            You’re about to remove <strong id="removeName">—</strong>.
+            This deletes it from the database.
+          </p>
+
+          <div class="divider"></div>
+
+          <div class="row row--end">
+            <!-- Rekkefølge: Remove først, Cancel etterpå (som du ønsket) -->
+            <button class="btn btn--danger" id="btnConfirmRemove">Remove</button>
+            <button class="btn" data-close="modalRemove">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Information -->
+    <div class="modal" id="modalInfo" aria-hidden="true">
+      <div class="modal__backdrop" data-close="modalInfo"></div>
+      <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="modalInfoTitle">
+        <div class="modal__header">
+          <h3 class="modal__title" id="modalInfoTitle">Target information</h3>
+          <button class="iconbtn" title="Close" data-close="modalInfo">✕</button>
+        </div>
+
+        <div class="modal__body">
+          <div class="infoGrid" id="infoGrid"></div>
+
+          <div class="divider"></div>
+
+          <div class="row row--end">
+            <button class="btn" data-close="modalInfo">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // --- tiny helpers ---
+      const $ = (id) => document.getElementById(id);
+
+      const state = {
+        targets: [],
+        editMode: "add", // add | edit
+        currentName: null, // for edit/remove/info
+      };
+
+      function showToast(text, kind = "ok") {
+        const el = $("toast");
+        const inner = $("toastInner");
+        inner.textContent = text;
+        el.dataset.kind = kind;
+        el.classList.add("toast--show");
+        window.clearTimeout(showToast._t);
+        showToast._t = window.setTimeout(() => el.classList.remove("toast--show"), 2600);
+      }
+
+      function openModal(id) {
+        const m = $(id);
+        m.setAttribute("aria-hidden", "false");
+        m.classList.add("modal--open");
+      }
+
+      function closeModal(id) {
+        const m = $(id);
+        m.setAttribute("aria-hidden", "true");
+        m.classList.remove("modal--open");
+      }
+
+      document.addEventListener("click", (e) => {
+        const t = e.target;
+        const closeId = t?.getAttribute?.("data-close");
+        if (closeId) closeModal(closeId);
+      });
+
+      async function api(url, options) {
+        const res = await fetch(url, {
+          headers: { "Content-Type": "application/json" },
+          ...options,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          const msg = data?.error || "Request failed";
+          throw new Error(msg);
+        }
+        return data;
+      }
+
+      function statusBadge(t) {
+        // Best-effort: viser sist kjent status i DB (worker fyller dette)
+        const s = (t.last_status || "unknown").toLowerCase();
+        const label =
+          s === "up" ? "Up" :
+          s === "down" ? "Down" :
+          s === "degraded" ? "Degraded" :
+          s === "paused" ? "Paused" :
+          "Unknown";
+
+        const cls =
+          s === "up" ? "badge badge--up" :
+          s === "down" ? "badge badge--down" :
+          s === "degraded" ? "badge badge--warn" :
+          "badge";
+
+        return `<span class="${cls}">${label}</span>`;
+      }
+
+      function intervalText(t) {
+        const v = Number(t.interval || 0);
+        if (!v) return "—";
+        return `${v}s`;
+      }
+
+      function render() {
+        const tbody = $("tbodyTargets");
+        const items = state.targets || [];
+
+        if (!items.length) {
+          tbody.innerHTML = `<tr><td colspan="6" class="td-muted">No targets yet.</td></tr>`;
+          $("hintLine").textContent = "0 targets";
+          return;
+        }
+
+        $("hintLine").textContent = `${items.length} target${items.length === 1 ? "" : "s"} loaded`;
+
+        tbody.innerHTML = items.map((t) => {
+          const enabled = !!t.enabled;
+
+          return `
+            <tr>
+              <td>
+                <label class="switch">
+                  <input type="checkbox" ${enabled ? "checked" : ""} data-toggle="${t.name}">
+                  <span class="switch__ui"></span>
+                </label>
+              </td>
+              <td class="td-strong">${escapeHtml(t.name)}</td>
+              <td class="td-mono">${escapeHtml(t.ip || "—")}</td>
+              <td class="td-mono col-interval">${intervalText(t)}</td>
+              <td>${statusBadge(t)}</td>
+              <td style="text-align:right;">
+                <div class="dropdown">
+                  <button class="btn btn--ghost btn--sm" data-dd="${t.name}">Actions ▾</button>
+                  <div class="dropdown__menu" id="dd-${cssId(t.name)}">
+                    <button class="dropdown__item" data-action="info" data-name="${escapeAttr(t.name)}">Information</button>
+                    <button class="dropdown__item" data-action="edit" data-name="${escapeAttr(t.name)}">Edit</button>
+                    <div class="dropdown__sep"></div>
+                    <button class="dropdown__item dropdown__item--danger" data-action="remove" data-name="${escapeAttr(t.name)}">Remove</button>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join("");
+      }
+
+      function cssId(s) {
+        return String(s).replace(/[^a-zA-Z0-9_-]/g, "_");
+      }
+
+      function escapeHtml(s) {
+        return String(s ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function escapeAttr(s) {
+        return escapeHtml(s).replaceAll('"', "&quot;");
+      }
+
+      async function loadTargets() {
+        $("hintLine").textContent = "Loading…";
+        const out = await api("/api/targets");
+        state.targets = out.data || [];
+        render();
+      }
+
+      function resetEditForm() {
+        $("fName").value = "";
+        $("fIP").value = "";
+        $("fEndpoint").value = "";
+        $("fInterval").value = "{{ default_interval }}";
+      }
+
+      function setEditMode(mode, target) {
+        state.editMode = mode;
+
+        if (mode === "add") {
+          state.currentName = null;
+          $("modalEditTitle").textContent = "Add target";
+          $("editModeHint").textContent = "Creates a new target.";
+          resetEditForm();
+          return;
+        }
+
+        // edit mode
+        state.currentName = target.name;
+        $("modalEditTitle").textContent = "Edit target";
+        $("editModeHint").textContent = "Edits the existing target (name/IP/endpoint/interval).";
+
+        $("fName").value = target.name || "";
+        $("fIP").value = target.ip || "";
+        $("fEndpoint").value = target.endpoint || "";
+        $("fInterval").value = String(target.interval ?? "{{ default_interval }}");
+      }
+
+      async function saveTarget() {
+        const payload = {
+          name: $("fName").value.trim(),
+          ip: $("fIP").value.trim(),
+          endpoint: $("fEndpoint").value.trim(),
+          interval: Number($("fInterval").value),
+        };
+
+        if (state.editMode === "add") {
+          await api("/api/targets", { method: "POST", body: JSON.stringify(payload) });
+          showToast("Target created", "ok");
+          closeModal("modalEdit");
+          await loadTargets();
+          return;
+        }
+
+        // patch existing (kan også endre name)
+        await api(`/api/targets/${encodeURIComponent(state.currentName)}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+
+        showToast("Target updated", "ok");
+        closeModal("modalEdit");
+        await loadTargets();
+      }
+
+      function openRemove(name) {
+        state.currentName = name;
+        $("removeName").textContent = name;
+        openModal("modalRemove");
+      }
+
+      async function confirmRemove() {
+        const name = state.currentName;
+        await api(`/api/targets/${encodeURIComponent(name)}`, { method: "DELETE" });
+        showToast("Target removed", "ok");
+        closeModal("modalRemove");
+        await loadTargets();
+      }
+
+      function openInfo(target) {
+        state.currentName = target.name;
+
+        const lines = [
+          ["Name", target.name],
+          ["IP", target.ip || "—"],
+          ["Endpoint URL", target.endpoint || "—"],
+          ["Interval", intervalText(target)],
+          ["Enabled", target.enabled ? "Yes" : "No"],
+          ["Last status", (target.last_status || "unknown")],
+          ["Last ping (epoch)", target.last_ping ?? "—"],
+          ["Last response (epoch)", target.last_response ?? "—"],
+          ["Last latency (ms)", target.last_latency_ms ?? "—"],
+          ["Next due (epoch)", target.next_due_at ?? "—"],
+          ["Created", target.created_at ?? "—"],
+          ["Updated", target.updated_at ?? "—"],
+        ];
+
+        $("infoGrid").innerHTML = lines.map(([k, v]) => `
+          <div class="infoRow">
+            <div class="infoKey">${escapeHtml(k)}</div>
+            <div class="infoVal">${escapeHtml(v)}</div>
+          </div>
+        `).join("");
+
+        openModal("modalInfo");
+      }
+
+      // dropdown handling
+      document.addEventListener("click", (e) => {
+        const t = e.target;
+
+        // Toggle dropdown
+        const ddName = t?.getAttribute?.("data-dd");
+        if (ddName) {
+          const id = `dd-${cssId(ddName)}`;
+          const menu = document.getElementById(id);
+          const open = menu.classList.contains("dropdown__menu--open");
+
+          // close others
+          document.querySelectorAll(".dropdown__menu--open").forEach((m) => m.classList.remove("dropdown__menu--open"));
+          if (!open) menu.classList.add("dropdown__menu--open");
+          e.stopPropagation();
+          return;
+        }
+
+        // Action click
+        const action = t?.getAttribute?.("data-action");
+        const name = t?.getAttribute?.("data-name");
+        if (action && name) {
+          document.querySelectorAll(".dropdown__menu--open").forEach((m) => m.classList.remove("dropdown__menu--open"));
+
+          const target = (state.targets || []).find((x) => x.name === name);
+          if (!target) return;
+
+          if (action === "remove") openRemove(name);
+          if (action === "info") openInfo(target);
+          if (action === "edit") {
+            setEditMode("edit", target);
+            openModal("modalEdit");
+          }
+          return;
+        }
+
+        // click outside closes dropdowns
+        document.querySelectorAll(".dropdown__menu--open").forEach((m) => m.classList.remove("dropdown__menu--open"));
+      });
+
+      // Toggle enable
+      document.addEventListener("change", async (e) => {
+        const t = e.target;
+        const name = t?.getAttribute?.("data-toggle");
+        if (!name) return;
+
+        const enabled = !!t.checked;
+        try {
+          await api(`/api/targets/${encodeURIComponent(name)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled }),
+          });
+          showToast(enabled ? "Enabled" : "Disabled", "ok");
+          await loadTargets();
+        } catch (err) {
+          showToast(err.message || "Failed", "err");
+          // revert UI
+          t.checked = !enabled;
+        }
+      });
+
+      // buttons
+      $("btnRefresh").addEventListener("click", () => loadTargets().catch((e) => showToast(e.message, "err")));
+      $("btnAdd").addEventListener("click", () => {
+        setEditMode("add", null);
+        openModal("modalEdit");
+      });
+      $("btnSaveTarget").addEventListener("click", () => saveTarget().catch((e) => showToast(e.message, "err")));
+      $("btnConfirmRemove").addEventListener("click", () => confirmRemove().catch((e) => showToast(e.message, "err")));
+
+      // initial load
+      loadTargets().catch((e) => showToast(e.message, "err"));
+    </script>
+  </body>
+</html>
