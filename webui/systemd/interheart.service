@@ -1,6 +1,5 @@
-# webui/systemd/interheart.service
 [Unit]
-Description=5echo interheart runner (scheduled)
+Description=5echo interheart runner (scheduler tick)
 After=network-online.target
 Wants=network-online.target
 
