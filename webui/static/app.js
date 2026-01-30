@@ -644,6 +644,17 @@ async function openInfo(name){
   return "status-unknown";
 }
 
+function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
+  const st = String(status||"unknown").toLowerCase();
+  const isEnabled = Number(enabled||0) === 1;
+  const hbFail = isEnabled && st === "down" && Number(lastRttMs||-1) >= 0 && Number(lastRespEpoch||0) > 0;
+  if (!isEnabled) return "DISABLED";
+  if (st === "up") return "OK";
+  if (hbFail) return "HEARTBEAT FAIL";
+  if (st === "down") return "FAILED";
+  return st.toUpperCase();
+}
+
   function setActionVisibility(row, enabled){
     const btnEnable = row.querySelector('.menu-item[data-action="enable"]');
     const btnDisable = row.querySelector('.menu-item[data-action="disable"]');
@@ -663,13 +674,18 @@ async function openInfo(name){
     };
     return `<tr data-name="${t.name}" data-ip="${t.ip}" data-status="${t.status}" data-enabled="${enabled?1:0}"
               data-last-ping="${t.last_ping_epoch||0}" data-last-resp="${t.last_response_epoch||0}" data-last-rtt="${t.last_rtt_ms ?? -1}">
-            <td class="sel-col"><input class="row-check" type="checkbox" aria-label="Select row"></td>
-            <td><code>${t.name}</code></td>
+            <td class="name-cell">
+              <span class="gutter" aria-hidden="true">
+                <input class="row-check" type="checkbox" aria-label="Select row">
+                <span class="gutter-flash" aria-hidden="true"></span>
+              </span>
+              <code>${t.name}</code>
+            </td>
             <td><code>${t.ip}</code></td>
             <td>
               <span class="chip status-chip ${statusClass(t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}">
                 <span class="dot"></span>
-                <span class="status-text">${t.status}</span>
+                <span class="status-text">${statusLabel(t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}</span>
               </span>
             </td>
             <td>
@@ -832,11 +848,12 @@ function attachMenuActions(){
     const n = names.length;
     if (!bulkBar || !bulkCount) return;
     if (n === 0){
-      bulkBar.style.display = "none";
+      bulkBar.classList.add("is-hidden");
       return;
     }
     bulkCount.textContent = `${n} selected`;
-    bulkBar.style.display = "flex";
+    // animate in
+    bulkBar.classList.remove("is-hidden");
   }
 
   function clearBulkSelection(){
@@ -903,13 +920,13 @@ function attachMenuActions(){
     text.textContent = "DISABLED";
   }else if (st === "up"){
     chip.classList.add("status-up");
-    text.textContent = "UP";
+    text.textContent = "OK";
   }else if (hbFail){
     chip.classList.add("status-hb");
     text.textContent = "HEARTBEAT FAIL";
   }else if (st === "down"){
     chip.classList.add("status-down");
-    text.textContent = "PING FAIL";
+    text.textContent = "FAILED";
   }else{
     chip.classList.add("status-unknown");
     text.textContent = st.toUpperCase();
@@ -1152,8 +1169,8 @@ function attachMenuActions(){
   const scanListEmpty = $("#scanListEmpty");
   const scanLive = $("#scanLive");
   const scanTitleMeta = $("#scanTitleMeta");
-  const btnCancelScan = $("#btnCancelScan");
-  const btnScanAgain = $("#btnScanAgain");
+  const btnScanNow = $("#btnScanNow");
+  const btnAbortScan = $("#btnAbortScan");
   const scanScope = $("#scanScope");
   const scanSpeed = $("#scanSpeed");
   const scanCustomWrap = $("#scanCustomWrap");
@@ -1237,14 +1254,15 @@ function attachMenuActions(){
       const st = await apiGet(`/api/scan-status`);
       if (st.running){
         scanLive.style.display = "flex";
-        btnCancelScan.style.display = "inline-flex";
-        btnScanAgain.style.display = "none";
+        if (btnAbortScan) btnAbortScan.style.display = "inline-flex";
+        if (btnScanNow) btnScanNow.style.display = "none";
         btnSearchNetwork?.classList.add("is-running");
         return;
       }
       scanLive.style.display = "none";
-      btnCancelScan.style.display = "none";
-      btnScanAgain.style.display = "inline-flex";
+      if (btnAbortScan) btnAbortScan.style.display = "none";
+      if (btnScanNow) btnScanNow.style.display = "inline-flex";
+      if (btnScanNow) btnScanNow.textContent = st.finished ? "Scan again" : "Scan now";
       btnSearchNetwork?.classList.remove("is-running");
 
       // finished -> get results
@@ -1294,34 +1312,20 @@ function attachMenuActions(){
 
   btnSearchNetwork?.addEventListener("click", async () => {
     show(scanModal);
-    resetScanUi();
-
-    // Don't restart if a scan is already running or just finished.
-    // We always show status/results and keep polling while the modal is open.
+    // Show current status/results and keep polling while the modal is open.
     if (scanPoll) clearInterval(scanPoll);
     scanPoll = setInterval(refreshScan, 800);
     await refreshScan();
-
-    // If nothing has ever run, kick one off automatically.
-    try{
-      const st = await apiGet("/api/scan-status");
-      if (!st.running && !st.finished){
-        scanOutput.textContent = "Starting scan…";
-        scanLive.style.display = "flex";
-        const ok = await startScan(false);
-        if (ok) toast("Search network", "Scan started");
-      }
-    }catch(e){ /* ignore */ }
   });
 
-  btnCancelScan?.addEventListener("click", async () => {
+  btnAbortScan?.addEventListener("click", async () => {
     try{
       const r = await apiPost("/api/scan-cancel", new FormData());
       toast(r.ok ? "Scan" : "Scan", r.ok ? "Cancelled" : (r.message || "Failed"));
     }catch(e){ toast("Scan", "Failed"); }
   });
 
-  btnScanAgain?.addEventListener("click", async () => {
+  btnScanNow?.addEventListener("click", async () => {
     resetScanUi();
     scanOutput.textContent = "Starting scan…";
     scanLive.style.display = "flex";

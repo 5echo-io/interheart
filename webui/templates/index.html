@@ -312,7 +312,7 @@
       <div class="hint">“Last ping” / “Last response” updates live ({{ poll_seconds }}s refresh)</div>
       <div class="sep"></div>
 
-      <div class="bulkbar" id="bulkBar" style="display:none;">
+      <div class="bulkbar is-hidden" id="bulkBar">
         <div class="bulkbar-left">
           <b id="bulkCount">0 selected</b>
         </div>
@@ -328,7 +328,6 @@
       <table id="targetsTable">
         <thead>
           <tr>
-            <th class="sel-col"><span class="sr-only">Select</span></th>
             <th style="width: 260px;" class="th-sort sortable" data-sort="name"><span>Name</span><span class="sort-ind" aria-hidden="true"></span></th>
             <th style="width: 160px;" class="th-sort sortable" data-sort="ip"><span>IP</span><span class="sort-ind" aria-hidden="true"></span></th>
             <th style="width: 150px;" class="th-sort sortable" data-sort="status"><span>Status</span><span class="sort-ind" aria-hidden="true"></span></th>
@@ -342,8 +341,13 @@
         {% for t in targets %}
           <tr data-name="{{ t.name }}" data-ip="{{ t.ip }}" data-status="{{ t.status }}" data-enabled="{{ t.enabled }}"
               data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
-            <td class="sel-col"><input class="row-check" type="checkbox" aria-label="Select row"></td>
-            <td><code>{{ t.name }}</code></td>
+            <td class="name-cell">
+              <span class="gutter" aria-hidden="true">
+                <input class="row-check" type="checkbox" aria-label="Select row">
+                <span class="gutter-flash" aria-hidden="true"></span>
+              </span>
+              <code>{{ t.name }}</code>
+            </td>
             <td><code>{{ t.ip }}</code></td>
             <td>
               <span class="chip status-chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
@@ -400,8 +404,6 @@
             <span class="pulse"></span>
             <span id="scanLiveText">Scanning…</span>
           </div>
-          <button class="btn btn-ghost btn-mini" id="btnCancelScan" type="button" style="display:none;">Cancel scan</button>
-          <button class="btn btn-ghost btn-mini" id="btnScanAgain" type="button" style="display:none;">Scan again</button>
           <button class="btn btn-ghost btn-mini" id="btnCloseScan" type="button">Close</button>
         </div>
       </div>
@@ -428,6 +430,11 @@
           </div>
         </div>
 
+        <div class="scan-actions">
+          <button class="btn btn-primary btn-mini" id="btnScanNow" type="button">Scan now</button>
+          <button class="btn btn-ghost btn-mini" id="btnAbortScan" type="button" style="display:none;">Abort</button>
+        </div>
+
         <div class="card card--soft" style="margin-bottom:12px;">
           <div class="row">
             <div class="kpi">
@@ -447,7 +454,7 @@
           <div class="hint" id="scanStatusLine">-</div>
         </div>
 
-        <div class="logbox logbox--compact" id="scanOutput">Press “Scan again” to start…</div>
+        <div class="logbox logbox--compact" id="scanOutput">Press “Scan now” to start…</div>
 
         <div class="card" style="margin-top:14px;">
           <div class="card-head">

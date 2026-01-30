@@ -1,3 +1,12 @@
+## v4.10.4
+- UI: Bulk selection bar now animates in smoothly (fade + slide down) instead of popping in.
+- UI: Selection checkbox moved into the **Name** column with a reserved gutter (no layout shift) + subtler styling.
+- UI: Status labels renamed for clarity: **UP → OK** and **PING FAILED → FAILED**.
+- Logs: Fixed PDF/XLSX exports by installing missing Python deps (**reportlab**, **openpyxl**) + widened the Download button.
+- Actions: Keep the action dropdown stable during live refresh (no auto-close while you interact).
+- Network scan: Fixed subnet detection (scan uses proper network CIDRs) + scan no longer auto-starts on open; user explicitly clicks **Scan now**.
+- Network scan: Scan can keep running in the background; modal provides **Abort** while running.
+
 ## v4.9.3
 - Fixed: Table header layout is back to a proper single header row (no more stacked headers) + clickable sorting works as intended.
 - Fixed: Actions menu + row selection no longer closes/resets every 2s refresh (refresh now updates cells without rebuilding the whole table).

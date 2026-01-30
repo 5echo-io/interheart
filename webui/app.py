@@ -827,7 +827,13 @@ def _get_local_cidrs():
                 prefix = a.get("prefixlen")
                 if not local or prefix is None:
                     continue
-                cidrs.append(f"{local}/{prefix}")
+                try:
+                    import ipaddress
+                    net = ipaddress.ip_network(f"{local}/{prefix}", strict=False)
+                    # nmap behaves best with a real network CIDR (not host/prefix)
+                    cidrs.append(net.with_prefixlen)
+                except Exception:
+                    cidrs.append(f"{local}/{prefix}")
     except Exception:
         pass
     # de-dupe
