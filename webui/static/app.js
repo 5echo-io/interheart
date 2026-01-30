@@ -48,9 +48,7 @@
   const logMeta = $("#logMeta");
   const logFilter = $("#logFilter");
   const logChips = $("#logChips");
-  const btnDlCsv = $("#btnDlCsv");
-  const btnDlXlsx = $("#btnDlXlsx");
-  const btnDlPdf = $("#btnDlPdf");
+  const logDlMenu = $("#logDlMenu");
   const logLinesLbl = $("#logLinesLbl");
   let rawLog = "";
   let lastTargets = [];
@@ -129,9 +127,15 @@
     const url = `/api/logs-export?fmt=${encodeURIComponent(fmt)}&lines=${encodeURIComponent(lines)}&q=${encodeURIComponent(q)}&level=${encodeURIComponent(lvl)}`;
     window.open(url, "_blank");
   }
-  btnDlCsv?.addEventListener("click", () => downloadLogs("csv"));
-  btnDlXlsx?.addEventListener("click", () => downloadLogs("xlsx"));
-  btnDlPdf?.addEventListener("click", () => downloadLogs("pdf"));
+  // Download dropdown
+  logDlMenu?.querySelectorAll("[data-dlfmt]").forEach(b => {
+    if (b.dataset.bound === "1") return;
+    b.dataset.bound = "1";
+    b.addEventListener("click", () => {
+      closeAllMenus();
+      downloadLogs(b.getAttribute("data-dlfmt") || "csv");
+    });
+  });
   logFilter?.addEventListener("input", applyLogFilter);
   logModal?.addEventListener("click", (e) => { if (e.target === logModal) hide(logModal); });
 
@@ -649,6 +653,14 @@ async function openInfo(name){
 
   function buildRow(t){
     const enabled = Number(t.enabled ?? 0) === 1 && String(t.status||"") !== "disabled";
+    const ic = {
+      info: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`,
+      edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`,
+      enable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
+      disable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>`,
+      test: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>`,
+      remove: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`
+    };
     return `<tr data-name="${t.name}" data-ip="${t.ip}" data-status="${t.status}" data-enabled="${enabled?1:0}"
               data-last-ping="${t.last_ping_epoch||0}" data-last-resp="${t.last_response_epoch||0}" data-last-rtt="${t.last_rtt_ms ?? -1}">
             <td class="sel-col"><input class="row-check" type="checkbox" aria-label="Select row"></td>
@@ -672,14 +684,14 @@ async function openInfo(name){
               <div class="menu">
                 <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">⋯</button>
                 <div class="menu-dd" role="menu">
-                  <button class="menu-item" data-action="info" type="button"><span class="mi-ic" aria-hidden="true">ℹ</span><span>Information</span></button>
-                  <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">✎</span><span>Edit</span></button>
+                  <button class="menu-item" data-action="info" type="button"><span class="mi-ic" aria-hidden="true">${ic.info}</span><span>Information</span></button>
+                  <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">${ic.edit}</span><span>Edit</span></button>
                   <div class="menu-sep"></div>
-                  <button class="menu-item" data-action="enable" type="button"><span class="mi-ic" aria-hidden="true">✓</span><span>Enable</span></button>
-                  <button class="menu-item" data-action="disable" type="button"><span class="mi-ic" aria-hidden="true">⛔</span><span>Disable</span></button>
+                  <button class="menu-item" data-action="enable" type="button"><span class="mi-ic" aria-hidden="true">${ic.enable}</span><span>Enable</span></button>
+                  <button class="menu-item" data-action="disable" type="button"><span class="mi-ic" aria-hidden="true">${ic.disable}</span><span>Disable</span></button>
                   <div class="menu-sep"></div>
-                  <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">⚡</span><span>Test</span></button>
-                  <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">🗑</span><span>Remove</span></button>
+                  <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">${ic.test}</span><span>Test</span></button>
+                  <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">${ic.remove}</span><span>Remove</span></button>
                 </div>
               </div>
             </td>
@@ -689,6 +701,15 @@ async function openInfo(name){
   function renderTargets(list){
   const tbody = $("#targetsTable tbody");
   if (!tbody) return;
+
+  // Preserve selection across re-renders
+  const preSelected = new Set();
+  $$("tr[data-name] .row-check").forEach(cb => {
+    if (cb.checked){
+      const row = cb.closest("tr");
+      if (row) preSelected.add(row.getAttribute("data-name"));
+    }
+  });
 
   const q = (filterInput?.value || "").trim().toLowerCase();
   const filtered = (list || []).filter(t => {
@@ -704,6 +725,15 @@ async function openInfo(name){
   attachIntervalHandlers();
   attachMenuActions();
   attachBulkHandlers();
+  // Restore selection
+  $$("tr[data-name]").forEach(row => {
+    const name = row.getAttribute("data-name");
+    const cb = row.querySelector(".row-check");
+    if (cb && preSelected.has(name)){
+      cb.checked = true;
+      row.classList.add("is-selected");
+    }
+  });
   // keep visibility consistent
   $$("tr[data-name]").forEach(row => {
     const enabled = String(row.dataset.enabled||"0")==="1";
@@ -839,7 +869,11 @@ function attachMenuActions(){
     $$('tr[data-name] .row-check').forEach(cb => {
       if (cb.dataset.bound === "1") return;
       cb.dataset.bound = "1";
-      cb.addEventListener('change', updateBulkBar);
+      cb.addEventListener('change', () => {
+        const row = cb.closest('tr');
+        if (row) row.classList.toggle('is-selected', !!cb.checked);
+        updateBulkBar();
+      });
     });
     updateBulkBar();
   }
@@ -898,6 +932,18 @@ function attachMenuActions(){
     try{
       const data = await apiGet("/state");
       lastTargets = data.targets || [];
+
+      // Only re-render the table if structure changed (add/remove) or if forced.
+      const namesNow = new Set((data.targets||[]).map(t => String(t.name||"")));
+      const namesRendered = new Set($$("tr[data-name]").map(tr => String(tr.getAttribute("data-name")||"")));
+      let structureChanged = (namesNow.size !== namesRendered.size);
+      if (!structureChanged){
+        for (const n of namesNow){ if (!namesRendered.has(n)){ structureChanged = true; break; } }
+      }
+      if (force || structureChanged){
+        renderTargets(lastTargets);
+        bindSortHeaders();
+      }
       const map = new Map();
       (data.targets || []).forEach(t => map.set(t.name, t));
 
@@ -936,9 +982,11 @@ function attachMenuActions(){
         }
       });
 
-      applyTargetFilter();
+      // Avoid re-rendering every poll: keep menus/checkboxes stable.
+      // Filter/sort actions explicitly call renderTargets().
       attachIntervalHandlers();
       attachMenuActions();
+      attachBulkHandlers();
     }catch(e){
       // silent
     }
@@ -1106,6 +1154,10 @@ function attachMenuActions(){
   const scanTitleMeta = $("#scanTitleMeta");
   const btnCancelScan = $("#btnCancelScan");
   const btnScanAgain = $("#btnScanAgain");
+  const scanScope = $("#scanScope");
+  const scanSpeed = $("#scanSpeed");
+  const scanCustomWrap = $("#scanCustomWrap");
+  const scanCustom = $("#scanCustom");
 
   const scanAddModal = $("#scanAddModal");
   const scanAddForm = $("#scanAddForm");
@@ -1116,6 +1168,13 @@ function attachMenuActions(){
   const btnScanAddCancel = $("#btnScanAddCancel");
 
   bindSmartAssist(scanAddIp, scanAddName);
+
+  function updateScanScopeUI(){
+    const v = scanScope?.value || "local";
+    if (scanCustomWrap) scanCustomWrap.style.display = (v === "local+custom") ? "block" : "none";
+  }
+  scanScope?.addEventListener("change", updateScanScopeUI);
+  updateScanScopeUI();
 
   let scanPoll = null;
   let scanFound = [];
@@ -1209,27 +1268,50 @@ function attachMenuActions(){
     }
   }
 
-  btnSearchNetwork?.addEventListener("click", async () => {
-    show(scanModal);
-    scanOutput.textContent = "Starting scan…";
+  function resetScanUi(){
     scanBar.style.width = "0%";
     scanFoundCount.textContent = "-";
     scanNewCount.textContent = "-";
     scanSubnets.textContent = "-";
+    scanStatusLine.textContent = "-";
     scanListEmpty.style.display = "block";
     scanList.innerHTML = "";
-    scanLive.style.display = "flex";
+  }
 
-    const started = await apiPost("/api/scan-start", new FormData());
+  async function startScan(force=false){
+    const fd = new FormData();
+    fd.set("scope", scanScope?.value || "local");
+    fd.set("speed", scanSpeed?.value || "normal");
+    fd.set("custom", (scanCustom?.value || "").trim());
+    if (force) fd.set("force", "1");
+    const started = await apiPost("/api/scan-start", fd);
     if (!started.ok){
-      scanLive.style.display = "none";
       toast("Search network", started.message || "Failed to start scan");
-      return;
+      return false;
     }
-    toast("Search network", "Scan started");
+    return true;
+  }
+
+  btnSearchNetwork?.addEventListener("click", async () => {
+    show(scanModal);
+    resetScanUi();
+
+    // Don't restart if a scan is already running or just finished.
+    // We always show status/results and keep polling while the modal is open.
     if (scanPoll) clearInterval(scanPoll);
     scanPoll = setInterval(refreshScan, 800);
     await refreshScan();
+
+    // If nothing has ever run, kick one off automatically.
+    try{
+      const st = await apiGet("/api/scan-status");
+      if (!st.running && !st.finished){
+        scanOutput.textContent = "Starting scan…";
+        scanLive.style.display = "flex";
+        const ok = await startScan(false);
+        if (ok) toast("Search network", "Scan started");
+      }
+    }catch(e){ /* ignore */ }
   });
 
   btnCancelScan?.addEventListener("click", async () => {
@@ -1240,18 +1322,26 @@ function attachMenuActions(){
   });
 
   btnScanAgain?.addEventListener("click", async () => {
-    try{
-      const started = await apiPost("/api/scan-start", new FormData());
-      if (!started.ok){ toast("Search network", started.message || "Failed"); return; }
-      if (scanPoll) clearInterval(scanPoll);
-      scanPoll = setInterval(refreshScan, 800);
-      await refreshScan();
-    }catch(e){ toast("Search network", "Failed"); }
+    resetScanUi();
+    scanOutput.textContent = "Starting scan…";
+    scanLive.style.display = "flex";
+    const ok = await startScan(true);
+    if (!ok){
+      scanLive.style.display = "none";
+      return;
+    }
+    toast("Search network", "Scan started");
+    if (scanPoll) clearInterval(scanPoll);
+    scanPoll = setInterval(refreshScan, 800);
+    await refreshScan();
   });
 
   // Closing the modal should not stop the scan. We'll stop polling to save cycles,
   // but keep a "running" indicator on the button.
-  btnCloseScan?.addEventListener("click", () => { hide(scanModal); });
+  btnCloseScan?.addEventListener("click", () => {
+    hide(scanModal);
+    if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
+  });
   btnScanAddCancel?.addEventListener("click", () => hide(scanAddModal));
   scanAddForm?.addEventListener("submit", async (e) => {
     e.preventDefault();

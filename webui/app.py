@@ -525,15 +525,27 @@ def api_logs_export():
             bio = BytesIO()
             c = canvas.Canvas(bio, pagesize=letter)
             width, height = letter
-            y = height - 40
-            c.setFont("Helvetica", 10)
-            c.drawString(40, y, f"interheart logs ({ts})")
-            y -= 20
+            def draw_header_footer():
+                # Header
+                c.setFont("Helvetica-Bold", 10)
+                c.drawString(40, height - 38, "interheart – logs")
+                c.setFont("Helvetica", 8)
+                c.drawRightString(width - 40, height - 38, ts)
+                # Footer (branding)
+                c.setFont("Helvetica", 8)
+                c.setFillColorRGB(0.6, 0.6, 0.6)
+                c.drawString(40, 24, "Powered by 5echo.io")
+                c.drawRightString(width - 40, 24, f"Page {c.getPageNumber()}")
+                c.setFillColorRGB(0, 0, 0)
+
+            draw_header_footer()
+            y = height - 60
             c.setFont("Helvetica", 8)
             for l in lines:
                 if y < 40:
                     c.showPage()
-                    y = height - 40
+                    draw_header_footer()
+                    y = height - 60
                     c.setFont("Helvetica", 8)
                 # trim to fit
                 s = l
@@ -832,8 +844,22 @@ def _scan_worker():
     Best effort: collect hostname, mac, vendor and a simple "type" + confidence score.
     """
     ensure_state_dir()
-    cidrs = _get_local_cidrs()
     meta = load_scan_meta()
+    opts = meta.get("opts") or {}
+    scope = (opts.get("scope") or "local").strip()
+    speed = (opts.get("speed") or "normal").strip()
+    custom = (opts.get("custom") or "").strip()
+
+    cidrs = _get_local_cidrs()
+    if scope == "local+custom" and custom:
+        for part in re.split(r"[\s,;]+", custom):
+            p = part.strip()
+            if not p:
+                continue
+            # basic validation
+            if re.match(r"^\d+\.\d+\.\d+\.\d+\/\d+$", p):
+                cidrs.append(p)
+
     meta.update({
         "started": int(time.time()),
         "finished": 0,
@@ -841,6 +867,8 @@ def _scan_worker():
         "error": "",
         "cidrs": cidrs,
         "current_ip": "",
+        "progress": 0,
+        "current_cidr": "",
         "pid": int(meta.get("pid") or 0),
     })
     save_scan_meta(meta)
@@ -871,19 +899,53 @@ def _scan_worker():
         # require nmap early
         pchk = subprocess.run(["sh", "-lc", "command -v nmap"], capture_output=True, text=True)
         if pchk.returncode != 0:
-            raise RuntimeError("Missing dependency: nmap (install: sudo apt-get install -y nmap)")
+            raise RuntimeError("Missing dependency: nmap")
         if not cidrs:
             raise RuntimeError("No local subnets found (ip addr)")
 
+        # Prefer ARP scan when possible (needs root). Best-effort sudo if available.
+        can_sudo = False
+        if os.geteuid() == 0:
+            can_sudo = True
+        else:
+            try:
+                s = subprocess.run(["sudo", "-n", "true"], capture_output=True)
+                can_sudo = (s.returncode == 0)
+            except Exception:
+                can_sudo = False
+
+        def nmap_cmd(cidr: str) -> list[str]:
+            # speed presets
+            if speed == "fast":
+                min_rate = "500"
+                retries = "1"
+                host_to = "900ms"
+            elif speed == "safe":
+                min_rate = "80"
+                retries = "3"
+                host_to = "2500ms"
+            else:
+                min_rate = "200"
+                retries = "2"
+                host_to = "1500ms"
+
+            base = ["nmap", "-sn", "-n", "--stats-every", "1s", "--max-retries", retries, "--host-timeout", host_to, "--min-rate", min_rate]
+
+            if can_sudo:
+                # ARP discovery is reliable on L2 segments
+                return (["sudo", "-n"] + base + ["-PR", cidr])
+            # Non-root fallback: use a mix of ICMP + TCP ping. Not perfect, but better than nothing.
+            return (base + ["-PE", "-PP", "-PS22,80,443,554,1935", "-PA22,80,443", cidr])
+
         with open(str(SCAN_OUT_FILE), "a", encoding="utf-8") as out_f:
             for cidr in cidrs:
+                meta = load_scan_meta()
+                meta["current_cidr"] = cidr
+                save_scan_meta(meta)
                 out_f.write(f"scan: {cidr}\n")
                 out_f.flush()
 
-                cmd = [
-                    "nmap", "-sn", "-n", "-PR", "--stats-every", "1s",
-                    "--max-retries", "1", "--host-timeout", "800ms", cidr
-                ]
+                cmd = nmap_cmd(cidr)
                 p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
                 meta = load_scan_meta()
@@ -896,6 +958,21 @@ def _scan_worker():
                         continue
                     out_f.write(s + "\n")
                     out_f.flush()
+
+                    # Parse nmap progress
+                    mp = re.search(r"About\s+([0-9.]+)%\s+done", s)
+                    if mp:
+                        try:
+                            pct = float(mp.group(1))
+                            meta = load_scan_meta()
+                            # overall progress: current subnet index + within-subnet pct
+                            idx = (cidrs.index(cidr) + 1)
+                            total = len(cidrs) or 1
+                            overall = int(((idx - 1) / total) * 100 + (pct / total))
+                            meta["progress"] = max(0, min(100, overall))
+                            save_scan_meta(meta)
+                        except Exception:
+                            pass
 
                     if s.startswith("Nmap scan report for "):
                         rest = s.replace("Nmap scan report for ", "", 1).strip()
@@ -951,6 +1028,7 @@ def _scan_worker():
     finally:
         meta = load_scan_meta()
         meta["finished"] = int(time.time())
+        meta["progress"] = int(meta.get("progress") or 0)
         meta["pid"] = 0
         save_scan_meta(meta)
 
@@ -958,27 +1036,46 @@ def _scan_worker():
 def api_scan_start():
     ensure_state_dir()
     meta = load_scan_meta()
+    form = request.form or {}
+    force = str(form.get("force") or "0") == "1"
+
     pid = int(meta.get("pid") or 0)
     if pid and pid_is_running(pid):
-        return jsonify({"ok": True, "message": "Already running", "pid": pid})
+        if not force:
+            return jsonify({"ok": True, "message": "Already running", "pid": pid})
+        # force => cancel then restart
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        meta.update({"pid": 0, "finished": int(time.time())})
+        save_scan_meta(meta)
+
+    started = int(meta.get("started") or 0)
+    finished = int(meta.get("finished") or 0)
+    if started and finished and not force:
+        return jsonify({"ok": True, "message": "Finished", "pid": 0})
+
+    opts = {
+        "scope": (form.get("scope") or (meta.get("opts") or {}).get("scope") or "local").strip(),
+        "speed": (form.get("speed") or (meta.get("opts") or {}).get("speed") or "normal").strip(),
+        "custom": (form.get("custom") or (meta.get("opts") or {}).get("custom") or "").strip(),
+    }
+    meta["opts"] = opts
+    save_scan_meta(meta)
 
     try:
-        # Start a detached python thread via subprocess to keep it simple
-        # (Flask may run with multiple workers; subprocess is predictable)
-        cmd = ["python3", "-c", "import webui.app as a; a._scan_worker()"]
-        # Fallback: run within same file path
-    except Exception:
-        cmd = None
-
-    try:
-        # Use this script itself as module
-        p = subprocess.Popen(["python3", str(BASE_DIR / "scan_worker.py")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        p = subprocess.Popen(
+            ["python3", str(BASE_DIR / "scan_worker.py")],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         m = load_scan_meta()
-        m.update({"pid": p.pid, "started": int(time.time()), "finished": 0, "rc": None, "error": ""})
+        m.update({"pid": int(p.pid or 0), "started": int(time.time()), "finished": 0, "rc": None, "error": "", "opts": opts})
         save_scan_meta(m)
-        return jsonify({"ok": True, "message": "Started", "pid": p.pid})
+        return jsonify({"ok": True, "message": "Started", "pid": int(p.pid or 0)})
     except Exception as e:
-        save_scan_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1, "error": str(e)})
+        save_scan_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1, "error": str(e), "opts": opts})
         return jsonify({"ok": False, "message": f"Failed to start scan: {str(e)}"})
 
 @APP.get("/api/scan-status")
@@ -998,7 +1095,7 @@ def api_scan_status():
 
     return jsonify({
         "running": False,
-        "finished": bool(started),
+        "finished": bool(started and int(meta.get("finished") or 0)),
         "pid": pid,
         "started": started,
         "finished_at": int(meta.get("finished") or 0),

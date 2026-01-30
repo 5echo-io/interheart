@@ -1,3 +1,16 @@
+## v4.9.3
+- Fixed: Table header layout is back to a proper single header row (no more stacked headers) + clickable sorting works as intended.
+- Fixed: Actions menu + row selection no longer closes/resets every 2s refresh (refresh now updates cells without rebuilding the whole table).
+- UI: Row selection checkbox is now smaller, more subtle, and fades in on hover (and highlights selected rows softly).
+- UI: Actions menu icons refreshed to cleaner minimalist line icons.
+- Logs: Replaced 3 download buttons with a single **Download** dropdown (CSV / XLSX / PDF).
+- Logs: PDF export now includes a small footer brand: **Powered by 5echo.io**.
+- Network scan: More reliable discovery — prefers ARP scan via sudo/root when possible, otherwise uses ICMP/TCP ping scan fallback.
+- Network scan: Scan no longer restarts just because you close/reopen the modal; it keeps running in the background until finished or cancelled.
+- Network scan: Added simple scan controls (scope + speed) and removed the noisy “Requires nmap” hint.
+- Run now: Removed the extra live progress feed from the modal (kept the run summary clean).
+- Installer: Added a simple interactive install/update/uninstall wizard script (for hosting at scripts.5echo.io).
+
 ## v4.9.2
 - Fixed: Table headers + sorting reworked (headers are stable again, clickable, and show sort direction).
 - Fixed: Target list rendering no longer loops/crashes (filter + sort play nicely together).

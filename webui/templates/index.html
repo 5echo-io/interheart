@@ -28,9 +28,14 @@
           <input id="logFilter" class="input input--sm" placeholder="Filter… (e.g. anl-0161)">
           <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">Reload</button>
           <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">Copy</button>
-          <button class="btn btn-ghost btn-mini" id="btnDlCsv" type="button">CSV</button>
-          <button class="btn btn-ghost btn-mini" id="btnDlXlsx" type="button">XLSX</button>
-          <button class="btn btn-ghost btn-mini" id="btnDlPdf" type="button">PDF</button>
+          <div class="menu" id="logDlMenu">
+            <button class="btn btn-ghost btn-mini menu-btn" id="btnLogDownload" type="button" aria-label="Download">Download ▾</button>
+            <div class="menu-dd" role="menu">
+              <button class="menu-item" data-dlfmt="csv" type="button"><span>CSV</span></button>
+              <button class="menu-item" data-dlfmt="xlsx" type="button"><span>XLSX</span></button>
+              <button class="menu-item" data-dlfmt="pdf" type="button"><span>PDF</span></button>
+            </div>
+          </div>
           <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">Close</button>
         </div>
       </div>
@@ -90,10 +95,7 @@
           </div>
         </div>
 
-        <div class="metric" id="runFeedWrap" style="display:none;">
-          <b>Live progress</b>
-          <div class="logbox logbox--compact" id="runFeed">-</div>
-        </div>
+        <!-- Live progress removed (kept simple on purpose) -->
       </div>
 
       <div class="footer footer--modal">
@@ -300,8 +302,8 @@
 
       <div class="right-actions">
         <input id="filterInput" class="input input--sm" placeholder="Filter targets… (name / ip / status)">
-<button class="btn btn-ghost btn-mini" id="btnSearchNetwork" type="button">Search network</button>
-                <button class="btn btn-ghost btn-mini" id="openAdd" type="button">Add target</button>
+        <button class="btn btn-ghost btn-mini" id="openAdd" type="button">Add target</button>
+        <button class="btn btn-ghost btn-mini" id="btnSearchNetwork" type="button">Search network</button>
         <button class="btn btn-primary btn-mini" id="btnRunNow" type="button">Run now</button>
       </div>
     </div>
@@ -404,8 +406,26 @@
         </div>
       </div>
       <div class="modal-body">
-        <div class="hint" style="margin-bottom:10px;">
-          Scans every local subnet (VLANs) the server is connected to. Requires <code>nmap</code>.
+        <div class="scan-controls">
+          <div class="field">
+            <label>Scan scope</label>
+            <select class="input" id="scanScope">
+              <option value="local" selected>Local subnets (recommended)</option>
+              <option value="local+custom">Local + custom CIDR</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Speed</label>
+            <select class="input" id="scanSpeed">
+              <option value="safe">Safe</option>
+              <option value="normal" selected>Normal</option>
+              <option value="fast">Fast</option>
+            </select>
+          </div>
+          <div class="field" id="scanCustomWrap" style="display:none;">
+            <label>Custom CIDR (comma separated)</label>
+            <input class="input" id="scanCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24">
+          </div>
         </div>
 
         <div class="card card--soft" style="margin-bottom:12px;">
@@ -427,7 +447,7 @@
           <div class="hint" id="scanStatusLine">-</div>
         </div>
 
-        <div class="logbox logbox--compact" id="scanOutput">Click “Search network” to start…</div>
+        <div class="logbox logbox--compact" id="scanOutput">Press “Scan again” to start…</div>
 
         <div class="card" style="margin-top:14px;">
           <div class="card-head">

@@ -368,6 +368,12 @@ tr.flash-down{animation: flashDown 1s ease-in-out;}
 .scan-item .meta b{ font-size: 14px; }
 .scan-item .meta span{ color: var(--muted); font-family: var(--mono); font-size: 12px; }
 
+/* Scan controls */
+.scan-controls{ display:grid; grid-template-columns: 1fr 190px; gap:12px; margin-bottom:10px; }
+.scan-controls .field{ display:flex; flex-direction:column; gap:6px; }
+.scan-controls label{ font-size:12px; opacity:.75; }
+.scan-controls .hint{ font-size:12px; opacity:.65; margin-top:6px; }
+
 
 /* --- v4.9.1 polish --- */
 
@@ -383,10 +389,22 @@ tr.flash-down{animation: flashDown 1s ease-in-out;}
 /* Sortable headers */
 .th-sort.sortable{cursor:pointer; user-select:none;}
 .th-sort.sortable:hover{background: rgba(255,255,255,.03);}
-.th-sort{display:flex; align-items:center; justify-content:space-between; gap:10px;}
-.sort-ind{opacity:.55; font-weight:900; font-size:12px;}
-.th-sort.sort-asc .sort-ind::after{content:"↑";}
-.th-sort.sort-desc .sort-ind::after{content:"↓";}
+/*
+  IMPORTANT: Don't change <th> to flex/block.
+  Some browsers will break the table layout and stack headers vertically.
+  Keep <th> as table-cell, and position the sort indicator instead.
+*/
+.th-sort{position:relative; padding-right:28px;}
+.th-sort > span{display:inline-block;}
+.sort-ind{
+  position:absolute;
+  right:10px;
+  top:50%;
+  transform:translateY(-50%);
+  opacity:.55;
+  font-weight:900;
+  font-size:12px;
+}
 
 /* Heartbeat fail status (ping OK but endpoint failed) */
 .status-hb{border-color:rgba(255,211,77,.26);background:rgba(255,211,77,.08)}
@@ -419,6 +437,7 @@ tr.flash-down{animation: flashDown 1s ease-in-out;}
   width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;
   opacity:.8;font-size:14px;
 }
+.mi-ic svg{ width:16px; height:16px; display:block; }
 
 /* Uptime sparkline */
 .uptime-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
@@ -459,10 +478,19 @@ tr.flash-down{animation: flashDown 1s ease-in-out;}
 .bulkbar .bulkbar-left{ display:flex; align-items:center; gap:10px; }
 .bulkbar .bulkbar-actions{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 
-th.sel-col, td.sel-col{ width:34px; text-align:center; }
-.row-check{ opacity:0; transform:translateY(1px); transition:opacity .12s ease; }
-tr:hover .row-check{ opacity:.9; }
-.row-check:checked{ opacity:1; }
+th.sel-col, td.sel-col{ width:28px; text-align:center; }
+/* Make selection subtle + consistent with the rest of the UI */
+.row-check{
+  width:14px;
+  height:14px;
+  accent-color: rgba(255,255,255,.75);
+  opacity:0;
+  transform:translateX(-6px);
+  transition:opacity .14s ease, transform .14s ease;
+}
+tr:hover .row-check,
+tr.is-selected .row-check{ opacity:.92; transform:translateX(0); }
+.row-check:checked{ opacity:1; transform:translateX(0); }
 
 th.sortable{ cursor:pointer; user-select:none; }
 th.sortable:hover{ text-decoration:underline; }
