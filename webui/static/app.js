@@ -783,8 +783,8 @@ function renderSnapshots(snaps){
                   <button class="menu-item" data-action="info" type="button"><span class="mi-ic" aria-hidden="true">${ic.info}</span><span>Information</span></button>
                   <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">${ic.edit}</span><span>Edit</span></button>
                   <div class="menu-sep"></div>
-                  <button class="menu-item" data-action="enable" type="button"><span class="mi-ic" aria-hidden="true">${ic.enable}</span><span>Enable</span></button>
-                  <button class="menu-item" data-action="disable" type="button"><span class="mi-ic" aria-hidden="true">${ic.disable}</span><span>Disable</span></button>
+                  <button class="menu-item" data-action="enable" type="button" style="display:${enabled ? 'none' : 'flex'}"><span class="mi-ic" aria-hidden="true">${ic.enable}</span><span>Enable</span></button>
+                  <button class="menu-item" data-action="disable" type="button" style="display:${enabled ? 'flex' : 'none'}"><span class="mi-ic" aria-hidden="true">${ic.disable}</span><span>Disable</span></button>
                   <div class="menu-sep"></div>
                   <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">${ic.test}</span><span>Test</span></button>
                   <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">${ic.remove}</span><span>Delete</span></button>
@@ -1027,7 +1027,7 @@ function attachMenuActions(){
     text.textContent = "HEARTBEAT FAILED";
   }else if (st === "down"){
     chip.classList.add("status-down");
-    text.textContent = "FAILED";
+    text.textContent = "NOT RESPONDING";
   }else{
     chip.classList.add("status-unknown");
     text.textContent = st.toUpperCase();

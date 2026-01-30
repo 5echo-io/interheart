@@ -1,3 +1,9 @@
+## 4.10.12 - 2026-01-30
+
+- Fix: WebUI target listing/status parsing updated to match current CLI table format (targets now render immediately on page load).
+- Fix: Actions menu now correctly shows only **Enable** or **Disable** (never both), even before the first refresh poll.
+- UI: Status label updated from **FAILED** to **NOT RESPONDING**.
+
 ## 4.10.11 - 2026-01-30
 
 - Fix: WebUI regression where targets table/footer could disappear due to malformed HTML markup.

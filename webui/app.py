@@ -182,25 +182,37 @@ def mask_endpoint(url: str) -> str:
 
 # --- Data from CLI: list/status/get ---
 def parse_list_targets(list_output: str):
+    """Parse `interheart list` output.
+
+    The CLI prints a simple fixed-width table:
+      NAME IP INTERVAL ENABLED ENDPOINT
+      ---------------- ...
+      <rows>
+
+    Older versions printed a long dashed separator line; we tolerate both.
+    """
     targets = []
-    in_table = False
-    for line in (list_output or "").splitlines():
-        line = line.rstrip()
-        if line.startswith("--------------------------------------------------------------------------------"):
-            in_table = True
-            continue
-        if not in_table:
-            continue
-        if line.strip().startswith("NAME") or line.strip().startswith("Targets:"):
-            continue
+    saw_header = False
+    for raw in (list_output or "").splitlines():
+        line = (raw or "").rstrip("\n").rstrip()
         if not line.strip():
             continue
 
+        # Header line
+        if line.strip().startswith("NAME"):
+            saw_header = True
+            continue
+
+        # Separator line (either long or column dashes)
+        if set(line.strip()) == {"-"} or line.strip().startswith("----------------"):
+            saw_header = True
+            continue
+
+        # If the CLI prints any preamble before the table, ignore until header seen.
+        if not saw_header:
+            continue
+
         parts = line.split()
-        # CLI `list` is fixed-width and prints interval as "<n>     s" (note the literal "s" column),
-        # so we need to be tolerant:
-        # NAME IP INTERVAL s ENABLED ENDPOINT
-        # or sometimes: NAME IP 60s ENABLED ENDPOINT
         if len(parts) < 5:
             continue
 
@@ -208,62 +220,74 @@ def parse_list_targets(list_output: str):
         ip = parts[1]
 
         interval_raw = parts[2]
-        enabled = None
-        endpoint_masked = None
+        enabled_raw = parts[3]
+        endpoint_masked = " ".join(parts[4:])
 
+        interval = 60
         if interval_raw.endswith("s") and interval_raw[:-1].isdigit():
             interval = int(interval_raw[:-1])
-            enabled = parts[3] if len(parts) > 3 else "0"
-            endpoint_masked = parts[4] if len(parts) > 4 else "***"
-        elif len(parts) >= 6 and parts[3] == "s":
-            # interval printed as "<n>     s"
-            interval = int(interval_raw) if interval_raw.isdigit() else 60
-            enabled = parts[4]
-            endpoint_masked = parts[5]
-        else:
-            interval = int(interval_raw.replace("s", "")) if interval_raw.replace("s", "").isdigit() else 60
-            enabled = parts[3]
-            endpoint_masked = parts[4]
+        elif interval_raw.isdigit():
+            interval = int(interval_raw)
+
+        enabled = 1 if str(enabled_raw).strip() == "1" else 0
 
         targets.append({
             "name": name,
             "ip": ip,
             "interval": interval,
-            "enabled": 1 if str(enabled).strip() == "1" else 0,
+            "enabled": enabled,
             "endpoint_masked": endpoint_masked or "***",
-            "snapshots": compute_snapshots(DB_PATH, name, 1 if str(enabled).strip() == "1" else 0, days=3),
+            "snapshots": compute_snapshots(DB_PATH, name, enabled, days=3),
         })
+
     return targets
 
 def parse_status(status_output: str):
+    """Parse `interheart status` output.
+
+    Current CLI prints:
+      NAME STATUS PING RESP LAT(ms) NEXT_DUE
+      <rows>
+
+    Older formats had a long separator line; we tolerate both.
+    """
     state = {}
-    in_table = False
-    for line in (status_output or "").splitlines():
-        if line.startswith("--------------------------------------------------------------------------------------------------------------"):
-            in_table = True
-            continue
-        if not in_table:
-            continue
-        if line.strip().startswith("NAME") or line.strip().startswith("State:"):
-            continue
+    saw_header = False
+    for raw in (status_output or "").splitlines():
+        line = (raw or "").rstrip("\n").rstrip()
         if not line.strip():
             continue
+
+        if line.strip().startswith("NAME"):
+            saw_header = True
+            continue
+
+        if set(line.strip()) == {"-"} or line.strip().startswith("----------------"):
+            saw_header = True
+            continue
+
+        if not saw_header:
+            continue
+
         parts = line.split()
         # Expected columns from CLI `status`:
-        # NAME STATUS NEXT_IN NEXT_DUE LAST_PING LAST_RESP LAT_MS
-        if len(parts) < 7:
+        # NAME STATUS PING RESP LAT(ms) NEXT_DUE
+        if len(parts) < 6:
             continue
+
         name = parts[0]
         status = parts[1]
-        last_ping = parts[4]
-        last_sent = parts[5]
-        lat_ms = parts[6]
+        last_ping = parts[2]
+        last_sent = parts[3]
+        lat_ms = parts[4]
+
         state[name] = {
             "status": status,
-            "last_ping_epoch": int(last_ping) if last_ping.isdigit() else 0,
-            "last_sent_epoch": int(last_sent) if last_sent.isdigit() else 0,
+            "last_ping_epoch": int(last_ping) if str(last_ping).isdigit() else 0,
+            "last_sent_epoch": int(last_sent) if str(last_sent).isdigit() else 0,
             "last_rtt_ms": int(lat_ms) if str(lat_ms).lstrip("-").isdigit() else -1,
         }
+
     return state
 
 def human_ts(epoch: int):
