@@ -1,3 +1,8 @@
+## 4.10.11 - 2026-01-30
+
+- Fix: WebUI regression where targets table/footer could disappear due to malformed HTML markup.
+- Fix: Restored correct page structure so existing targets render normally (no data loss).
+
 ## 4.10.10 - 2026-01-30
 
 - Fix: New targets start in **STARTING** (no initial UNKNOWN).
