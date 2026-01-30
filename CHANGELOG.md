@@ -1,3 +1,12 @@
+## v4.9.1
+- Fixed: “Run now” no longer crashes WebUI (“out is not defined”) and progress updates correctly.
+- UI: Sorting is now done by clicking table headers (Name, IP, Status, Interval, Last ping, Last response).
+- UI: Confirm remove modal simplified (removed redundant Close button) and added 3s safety countdown before “Remove” is enabled.
+- UI: Information modal no longer shows “pings sent” in Uptime text; added small uptime trend sparkline.
+- UI: Added clearer status split: **UP**, **PING FAIL**, **HEARTBEAT FAIL** (ping OK but endpoint failed).
+- Network scan: Improved progress feedback, error handling, and cleaner layout for Subnets/Found/New counters.
+- UX: Sticky table header + subtle micro-animations and loading shimmer for a more modern feel.
+
 # Changelog
 All notable changes to this project will be documented in this file.
 

@@ -98,19 +98,12 @@
 
   // ---- Filter targets ----
   const filterInput = $("#filterInput");
-  const sortSelect = $("#sortSelect");
   const table = $("#targetsTable");
   function applyTargetFilter(){
-    const q = (filterInput?.value || "").trim().toLowerCase();
-    $$("tbody tr[data-name]", table).forEach(row => {
-      const name = (row.getAttribute("data-name") || "").toLowerCase();
-      const ip = (row.getAttribute("data-ip") || "").toLowerCase();
-      const status = (row.getAttribute("data-status") || "").toLowerCase();
-      const ok = !q || name.includes(q) || ip.includes(q) || status.includes(q);
-      row.style.display = ok ? "" : "none";
-    });
-  }
-  filterInput?.addEventListener("input", applyTargetFilter);
+  // Re-render to apply both filter + current sort
+  if (lastTargets) renderTargets(lastTargets);
+}
+filterInput?.addEventListener("input", applyTargetFilter);
 
   // ---- Add modal ----
   const addModal = $("#addModal");
@@ -147,48 +140,82 @@
   });
 
   // ---- Confirm remove modal ----
-  const confirmModal = $("#confirmModal");
-  const btnCloseConfirm = $("#btnCloseConfirm");
-  const btnCancelRemove = $("#btnCancelRemove");
-  const btnConfirmRemove = $("#btnConfirmRemove");
-  const confirmName = $("#confirmName");
-  let pendingRemoveName = null;
+const confirmModal = $("#confirmModal");
+const btnCancelRemove = $("#btnCancelRemove");
+const btnConfirmRemove = $("#btnConfirmRemove");
+const confirmName = $("#confirmName");
+let pendingRemoveName = null;
+let confirmCountdown = null;
 
-  function openConfirmRemove(name){
-    pendingRemoveName = name;
-    confirmName.textContent = name;
-    show(confirmModal);
+function clearConfirmCountdown(){
+  if (confirmCountdown){
+    clearInterval(confirmCountdown);
+    confirmCountdown = null;
   }
-  function closeConfirmRemove(){
-    pendingRemoveName = null;
-    hide(confirmModal);
-  }
+}
 
-  btnCloseConfirm?.addEventListener("click", closeConfirmRemove);
-  btnCancelRemove?.addEventListener("click", closeConfirmRemove);
-  confirmModal?.addEventListener("click", (e) => { if (e.target === confirmModal) closeConfirmRemove(); });
+function openConfirmRemove(name){
+  pendingRemoveName = name;
+  confirmName.textContent = name;
 
-  btnConfirmRemove?.addEventListener("click", async () => {
-    const name = pendingRemoveName;
-    if (!name) return;
-    btnConfirmRemove.disabled = true;
-    btnConfirmRemove.textContent = "Removing…";
-    try{
-      const fd = new FormData();
-      fd.set("name", name);
-      const data = await apiPost("/api/remove", fd);
-      toast(data.ok ? "Removed" : "Error", data.message || (data.ok ? "Done" : "Failed"));
-      closeConfirmRemove();
-    }catch(e){
-      toast("Error", e?.message || "Failed");
-    }finally{
+  // Safety countdown (3s) before enabling Remove
+  clearConfirmCountdown();
+  let sec = 3;
+  btnConfirmRemove.disabled = true;
+  btnConfirmRemove.classList.add("is-disabled");
+  btnConfirmRemove.textContent = `Remove (${sec})`;
+
+  confirmCountdown = setInterval(() => {
+    sec -= 1;
+    if (sec <= 0){
+      clearConfirmCountdown();
       btnConfirmRemove.disabled = false;
+      btnConfirmRemove.classList.remove("is-disabled");
       btnConfirmRemove.textContent = "Remove";
-      await refreshState(true);
+      return;
     }
-  });
+    btnConfirmRemove.textContent = `Remove (${sec})`;
+  }, 1000);
 
-  // ---- Info modal ----
+  show(confirmModal);
+}
+
+function closeConfirmRemove(){
+  pendingRemoveName = null;
+  clearConfirmCountdown();
+  hide(confirmModal);
+}
+
+btnCancelRemove?.addEventListener("click", closeConfirmRemove);
+confirmModal?.addEventListener("click", (e) => { if (e.target === confirmModal) closeConfirmRemove(); });
+
+btnConfirmRemove?.addEventListener("click", async () => {
+  clearConfirmCountdown();
+  const name = pendingRemoveName;
+  if (!name) return;
+
+  btnConfirmRemove.disabled = true;
+  btnConfirmRemove.classList.add("is-disabled");
+  btnConfirmRemove.textContent = "Removing…";
+
+  try{
+    const fd = new FormData();
+    fd.set("name", name);
+    const data = await apiPost("/api/remove", fd);
+    toast(data.ok ? "Removed" : "Error", data.message || (data.ok ? "Done" : "Failed"));
+    closeConfirmRemove();
+  }catch(e){
+    toast("Error", e?.message || "Failed");
+  }finally{
+    btnConfirmRemove.disabled = false;
+    btnConfirmRemove.classList.remove("is-disabled");
+    btnConfirmRemove.textContent = "Remove";
+    await refreshState(true);
+  }
+});
+
+// ---- Info modal ----
+
   const infoModal = $("#infoModal");
   const btnCloseInfo = $("#btnCloseInfo");
   const infoTitle = $("#infoTitle");
@@ -228,7 +255,27 @@
     textEl.textContent = s + rtt;
   }
 
-  async function openInfo(name){
+  function drawSparkline(container, points){
+  if (!container) return;
+  const w = 120, h = 22, pad = 2;
+  const pts = (points||[]).map(p => Math.max(0, Math.min(100, Number(p)||0)));
+  if (!pts.length){
+    container.innerHTML = "";
+    return;
+  }
+  const xStep = (w - pad*2) / Math.max(1, (pts.length - 1));
+  const toY = (v) => pad + (h - pad*2) * (1 - (v/100));
+  const d = pts.map((v,i)=>`${pad + i*xStep},${toY(v).toFixed(2)}`).join(" ");
+  container.innerHTML = `
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Uptime trend">
+      <polyline class="grid" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1" points="0,${h-1} ${w},${h-1}"></polyline>
+      <polyline fill="none" stroke="rgba(255,255,255,.70)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" points="${d}"></polyline>
+      <circle cx="${pad + (pts.length-1)*xStep}" cy="${toY(pts[pts.length-1]).toFixed(2)}" r="1.8" fill="rgba(255,255,255,.85)"></circle>
+    </svg>
+  `;
+}
+
+async function openInfo(name){
     infoTitle.textContent = name;
     show(infoModal);
 
@@ -421,45 +468,25 @@
   // ---- Menu actions ----
   
 
-  // ---- Sorting + table re-render ----
-  function ipKey(ip){
-    try{
-      const [a,b,c,d] = String(ip||"0.0.0.0").split(".").map(x => parseInt(x,10));
-      return (a<<24) + (b<<16) + (c<<8) + d;
-    }catch(e){ return 0; }
-  }
-
-  function sortTargets(list, mode){
-    const arr = [...(list || [])];
-    const m = mode || (sortSelect?.value || "ip_asc");
-    if (m === "ip_desc"){
-      arr.sort((x,y) => ipKey(y.ip)-ipKey(x.ip));
-    } else if (m === "name_asc"){
-      arr.sort((x,y) => String(x.name).localeCompare(String(y.name)));
-    } else if (m === "status"){
-      const order = {up:0, down:1, disabled:2, unknown:3};
-      arr.sort((x,y) => (order[String(x.status||"unknown")]??9) - (order[String(y.status||"unknown")]??9) || ipKey(x.ip)-ipKey(y.ip));
-    } else {
-      arr.sort((x,y) => ipKey(x.ip)-ipKey(y.ip));
-    }
-    return arr;
-  }
-
-  function statusClass(status){
-    const s = String(status||"unknown");
-    if (s === "up") return "status-up";
-    if (s === "down") return "status-down";
-    return "status-unknown";
-  }
+    function statusClass(status, enabled, lastRttMs, lastRespEpoch){
+  const st = String(status||"unknown").toLowerCase();
+  const isEnabled = Number(enabled||0) === 1;
+  const hbFail = isEnabled && st === "down" && Number(lastRttMs||-1) >= 0 && Number(lastRespEpoch||0) > 0;
+  if (!isEnabled) return "status-unknown";
+  if (st === "up") return "status-up";
+  if (hbFail) return "status-hb";
+  if (st === "down") return "status-down";
+  return "status-unknown";
+}
 
   function buildRow(t){
     const enabled = Number(t.enabled ?? 0) === 1 && String(t.status||"") !== "disabled";
     return `<tr data-name="${t.name}" data-ip="${t.ip}" data-status="${t.status}" data-enabled="${enabled?1:0}"
-              data-last-ping="${t.last_ping_epoch||0}" data-last-resp="${t.last_response_epoch||0}">
+              data-last-ping="${t.last_ping_epoch||0}" data-last-resp="${t.last_response_epoch||0}" data-last-rtt="${t.last_rtt_ms ?? -1}">
             <td><code>${t.name}</code></td>
             <td><code>${t.ip}</code></td>
             <td>
-              <span class="chip status-chip ${statusClass(t.status)}">
+              <span class="chip status-chip ${statusClass(t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}">
                 <span class="dot"></span>
                 <span class="status-text">${t.status}</span>
               </span>
@@ -476,9 +503,15 @@
               <div class="menu">
                 <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">⋯</button>
                 <div class="menu-dd" role="menu">
-                  <button class="menu-item" data-action="info" type="button">Information</button>
-                  <button class="menu-item" data-action="edit" type="button">Edit</button>
-                  <div class="menu-sep"></div>
+        <button class="menu-item" data-action="info" type="button"><span class="mi-ic" aria-hidden="true">ℹ</span><span>Information</span></button>
+        <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">✎</span><span>Edit</span></button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" data-action="enable" type="button"><span class="mi-ic" aria-hidden="true">✓</span><span>Enable</span></button>
+        <button class="menu-item" data-action="disable" type="button"><span class="mi-ic" aria-hidden="true">⛔</span><span>Disable</span></button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">⚡</span><span>Test</span></button>
+        <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">🗑</span><span>Remove</span></button>
+      </div>
                   <button class="menu-item" data-action="enable" type="button">Enable</button>
                   <button class="menu-item" data-action="disable" type="button">Disable</button>
                   <div class="menu-sep"></div>
@@ -491,10 +524,20 @@
   }
 
   function renderTargets(list){
-    const tbody = $("#targetsTable tbody");
-    if (!tbody) return;
-    const sorted = sortTargets(list, sortSelect?.value);
-    tbody.innerHTML = sorted.map(buildRow).join("");
+  const tbody = $("#targetsTable tbody");
+  if (!tbody) return;
+
+  const q = (filterInput?.value || "").trim().toLowerCase();
+  const filtered = (list || []).filter(t => {
+    if (!q) return true;
+    const name = String(t.name||"").toLowerCase();
+    const ip = String(t.ip||"").toLowerCase();
+    const st = String(t.status||"").toLowerCase();
+    return name.includes(q) || ip.includes(q) || st.includes(q);
+  });
+
+  const sorted = sortTargets(filtered);
+  tbody.innerHTML = sorted.map(buildRow).join("");
     attachIntervalHandlers();
     attachMenuActions();
     applyTargetFilter();
@@ -573,18 +616,38 @@ function attachMenuActions(){
 
   // ---- Real-time-ish refresh + row blink ----
   function setStatusChip(row, status){
-    const chip = row.querySelector(".status-chip");
-    const text = row.querySelector(".status-text");
-    if (!chip || !text) return;
+  const chip = row.querySelector(".status-chip");
+  const text = row.querySelector(".status-text");
+  if (!chip || !text) return;
 
-    chip.classList.remove("status-up","status-down","status-unknown");
-    if (status === "up") chip.classList.add("status-up");
-    else if (status === "down") chip.classList.add("status-down");
-    else chip.classList.add("status-unknown");
+  const enabled = Number(row.getAttribute("data-enabled") || "1") === 1;
+  const lastRtt = Number(row.getAttribute("data-last-rtt") || "-1");
+  const lastResp = Number(row.getAttribute("data-last-resp") || "0");
+  const st = String(status || "unknown").toLowerCase();
+  const hbFail = enabled && st === "down" && lastRtt >= 0 && lastResp > 0;
 
-    text.textContent = (status || "unknown").toUpperCase();
-    row.setAttribute("data-status", status || "unknown");
+  chip.classList.remove("status-up","status-down","status-unknown","status-hb");
+
+  if (!enabled){
+    chip.classList.add("status-unknown");
+    text.textContent = "DISABLED";
+  }else if (st === "up"){
+    chip.classList.add("status-up");
+    text.textContent = "UP";
+  }else if (hbFail){
+    chip.classList.add("status-hb");
+    text.textContent = "HEARTBEAT FAIL";
+  }else if (st === "down"){
+    chip.classList.add("status-down");
+    text.textContent = "PING FAIL";
+  }else{
+    chip.classList.add("status-unknown");
+    text.textContent = st.toUpperCase();
   }
+
+  row.setAttribute("data-status", st);
+}
+
 
   function flashIfChanged(el, newText){
     if (!el) return false;
@@ -633,6 +696,7 @@ function attachMenuActions(){
         }
         const nextResp = Number(t.last_response_epoch || 0);
         row.setAttribute("data-last-resp", String(nextResp));
+        row.setAttribute("data-last-rtt", String(t.last_rtt_ms ?? -1));
 
         flashIfChanged(row.querySelector(".last-ping"), t.last_ping_human || "-");
         flashIfChanged(row.querySelector(".last-resp"), t.last_response_human || "-");
@@ -701,16 +765,17 @@ function attachMenuActions(){
     // Use output tail only for progress counting (no live output UI)
     let outText = "";
     let summary = null;
+    let outResp = null;
     try{
-      const out = await apiGet("/api/run-output?lines=220");
-      if (out && out.ok){
-        outText = out.text || "";
-        summary = out.summary || null;
+      outResp = await apiGet("/api/run-output?lines=220");
+      if (outResp && outResp.ok){
+        outText = outResp.text || "";
+        summary = outResp.summary || null;
       }
     }catch(e){ /* ignore */ }
 
     // Progress: count completed targets (server-side)
-    const done = Number(out?.done ?? 0);
+    const done = Number(outResp?.done ?? 0);
 
     // If summary exists (usually at end), prefer it
     const due = summary ? Number(summary.due || 0) : Math.max(runDueExpected || 0, done || 0);
@@ -936,10 +1001,10 @@ function attachMenuActions(){
   });
 
   // init
+  initHeaderSorting();
   attachIntervalHandlers();
   attachMenuActions();
   applyTargetFilter();
-  sortSelect?.addEventListener("change", () => renderTargets(lastTargets || []));
   // Ensure Enable/Disable visibility + row datasets are synced immediately
   refreshState(true);
   setInterval(() => refreshState(false), 2000);

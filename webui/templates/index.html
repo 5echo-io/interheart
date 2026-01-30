@@ -146,9 +146,6 @@
           <b>Confirm remove</b>
           <span>This cannot be undone</span>
         </div>
-        <div class="modal-actions">
-          <button class="btn btn-ghost btn-mini" id="btnCloseConfirm" type="button">Close</button>
-        </div>
       </div>
 
       <div class="modal-body">
@@ -210,7 +207,7 @@
         </div>
 
         <div class="metric">
-          <b>Uptime (history samples)</b>
+          <div class="uptime-head"><b>Uptime (history samples)</b><div id="uptimeSpark" class="sparkline" aria-hidden="true"></div></div>
           <div class="uptime-wrap" id="uptimeWrap">
             <div class="uptime-row"><span>24h</span><div class="bar"><div id="u24"></div></div><code id="u24t">-</code></div>
             <div class="uptime-row"><span>7d</span><div class="bar"><div id="u7"></div></div><code id="u7t">-</code></div>
@@ -291,13 +288,7 @@
 
       <div class="right-actions">
         <input id="filterInput" class="input input--sm" placeholder="Filter targets… (name / ip / status)">
-        <select id="sortSelect" class="input input--sm" title="Sort">
-          <option value="ip_asc" selected>Sort: IP (asc)</option>
-          <option value="ip_desc">Sort: IP (desc)</option>
-          <option value="name_asc">Sort: Name (A→Z)</option>
-          <option value="status">Sort: Status</option>
-        </select>
-        <button class="btn btn-ghost btn-mini" id="btnSearchNetwork" type="button">Search network</button>
+<button class="btn btn-ghost btn-mini" id="btnSearchNetwork" type="button">Search network</button>
                 <button class="btn btn-ghost btn-mini" id="openAdd" type="button">Add target</button>
         <button class="btn btn-primary btn-mini" id="btnRunNow" type="button">Run now</button>
       </div>
@@ -310,12 +301,12 @@
       <table id="targetsTable">
         <thead>
           <tr>
-            <th style="width: 260px;">Name</th>
-            <th style="width: 160px;">IP</th>
-            <th style="width: 150px;">Status</th>
-            <th style="width: 170px;">Interval</th>
-            <th style="width: 220px;">Last ping</th>
-            <th style="width: 220px;">Last response</th>
+            <th style="width: 260px;" class="th-sort sortable" data-sort="name"><span>Name</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 160px;" class="th-sort sortable" data-sort="ip"><span>IP</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 150px;" class="th-sort sortable" data-sort="status"><span>Status</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 170px;" class="th-sort sortable" data-sort="interval"><span>Interval</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 220px;" class="th-sort sortable" data-sort="last_ping"><span>Last ping</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 220px;" class="th-sort sortable" data-sort="last_resp"><span>Last response</span><span class="sort-ind" aria-hidden="true"></span></th>
             <th style="width: 120px; text-align:right;">Actions</th>
           </tr>
         </thead>
@@ -343,14 +334,14 @@
               <div class="menu">
                 <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">⋯</button>
                 <div class="menu-dd" role="menu">
-                  <button class="menu-item" data-action="info" type="button">Information</button>
-                  <button class="menu-item" data-action="edit" type="button">Edit</button>
+                  <button class="menu-item" data-action="info" type="button"><span class="mi-ic" aria-hidden="true">ℹ</span><span>Information</span></button>
+                  <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">✎</span><span>Edit</span></button>
                   <div class="menu-sep"></div>
-                  <button class="menu-item" data-action="enable" type="button">Enable</button>
-                  <button class="menu-item" data-action="disable" type="button">Disable</button>
+                  <button class="menu-item" data-action="enable" type="button"><span class="mi-ic" aria-hidden="true">✓</span><span>Enable</span></button>
+                  <button class="menu-item" data-action="disable" type="button"><span class="mi-ic" aria-hidden="true">⛔</span><span>Disable</span></button>
                   <div class="menu-sep"></div>
-                  <button class="menu-item" data-action="test" type="button">Test</button>
-                  <button class="menu-item danger" data-action="remove" type="button">Remove</button>
+                  <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">⚡</span><span>Test</span></button>
+                  <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">🗑</span><span>Remove</span></button>
                 </div>
               </div>
             </td>
@@ -360,7 +351,7 @@
       </table>
 
       <div class="footer">
-        <div class="hint">WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code></div>
+        <div class="hint">WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code> • <a href="#" id="openLogsFooter">Logs</a></div>
         <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
       </div>
     </div>
