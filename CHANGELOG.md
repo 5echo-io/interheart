@@ -59,11 +59,6 @@
 - Network scan: Improved progress feedback, error handling, and cleaner layout for Subnets/Found/New counters.
 - UX: Sticky table header + subtle micro-animations and loading shimmer for a more modern feel.
 
-# Changelog
-All notable changes to this project will be documented in this file.
-
-This project follows Semantic Versioning (SemVer).
-
 ## [4.9.0] - 2026-01-30
 
 ### Added
