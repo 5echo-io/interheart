@@ -17,6 +17,15 @@ Endpoint kan være hva som helst:
 
 ---
 
+## WebUI (targets)
+- Live oppdatering av **Last ping / Last response** (poll)
+- Radvalg + **bulk actions** (Enable / Disable / Test / Delete / Clear)
+- ...-meny per target (Information / Edit / Enable/Disable / Test / Delete)
+- Klikk en rad for **Pinned row details** som glir inn fra høyre (actions + logg-utdrag)
+- “Run now” har stille modus som standard + valgfri **Show details**
+
+---
+
 ## Install (server)
 ```bash
 sudo apt update

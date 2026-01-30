@@ -1,3 +1,13 @@
+## v4.10.8
+- Fixed: Restored **1s row blink** on new ping (was accidentally removed) while keeping the check/X indicator visible for **5s**.
+- Fixed: Cleaned up a broken CSS block that could cause weird layout behavior.
+- UI: Pinned row details panel no longer reserves empty space — it now **slides in from the right** as an overlay.
+- UI: Name column now stays a consistent height (long names use ellipsis + tooltip).
+- UX: Bulk bar shows **Delete** and **Clear** buttons again (always visible when 1+ rows selected).
+- UX: “Remove” renamed to **Delete** across UI (Actions menu + bulk bar + confirm modal).
+- UX: Side panel actions are now **icon buttons with tooltips**, and only the relevant **Enable/Disable** toggle is shown.
+- UX: Clicking the same row again closes the side panel.
+
 ## v4.10.7
 - Fixed: Row selection + Actions menu no longer causes subtle column misalignment (layout is now stable while interacting).
 - UI: Ping feedback is now **icon-only** (no full-row blink) and the check/X indicator stays visible for **3s**.
@@ -58,6 +68,11 @@
 - UI: Added clearer status split: **UP**, **PING FAIL**, **HEARTBEAT FAIL** (ping OK but endpoint failed).
 - Network scan: Improved progress feedback, error handling, and cleaner layout for Subnets/Found/New counters.
 - UX: Sticky table header + subtle micro-animations and loading shimmer for a more modern feel.
+
+# Changelog
+All notable changes to this project will be documented in this file.
+
+This project follows Semantic Versioning (SemVer).
 
 ## [4.9.0] - 2026-01-30
 

@@ -692,7 +692,7 @@ function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
                 <input class="row-check" type="checkbox" aria-label="Select row">
                 <span class="gutter-flash" aria-hidden="true"></span>
               </span>
-              <code>${t.name}</code>
+              <code class="name-code" title="${t.name}">${t.name}</code>
             </td>
             <td><code>${t.ip}</code></td>
             <td>
@@ -720,7 +720,7 @@ function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
                   <button class="menu-item" data-action="disable" type="button"><span class="mi-ic" aria-hidden="true">${ic.disable}</span><span>Disable</span></button>
                   <div class="menu-sep"></div>
                   <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">${ic.test}</span><span>Test</span></button>
-                  <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">${ic.remove}</span><span>Remove</span></button>
+                  <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">${ic.remove}</span><span>Delete</span></button>
                 </div>
               </div>
             </td>
@@ -965,7 +965,10 @@ let pinnedName = null;
 
 function closeSidePanel(){
   pinnedName = null;
-  if (sidePanel) sidePanel.classList.add("is-hidden");
+  if (sidePanel){
+    sidePanel.classList.remove("is-open");
+    sidePanel.classList.add("is-hidden");
+  }
   $$("tr.is-focused").forEach(r => r.classList.remove("is-focused"));
 }
 
@@ -979,6 +982,8 @@ async function loadSidePanel(name){
   if (row) row.classList.add("is-focused");
 
   sidePanel.classList.remove("is-hidden");
+  sidePanel.classList.add("is-open");
+  sidePanel.classList.add("is-open");
   if (spTitle) spTitle.textContent = name;
   if (spMeta) spMeta.textContent = "Pinned details";
 
@@ -1000,6 +1005,9 @@ async function loadSidePanel(name){
     spName.textContent = data.name || name;
     spIp.textContent = data.ip || "-";
     spEnabled.textContent = (data.enabled ? "Yes" : "No");
+    // Show only the relevant toggle action
+    if (spEnable) spEnable.style.display = data.enabled ? "none" : "inline-flex";
+    if (spDisable) spDisable.style.display = data.enabled ? "inline-flex" : "none";
     spInterval.textContent = String(data.interval ?? "-");
     spEndpoint.textContent = data.endpoint || "-";
 
@@ -1040,6 +1048,11 @@ function attachRowClickHandlers(){
       if (e.target.closest(".menu") || e.target.closest(".row-check") || e.target.closest(".interval-input")) return;
       const name = row.getAttribute("data-name");
       if (!name) return;
+      // toggle: clicking the same row closes the panel
+      if (pinnedName && pinnedName === name && sidePanel && sidePanel.classList.contains('is-open')){
+        closeSidePanel();
+        return;
+      }
       loadSidePanel(name);
     });
   });
@@ -1130,14 +1143,27 @@ spOpenLogs?.addEventListener("click", async () => { show(logModal); logFilter.va
         row.setAttribute("data-enabled", enabled ? "1" : "0");
         setActionVisibility(row, enabled);
 
-        // Blink row for 1s when a new ping happens
+        // Blink row for 1s when a new ping happens (keep row blink),
+        // but keep the gutter icon visible a bit longer.
         const prevPing = Number(row.getAttribute("data-last-ping") || "0");
         const nextPing = Number(t.last_ping_epoch || 0);
         if (nextPing && nextPing !== prevPing){
           row.setAttribute("data-last-ping", String(nextPing));
+
+          // 1s row blink
           row.classList.remove("flash-up","flash-down");
           row.classList.add((t.status === "up") ? "flash-up" : "flash-down");
-          setTimeout(() => row.classList.remove("flash-up","flash-down"), 3000);
+          if (row._flashTimer) clearTimeout(row._flashTimer);
+          row._flashTimer = setTimeout(() => row.classList.remove("flash-up","flash-down"), 1000);
+
+          // 5s icon flash (independent of row class)
+          const gf = row.querySelector('.gutter-flash');
+          if (gf){
+            gf.classList.remove('icon-up','icon-down');
+            gf.classList.add((t.status === "up") ? 'icon-up' : 'icon-down');
+            if (gf._iconTimer) clearTimeout(gf._iconTimer);
+            gf._iconTimer = setTimeout(() => gf.classList.remove('icon-up','icon-down'), 5000);
+          }
         }
         const nextResp = Number(t.last_response_epoch || 0);
         row.setAttribute("data-last-resp", String(nextResp));
