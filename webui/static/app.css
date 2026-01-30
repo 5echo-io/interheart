@@ -477,8 +477,25 @@ tr.flash-down{ animation: rowFail 1s ease; }
 .chip-btn.active{ border-color:rgba(255,255,255,.22); background:rgba(255,255,255,.12); }
 
 /* --- Bulk bar + selection column --- */
-.bulkbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-radius:14px; border:1px solid rgba(255,255,255,.10); background:rgba(0,0,0,.18); margin-bottom:10px;
-  max-height:80px; opacity:1; transform:translateY(0);
+.bulkbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 12px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(10,16,28,.78);
+  backdrop-filter: blur(10px);
+  margin-bottom:10px;
+
+  position: sticky;
+  top: 78px;
+  z-index: 1200;
+
+  max-height:80px;
+  opacity:1;
+  transform:translateY(0);
   transition:opacity .18s ease, transform .18s ease, max-height .18s ease, margin-bottom .18s ease;
 }
 .bulkbar.is-hidden{ opacity:0; transform:translateY(-8px); max-height:0; margin-bottom:0; overflow:hidden; pointer-events:none; }
@@ -486,9 +503,10 @@ tr.flash-down{ animation: rowFail 1s ease; }
 .bulkbar .bulkbar-actions{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 
 /* Selection checkbox lives inside Name column */
-.name-cell{ display:flex; align-items:center; gap:8px; min-width:0; }
-.name-cell code{ flex:1; min-width:0; }
-.name-code{ display:inline-block; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.name-cell{ min-width:0; }
+.name-cell-inner{ display:flex; align-items:center; gap:8px; min-width:0; }
+.name-cell-inner code{ flex:1; min-width:0; }
+.name-code{ display:block; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .gutter{ width:22px; min-width:22px; display:inline-flex; align-items:center; justify-content:center; position:relative; }
 .row-check{
   width:14px; height:14px;
@@ -514,6 +532,8 @@ tr.flash-down{ animation: rowFail 1s ease; }
 }
 tr:hover .row-check,
 tr.is-selected .row-check{ opacity:.92; transform:translateX(0); }
+tr:hover .gutter-flash,
+tr.is-selected .gutter-flash{ opacity:0 !important; visibility:hidden; }
 .row-check:checked{
   opacity:1;
   background: rgba(53,211,159,.16);
@@ -575,16 +595,29 @@ select.input option{ background: rgba(10,16,28,1); color: var(--text); }
 .content-grid{ display:block; }
 .table-wrap{ min-width:0; }
 
+/* Sidepanel backdrop */
+.sidepanel-backdrop{
+  position:fixed; inset:0;
+  background: rgba(0,0,0,.38);
+  backdrop-filter: blur(10px);
+  opacity:0;
+  pointer-events:none;
+  transition: opacity .18s ease;
+  z-index:2999;
+}
+.sidepanel-backdrop.is-open{ opacity:1; pointer-events:auto; }
+.sidepanel-backdrop.is-hidden{ display:block; }
+
 /* Overlay panel – does NOT reserve table space */
 .sidepanel{
   position:fixed;
   right:18px;
-  top:92px;
+  top:86px;
   bottom:18px;
   width:380px;
   max-width: calc(100vw - 36px);
   border:1px solid rgba(255,255,255,.10);
-  background: rgba(0,0,0,.22);
+  background: rgba(10,16,28,.96);
   border-radius: 18px;
   overflow:hidden;
   box-shadow: 0 22px 70px rgba(0,0,0,.60);

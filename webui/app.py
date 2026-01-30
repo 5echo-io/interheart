@@ -84,7 +84,7 @@ def run_cmd(args):
     return p.returncode, merged.strip()
 
 def journalctl_lines(lines: int) -> str:
-    cmd = ["journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=cat"]
+    cmd = ["journalctl", "-t", "interheart", "-n", str(lines), "--no-pager", "--output=short-iso"]
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         raise RuntimeError((p.stderr or "journalctl failed").strip())
@@ -520,7 +520,7 @@ def logs():
 
     try:
         text = journalctl_lines(lines)
-        src = "journalctl -t interheart -o cat"
+        src = "journalctl -t interheart -o short-iso"
         actual = len(text.splitlines()) if text else 0
         return jsonify({"ok": True, "source": src, "lines": actual, "updated": updated, "text": text})
     except Exception as e:

@@ -23,6 +23,8 @@ Endpoint kan være hva som helst:
 - ...-meny per target (Information / Edit / Enable/Disable / Test / Delete)
 - Klikk en rad for **Pinned row details** som glir inn fra høyre (actions + logg-utdrag)
 - “Run now” har stille modus som standard + valgfri **Show details**
+- Logs viser **timestamps** (journalctl short-iso)
+- Keyboard: **Esc** lukker panel/modaler, **Enter** toggler panel på valgt rad
 
 ---
 

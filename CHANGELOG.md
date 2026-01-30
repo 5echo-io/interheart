@@ -1,3 +1,14 @@
+## v4.10.9
+- Fixed: **Name** column now matches the row height exactly (no more taller “Name” cells).
+- Fixed: Hover behavior: checkbox shows, and the ping check/X icon hides while hovering or when the row is selected.
+- Fixed: Actions menu **Enable/Disable** item is properly left-aligned (keeps flex layout when toggled).
+- UX: Side panel is now **solid (not transparent)**, uses full height, and opens with a subtle **backdrop blur/dim** (click backdrop to close).
+- UX: Target information modal: **Endpoint** moved to full-width and “Live status” swapped to the side.
+- Run now: “Show details” stays **collapsed** while the run is active (no auto-open).
+- Logs: Added **timestamps** (journalctl short-iso) so the log view is actually useful for debugging.
+- UX: Bulkbar is now **sticky** while scrolling (stays at the top of the card).
+- UX: Keyboard shortcuts: **Esc** closes side panel/modals, **Enter** toggles side panel for focused/selected row.
+
 ## v4.10.8
 - Fixed: Restored **1s row blink** on new ping (was accidentally removed) while keeping the check/X indicator visible for **5s**.
 - Fixed: Cleaned up a broken CSS block that could cause weird layout behavior.

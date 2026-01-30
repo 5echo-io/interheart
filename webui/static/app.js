@@ -671,8 +671,8 @@ function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
   function setActionVisibility(row, enabled){
     const btnEnable = row.querySelector('.menu-item[data-action="enable"]');
     const btnDisable = row.querySelector('.menu-item[data-action="disable"]');
-    if (btnEnable) btnEnable.style.display = enabled ? "none" : "block";
-    if (btnDisable) btnDisable.style.display = enabled ? "block" : "none";
+    if (btnEnable) btnEnable.style.display = enabled ? "none" : "flex";
+    if (btnDisable) btnDisable.style.display = enabled ? "flex" : "none";
   }
 
   function buildRow(t){
@@ -688,11 +688,13 @@ function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
     return `<tr data-name="${t.name}" data-ip="${t.ip}" data-status="${t.status}" data-enabled="${enabled?1:0}"
               data-last-ping="${t.last_ping_epoch||0}" data-last-resp="${t.last_response_epoch||0}" data-last-rtt="${t.last_rtt_ms ?? -1}">
             <td class="name-cell">
-              <span class="gutter" aria-hidden="true">
-                <input class="row-check" type="checkbox" aria-label="Select row">
-                <span class="gutter-flash" aria-hidden="true"></span>
-              </span>
-              <code class="name-code" title="${t.name}">${t.name}</code>
+              <div class="name-cell-inner">
+                <span class="gutter" aria-hidden="true">
+                  <input class="row-check" type="checkbox" aria-label="Select row">
+                  <span class="gutter-flash" aria-hidden="true"></span>
+                </span>
+                <code class="name-code" title="${t.name}">${t.name}</code>
+              </div>
             </td>
             <td><code>${t.ip}</code></td>
             <td>
@@ -935,6 +937,7 @@ function attachMenuActions(){
 
 // ---- Pinned row details (side panel) ----
 const sidePanel = $("#sidePanel");
+const sideBackdrop = $("#sideBackdrop");
 const spTitle = $("#spTitle");
 const spMeta = $("#spMeta");
 const spClose = $("#spClose");
@@ -965,6 +968,9 @@ let pinnedName = null;
 
 function closeSidePanel(){
   pinnedName = null;
+  if (sideBackdrop){
+    sideBackdrop.classList.remove("is-open");
+  }
   if (sidePanel){
     sidePanel.classList.remove("is-open");
     sidePanel.classList.add("is-hidden");
@@ -981,8 +987,10 @@ async function loadSidePanel(name){
   const row = $(`tr[data-name="${CSS.escape(name)}"]`);
   if (row) row.classList.add("is-focused");
 
+  if (sideBackdrop){
+    sideBackdrop.classList.add("is-open");
+  }
   sidePanel.classList.remove("is-hidden");
-  sidePanel.classList.add("is-open");
   sidePanel.classList.add("is-open");
   if (spTitle) spTitle.textContent = name;
   if (spMeta) spMeta.textContent = "Pinned details";
@@ -1059,6 +1067,7 @@ function attachRowClickHandlers(){
 }
 
 spClose?.addEventListener("click", closeSidePanel);
+sideBackdrop?.addEventListener("click", closeSidePanel);
 spInfo?.addEventListener("click", () => { if (pinnedName) openInfo(pinnedName); });
 spEdit?.addEventListener("click", () => { if (pinnedName) openEdit(pinnedName); });
 spEnable?.addEventListener("click", async () => { if (!pinnedName) return; const fd = new FormData(); fd.set("name", pinnedName); await apiPost("/api/enable", fd); await refreshState(true); await loadSidePanel(pinnedName); });
@@ -1268,9 +1277,14 @@ btnRunDetails?.addEventListener("click", () => {
       const lines = (outText || "").split("\n").filter(Boolean);
       const tail = lines.slice(-12);
       if (tail.length){
-        runFeedWrap.style.display = "block";
-        runFeed.innerHTML = tail.map(l => `<div class=\"log-line\">${escapeHtml(l)}</div>`).join("");
+        if (runShowDetails){
+          runFeedWrap.style.display = "block";
+          runFeed.innerHTML = tail.map(l => `<div class=\"log-line\">${escapeHtml(l)}</div>`).join("");
+        }
         runNowLine.textContent = tail[tail.length-1];
+      }
+      if (!runShowDetails){
+        runFeedWrap.style.display = "none";
       }
     }
 
@@ -1573,16 +1587,43 @@ btnRunDetails?.addEventListener("click", () => {
   refreshState(true);
   setInterval(() => refreshState(false), 2000);
 
-  // ESC closes modals
+  // Keyboard UX: Esc closes sidepanel/modals, Enter toggles sidepanel on focused/selected row
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape"){
-      if (logModal?.classList.contains("show")) hide(logModal);
-      if (addModal?.classList.contains("show")) hide(addModal);
-      if (runModal?.classList.contains("show")) hide(runModal);
-      if (confirmModal?.classList.contains("show")) hide(confirmModal);
-      if (infoModal?.classList.contains("show")) hide(infoModal);
-      if (editModal?.classList.contains("show")) hide(editModal);
+      // Close sidepanel first
+      if (sidePanel && sidePanel.classList.contains("is-open")){
+        closeSidePanel();
+        e.preventDefault();
+        return;
+      }
+      // Close the top-most open modal
+      const openModal = Array.from(document.querySelectorAll(".modal.show")).pop();
+      if (openModal){
+        hide(openModal);
+        e.preventDefault();
+        return;
+      }
+      // Finally close menus
       closeAllMenus();
+      return;
+    }
+
+    if (e.key === "Enter"){
+      // Avoid hijacking Enter while typing
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+      if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
+      // Don't trigger while a modal is open
+      if (document.querySelector(".modal.show")) return;
+
+      const row = document.querySelector("tr.is-focused") || document.querySelector("tr.is-selected");
+      if (!row) return;
+      const name = row.getAttribute("data-name");
+      if (!name) return;
+
+      if (pinnedName && pinnedName === name && sidePanel && sidePanel.classList.contains("is-open")) closeSidePanel();
+      else loadSidePanel(name);
+
+      e.preventDefault();
     }
   });
 

@@ -216,17 +216,17 @@
           </div>
 
           <div class="metric">
-            <b>Endpoint</b>
-            <div class="kv"><span>URL</span><code id="infoEndpoint" style="word-break:break-all;">-</code></div>
-            <div class="hint" id="infoEndpointHint" style="margin-top:8px;">Shown as stored in interheart</div>
-          </div>
-
-          <div class="metric">
             <b>Live status</b>
             <div class="kv"><span>Status</span><code id="infoStatus">-</code></div>
             <div class="kv"><span>Last ping</span><code id="infoLastPing">-</code></div>
             <div class="kv"><span>Last response</span><code id="infoLastResp">-</code></div>
             <div class="kv"><span>Latency</span><code id="infoLatency">-</code></div>
+          </div>
+
+          <div class="metric info-span2">
+            <b>Endpoint</b>
+            <div class="kv"><span>URL</span><code id="infoEndpoint" style="word-break:break-all;">-</code></div>
+            <div class="hint" id="infoEndpointHint" style="margin-top:8px;">Shown as stored in interheart</div>
           </div>
         </div>
 
@@ -355,11 +355,13 @@
           <tr data-name="{{ t.name }}" data-ip="{{ t.ip }}" data-status="{{ t.status }}" data-enabled="{{ t.enabled }}"
               data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
             <td class="name-cell">
-              <span class="gutter" aria-hidden="true">
-                <input class="row-check" type="checkbox" aria-label="Select row">
-                <span class="gutter-flash" aria-hidden="true"></span>
-              </span>
-              <code class="name-code" title="{{ t.name }}">{{ t.name }}</code>
+              <div class="name-cell-inner">
+                <span class="gutter" aria-hidden="true">
+                  <input class="row-check" type="checkbox" aria-label="Select row">
+                  <span class="gutter-flash" aria-hidden="true"></span>
+                </span>
+                <code class="name-code" title="{{ t.name }}">{{ t.name }}</code>
+              </div>
             </td>
             <td><code>{{ t.ip }}</code></td>
             <td>
@@ -396,6 +398,8 @@
         </tbody>
           </table>
   </div>
+
+  <div class="sidepanel-backdrop is-hidden" id="sideBackdrop" aria-hidden="true"></div>
 
   <aside class="sidepanel is-hidden" id="sidePanel" aria-label="Pinned row details">
     <div class="sidepanel-head">
