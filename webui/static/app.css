@@ -105,6 +105,8 @@ th{color:var(--muted);font-weight:850;text-align:left}
   color:var(--muted);
   font-size:12px;
   white-space:nowrap;
+  min-width: 156px;
+  justify-content:center;
 }
 .dot{width:8px;height:8px;border-radius:99px;background:rgba(255,255,255,.35)}
 .status-up{border-color:rgba(53,211,159,.26);background:rgba(53,211,159,.09)}
@@ -501,6 +503,7 @@ tr.is-selected .row-check{ opacity:.92; transform:translateX(0); }
 .gutter-flash{
   position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
   width:14px; height:14px; opacity:0;
+  pointer-events:none;
 }
 tr.flash-up .gutter-flash::before,
 tr.flash-down .gutter-flash::before{
@@ -525,3 +528,19 @@ tr.flash-down .gutter-flash{ opacity:1; animation: flashFail 1s ease; }
 
 th.sortable{ cursor:pointer; user-select:none; }
 th.sortable:hover{ text-decoration:underline; }
+
+
+/* --- Snapshots (3-day mini history) --- */
+.snapshots{ display:inline-flex; align-items:center; gap:4px; margin-left:8px; vertical-align:middle; }
+.snap-dot{ width:7px; height:7px; border-radius:999px; background:rgba(255,255,255,.18); box-shadow: 0 0 0 1px rgba(255,255,255,.10) inset; }
+.snap-dot.green{ background: rgba(53,211,159,.85); }
+.snap-dot.yellow{ background: rgba(255,200,0,.80); }
+.snap-dot.red{ background: rgba(255,59,92,.85); }
+.snap-dot.gray{ background: rgba(255,255,255,.28); }
+.snap-dot.unknown{ background: rgba(255,255,255,.14); }
+
+.status-starting{ background: rgba(76,165,255,.12); border-color: rgba(76,165,255,.28); }
+.status-starting .dot{ background: rgba(76,165,255,.90); }
+
+select.input{ appearance:none; -webkit-appearance:none; -moz-appearance:none; background:rgba(255,255,255,.03); border:1px solid var(--line); color:var(--text); padding-right:34px; }
+select.input option{ background: rgba(10,16,28,1); color: var(--text); }

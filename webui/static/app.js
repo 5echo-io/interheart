@@ -639,6 +639,7 @@ async function openInfo(name){
   const hbFail = isEnabled && st === "down" && Number(lastRttMs||-1) >= 0 && Number(lastRespEpoch||0) > 0;
   if (!isEnabled) return "status-unknown";
   if (st === "up") return "status-up";
+  if (st === "starting") return "status-starting";
   if (hbFail) return "status-hb";
   if (st === "down") return "status-down";
   return "status-unknown";
@@ -650,10 +651,22 @@ function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
   const hbFail = isEnabled && st === "down" && Number(lastRttMs||-1) >= 0 && Number(lastRespEpoch||0) > 0;
   if (!isEnabled) return "DISABLED";
   if (st === "up") return "OK";
-  if (hbFail) return "HEARTBEAT FAIL";
+  if (st === "starting") return "STARTING..";
+  if (hbFail) return "HEARTBEAT FAILED";
   if (st === "down") return "FAILED";
   return st.toUpperCase();
 }
+
+  function renderSnapshots(snaps){
+    const arr = Array.isArray(snaps) ? snaps : [];
+    const out = arr.slice(0,3).map(s => {
+      const cls = (s && s.state) ? String(s.state) : "unknown";
+      const title = (s && s.label) ? String(s.label) : cls;
+      return `<span class="snap-dot ${cls}" title="${title}"></span>`;
+    }).join("");
+    return `<span class="snapshots">${out}</span>`;
+  }
+
 
   function setActionVisibility(row, enabled){
     const btnEnable = row.querySelector('.menu-item[data-action="enable"]');
@@ -685,7 +698,7 @@ function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
             <td>
               <span class="chip status-chip ${statusClass(t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}">
                 <span class="dot"></span>
-                <span class="status-text">${statusLabel(t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}</span>
+                <span class="status-text">${statusLabel(t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}</span>${renderSnapshots(t.snapshots)}
               </span>
             </td>
             <td>
@@ -808,12 +821,25 @@ function attachMenuActions(){
             } else if (action === "enable"){
               data = await apiPost("/api/enable", fd);
               toast(data.ok ? "Updated" : "Error", data.message || (data.ok ? "Enabled" : "Failed"));
+              if (data.ok){
+                // optimistic starting state + immediate verification ping
+                row.setAttribute("data-enabled","1");
+                row.setAttribute("data-status","starting");
+                const stEl = row.querySelector(".status-text");
+                const chip = row.querySelector(".status-chip");
+                if (stEl) stEl.textContent = "STARTING..";
+                if (chip){ chip.classList.remove("status-up","status-down","status-hb","status-unknown","status-starting"); chip.classList.add("status-starting"); }
+                // fire test in background (don't block UI)
+                apiPost("/api/test", fd).then(()=>refreshState(true)).catch(()=>{});
+              }
             } else if (action === "disable"){
               data = await apiPost("/api/disable", fd);
               toast(data.ok ? "Updated" : "Error", data.message || (data.ok ? "Disabled" : "Failed"));
             } else {
               return;
-            }          }catch(e){
+            }
+
+          }catch(e){
             toast("Error", e?.message || "Failed");
           }finally{
             await refreshState(true);
@@ -923,7 +949,7 @@ function attachMenuActions(){
     text.textContent = "OK";
   }else if (hbFail){
     chip.classList.add("status-hb");
-    text.textContent = "HEARTBEAT FAIL";
+    text.textContent = "HEARTBEAT FAILED";
   }else if (st === "down"){
     chip.classList.add("status-down");
     text.textContent = "FAILED";
@@ -1329,7 +1355,8 @@ function attachMenuActions(){
     resetScanUi();
     scanOutput.textContent = "Starting scan…";
     scanLive.style.display = "flex";
-    const ok = await startScan(true);
+    const cur = await apiGet(`/api/scan-status`);
+    const ok = await startScan(!!cur.finished);
     if (!ok){
       scanLive.style.display = "none";
       return;

@@ -220,6 +220,7 @@ def parse_list_targets(list_output: str):
             "interval": interval,
             "enabled": 1 if str(enabled).strip() == "1" else 0,
             "endpoint_masked": endpoint_masked or "***",
+            "snapshots": compute_snapshots(DB_PATH, name, 1 if str(enabled).strip() == "1" else 0, days=3),
         })
     return targets
 
@@ -308,6 +309,78 @@ def _safe_int(v, default=0):
         return int(v)
     except Exception:
         return default
+
+
+def compute_snapshots(db_path: Path, name: str, enabled_now: int, days: int = 3):
+    """Return list of {day, state, label} for the last N days (including today).
+
+    States:
+      - green: mostly OK
+      - yellow: had a down streak >=60s
+      - red: down all samples that day
+      - gray: no samples and disabled
+      - unknown: no samples and enabled
+
+    Heuristic, based on history samples.
+    """
+    import sqlite3
+    import datetime
+
+    if not db_path.exists():
+        return []
+
+    try:
+        con = sqlite3.connect(str(db_path))
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='history' LIMIT 1;")
+        if not cur.fetchone():
+            return []
+
+        today = datetime.date.fromtimestamp(int(time.time()))
+        out = []
+        for di in range(days-1, -1, -1):
+            day = today - datetime.timedelta(days=di)
+            start = int(datetime.datetime.combine(day, datetime.time.min).timestamp())
+            end = int(datetime.datetime.combine(day, datetime.time.max).timestamp())
+            cur.execute(
+                "SELECT ts, status FROM history WHERE name=? AND ts>=? AND ts<=? ORDER BY ts ASC;",
+                (name, start, end),
+            )
+            rows = cur.fetchall()
+            if not rows:
+                if enabled_now != 1:
+                    out.append({"day": day.isoformat(), "state": "gray", "label": f"{day.strftime('%a')} • disabled"})
+                else:
+                    out.append({"day": day.isoformat(), "state": "unknown", "label": f"{day.strftime('%a')} • no data"})
+                continue
+
+            statuses = [r['status'] for r in rows]
+            has_up = any(s == 'up' for s in statuses)
+            has_down = any(s == 'down' for s in statuses)
+
+            if has_down and not has_up:
+                out.append({"day": day.isoformat(), "state": "red", "label": f"{day.strftime('%a')} • down"})
+                continue
+
+            # find any down streak >=60s
+            streak_start = None
+            worst = 0
+            for r in rows:
+                if r['status'] == 'down':
+                    if streak_start is None:
+                        streak_start = r['ts']
+                    worst = max(worst, int(r['ts']) - int(streak_start))
+                else:
+                    streak_start = None
+            if worst >= 60:
+                out.append({"day": day.isoformat(), "state": "yellow", "label": f"{day.strftime('%a')} • degraded"})
+            else:
+                out.append({"day": day.isoformat(), "state": "green", "label": f"{day.strftime('%a')} • ok"})
+
+        return out
+    except Exception:
+        return []
 
 
 def compute_uptime_stats(db_path: Path, name: str, seconds: int):
@@ -805,240 +878,67 @@ def api_run_result():
 
 
 # ---- API: network scan ----
-def _get_local_cidrs():
-    """Return a list of IPv4 CIDRs from local interfaces (best-effort)."""
-    cidrs = []
+def _get_local_cidrs() -> list[str]:
+    """Best-effort list of CIDRs to scan.
+
+    Strategy:
+    - Prefer directly configured interface networks (ip -j addr).
+    - Add routed RFC1918 networks from `ip -j route` (but avoid huge ranges like /8).
+
+    This keeps scans useful on environments where hosts live behind VLAN gateways.
+    """
+    cidrs: list[str] = []
+
+    # 1) Interface subnets
     try:
-        p = subprocess.run(["ip", "-j", "addr"], capture_output=True, text=True)
-        if p.returncode != 0:
-            return cidrs
-        data = json.loads(p.stdout or "[]")
-        for iface in data:
-            ifname = iface.get("ifname") or ""
-            if ifname in ("lo",):
-                continue
-            # skip known virtuals that tend to be noisy
-            if ifname.startswith(("docker", "br-", "veth", "wt0", "tailscale", "tun", "tap")):
-                continue
-            for a in (iface.get("addr_info") or []):
+        j = subprocess.check_output(["ip", "-j", "addr", "show"], text=True)
+        data = json.loads(j)
+        for itf in data:
+            for a in itf.get("addr_info", []) or []:
                 if a.get("family") != "inet":
                     continue
                 local = a.get("local")
                 prefix = a.get("prefixlen")
                 if not local or prefix is None:
                     continue
-                try:
-                    import ipaddress
-                    net = ipaddress.ip_network(f"{local}/{prefix}", strict=False)
-                    # nmap behaves best with a real network CIDR (not host/prefix)
-                    cidrs.append(net.with_prefixlen)
-                except Exception:
-                    cidrs.append(f"{local}/{prefix}")
+                # Skip loopback + link-local
+                if str(local).startswith("127.") or str(local).startswith("169.254."):
+                    continue
+                cidrs.append(f"{local}/{prefix}")
     except Exception:
         pass
-    # de-dupe
-    out = []
-    for c in cidrs:
-        if c not in out:
-            out.append(c)
-    return out
 
-def _scan_worker():
-    """Background scan.
-
-    Uses nmap ping-scan and streams output to SCAN_OUT_FILE so the UI can show progress.
-    Best effort: collect hostname, mac, vendor and a simple "type" + confidence score.
-    """
-    ensure_state_dir()
-    meta = load_scan_meta()
-    opts = meta.get("opts") or {}
-    scope = (opts.get("scope") or "local").strip()
-    speed = (opts.get("speed") or "normal").strip()
-    custom = (opts.get("custom") or "").strip()
-
-    cidrs = _get_local_cidrs()
-    if scope == "local+custom" and custom:
-        for part in re.split(r"[\s,;]+", custom):
-            p = part.strip()
-            if not p:
-                continue
-            # basic validation
-            if re.match(r"^\d+\.\d+\.\d+\.\d+\/\d+$", p):
-                cidrs.append(p)
-
-    meta.update({
-        "started": int(time.time()),
-        "finished": 0,
-        "rc": None,
-        "error": "",
-        "cidrs": cidrs,
-        "current_ip": "",
-        "progress": 0,
-        "current_cidr": "",
-        "pid": int(meta.get("pid") or 0),
-    })
-    save_scan_meta(meta)
-
-    SCAN_OUT_FILE.write_text("", encoding="utf-8")
-
-    found_map: dict[str, dict] = {}
-    last_ip = ""
-
-    def guess_type(host: str, vendor: str) -> tuple[str, int]:
-        h = (host or "").lower()
-        v = (vendor or "").lower()
-        if any(x in v for x in ["ubiquiti", "mikrotik", "cisco", "aruba", "juniper", "netgear", "tp-link"]):
-            return ("switch/ap", 75)
-        if any(x in v for x in ["canon", "brother", "epson", "lexmark", "kyocera", "xerox"]):
-            return ("printer", 75)
-        if any(x in v for x in ["axis", "hikvision", "dahua", "hanwha", "uniview", "birddog"]):
-            return ("camera", 75)
-        if any(x in h for x in ["printer", "mfp"]):
-            return ("printer", 60)
-        if any(x in h for x in ["cam", "camera", "ptz", "ndi"]):
-            return ("camera", 55)
-        if any(x in h for x in ["switch", "ap", "udm", "usw", "u6"]):
-            return ("switch/ap", 55)
-        return ("device", 40)
-
+    # 2) Routed private networks (helps scanning across VLANs)
     try:
-        # require nmap early
-        pchk = subprocess.run(["sh", "-lc", "command -v nmap"], capture_output=True, text=True)
-        if pchk.returncode != 0:
-            raise RuntimeError("Missing dependency: nmap")
-        if not cidrs:
-            raise RuntimeError("No local subnets found (ip addr)")
+        j = subprocess.check_output(["ip", "-j", "route", "show"], text=True)
+        routes = json.loads(j)
+        for r in routes:
+            dst = r.get("dst")
+            if not dst or dst in ("default", "0.0.0.0/0"):
+                continue
+            # only RFC1918
+            if not (dst.startswith("10.") or dst.startswith("192.168.") or dst.startswith("172.")):
+                continue
+            # avoid massive scans
+            m = re.match(r"^\d+\.\d+\.\d+\.\d+/(\d+)$", dst)
+            if not m:
+                continue
+            pref = int(m.group(1))
+            if pref < 16:
+                continue
+            cidrs.append(dst)
+    except Exception:
+        pass
 
-        # Prefer ARP scan when possible (needs root). Best-effort sudo if available.
-        can_sudo = False
-        if os.geteuid() == 0:
-            can_sudo = True
-        else:
-            try:
-                s = subprocess.run(["sudo", "-n", "true"], capture_output=True)
-                can_sudo = (s.returncode == 0)
-            except Exception:
-                can_sudo = False
-
-        def nmap_cmd(cidr: str) -> list[str]:
-            # speed presets
-            if speed == "fast":
-                min_rate = "500"
-                retries = "1"
-                host_to = "900ms"
-            elif speed == "safe":
-                min_rate = "80"
-                retries = "3"
-                host_to = "2500ms"
-            else:
-                min_rate = "200"
-                retries = "2"
-                host_to = "1500ms"
-
-            base = ["nmap", "-sn", "-n", "--stats-every", "1s", "--max-retries", retries, "--host-timeout", host_to, "--min-rate", min_rate]
-
-            if can_sudo:
-                # ARP discovery is reliable on L2 segments
-                return (["sudo", "-n"] + base + ["-PR", cidr])
-            # Non-root fallback: use a mix of ICMP + TCP ping. Not perfect, but better than nothing.
-            return (base + ["-PE", "-PP", "-PS22,80,443,554,1935", "-PA22,80,443", cidr])
-
-        with open(str(SCAN_OUT_FILE), "a", encoding="utf-8") as out_f:
-            for cidr in cidrs:
-                meta = load_scan_meta()
-                meta["current_cidr"] = cidr
-                save_scan_meta(meta)
-                out_f.write(f"scan: {cidr}\n")
-                out_f.flush()
-
-                cmd = nmap_cmd(cidr)
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-
-                meta = load_scan_meta()
-                meta["pid"] = int(p.pid or 0)
-                save_scan_meta(meta)
-
-                for line in p.stdout or []:
-                    s = (line or "").rstrip("\n")
-                    if not s:
-                        continue
-                    out_f.write(s + "\n")
-                    out_f.flush()
-
-                    # Parse nmap progress
-                    mp = re.search(r"About\s+([0-9.]+)%\s+done", s)
-                    if mp:
-                        try:
-                            pct = float(mp.group(1))
-                            meta = load_scan_meta()
-                            # overall progress: current subnet index + within-subnet pct
-                            idx = (cidrs.index(cidr) + 1)
-                            total = len(cidrs) or 1
-                            overall = int(((idx - 1) / total) * 100 + (pct / total))
-                            meta["progress"] = max(0, min(100, overall))
-                            save_scan_meta(meta)
-                        except Exception:
-                            pass
-
-                    if s.startswith("Nmap scan report for "):
-                        rest = s.replace("Nmap scan report for ", "", 1).strip()
-                        m = re.match(r"(.+) \((\d+\.\d+\.\d+\.\d+)\)$", rest)
-                        host = ""
-                        ip = ""
-                        if m:
-                            host = m.group(1).strip()
-                            ip = m.group(2).strip()
-                        else:
-                            ip = rest.strip()
-                        if re.match(r"^\d+\.\d+\.\d+\.\d+$", ip):
-                            last_ip = ip
-                            meta = load_scan_meta()
-                            meta["current_ip"] = ip
-                            save_scan_meta(meta)
-                            found_map.setdefault(ip, {"ip": ip, "host": host})
-                            if host:
-                                found_map[ip]["host"] = host
-
-                    if s.startswith("MAC Address:") and last_ip:
-                        mm = re.match(r"MAC Address:\s+([0-9A-Fa-f:]{17})\s*(?:\((.+)\))?", s)
-                        if mm:
-                            found_map.setdefault(last_ip, {"ip": last_ip})
-                            found_map[last_ip]["mac"] = mm.group(1).strip().upper()
-                            if mm.group(2):
-                                found_map[last_ip]["vendor"] = mm.group(2).strip()
-
-                p.wait(timeout=None)
-
-        found = []
-        for ip, d in found_map.items():
-            host = d.get("host", "")
-            vendor = d.get("vendor", "")
-            dtype, conf = guess_type(host, vendor)
-            d["type"] = dtype
-            d["confidence"] = conf
-            found.append(d)
-
-        def ip_key(x):
-            parts = [int(p) for p in str(x.get("ip", "0.0.0.0")).split(".") if p.isdigit()]
-            return parts + [0] * (4 - len(parts))
-
-        found.sort(key=ip_key)
-
-        meta.update({"found": found, "rc": 0})
-        save_scan_meta(meta)
-    except Exception as e:
-        with open(str(SCAN_OUT_FILE), "a", encoding="utf-8") as out_f:
-            out_f.write(f"error: {str(e)}\n")
-        meta.update({"rc": 1, "error": str(e)})
-        save_scan_meta(meta)
-    finally:
-        meta = load_scan_meta()
-        meta["finished"] = int(time.time())
-        meta["progress"] = int(meta.get("progress") or 0)
-        meta["pid"] = 0
-        save_scan_meta(meta)
-
-@APP.post("/api/scan-start")
+    # de-dup while preserving order
+    seen = set()
+    uniq = []
+    for c in cidrs:
+        if c in seen:
+            continue
+        seen.add(c)
+        uniq.append(c)
+    return uniq
 def api_scan_start():
     ensure_state_dir()
     meta = load_scan_meta()

@@ -453,7 +453,7 @@ cmd_test() {
     else
       # Mark down (endpoint)
       sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
-                VALUES('${n_esc}','down', $((now + interval)), ${now}, ${now}, ${rtt_ms});" >/dev/null 2>&1 || true
+                VALUES('${n_esc}','down', $((now + 5)), ${now}, ${now}, ${rtt_ms});" >/dev/null 2>&1 || true
       sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
                 VALUES(${now},'${n_esc}','down',${rtt_ms},${code:-0});" >/dev/null 2>&1 || true
       echo "WARN: ping_ok=1 curl_http=${code}"

@@ -1,3 +1,12 @@
+## v4.10.6
+- Fixed: Removed a JS syntax regression that could break Actions/selection interactions.
+- UI: Row selection should be clickable again (no invisible overlay blocking the checkbox).
+- UI: Added **STARTING..** state + immediate verification ping when enabling a disabled target.
+- Heartbeat: On heartbeat failure, interheart retries every **5s** until success (faster recovery), while keeping normal intervals for ping failures.
+- Network scan: Improved subnet discovery by including routed RFC1918 networks (VLAN-aware) and improved Scan Now behavior (no forced restart unless “Scan again”).
+- UI: Added lightweight 3-day **status snapshots** (mini dots) per target.
+- Styling: Dark-theme styling for scan dropdowns + status chip width adjustments.
+
 ## v4.10.4
 - UI: Bulk selection bar now animates in smoothly (fade + slide down) instead of popping in.
 - UI: Selection checkbox moved into the **Name** column with a reserved gutter (no layout shift) + subtler styling.

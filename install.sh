@@ -10,7 +10,7 @@ echo "[interheart] Installing from: ${REPO_DIR}"
 # Base deps (best effort)
 if command -v apt-get >/dev/null 2>&1; then
   sudo apt-get update -y >/dev/null 2>&1 || true
-  sudo apt-get install -y python3 python3-venv python3-pip nmap >/dev/null 2>&1 || true
+  sudo apt-get install -y python3 python3-venv python3-pip nmap build-essential python3-dev libfreetype6-dev libjpeg-dev zlib1g-dev >/dev/null 2>&1 || true
 fi
 
 # 1) Ensure base dirs
