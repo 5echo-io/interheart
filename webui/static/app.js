@@ -286,6 +286,8 @@
       const fd = new FormData(addForm);
       const data = await apiPost("/api/add", fd);
       if (data.ok){
+        const n = fd.get("name");
+        if (n) markForcedStarting(n);
         toast("Added", data.message || "Target added");
         hide(addModal);
         addForm.reset();
@@ -301,12 +303,12 @@
     }
   });
 
-  // ---- Confirm remove modal ----
+  // ---- Confirm delete modal ----
 const confirmModal = $("#confirmModal");
 const btnCancelRemove = $("#btnCancelRemove");
 const btnConfirmRemove = $("#btnConfirmRemove");
 const confirmName = $("#confirmName");
-let pendingRemoveName = null;
+let pendingRemoveNames = null; // string[] or null
 let confirmCountdown = null;
 
 function clearConfirmCountdown(){
@@ -316,16 +318,23 @@ function clearConfirmCountdown(){
   }
 }
 
-function openConfirmRemove(name){
-  pendingRemoveName = name;
-  confirmName.textContent = name;
+function openConfirmRemove(names){
+  const arr = Array.isArray(names) ? names.filter(Boolean) : [String(names||"")].filter(Boolean);
+  pendingRemoveNames = arr.length ? arr : null;
+  if (!pendingRemoveNames) return;
 
-  // Safety countdown (3s) before enabling Remove
+  if (pendingRemoveNames.length === 1){
+    confirmName.textContent = pendingRemoveNames[0];
+  } else {
+    const preview = pendingRemoveNames.slice(0, 4).join(", ");
+    confirmName.textContent = `${pendingRemoveNames.length} targets: ${preview}${pendingRemoveNames.length > 4 ? "…" : ""}`;
+  }
+
   clearConfirmCountdown();
   let sec = 3;
   btnConfirmRemove.disabled = true;
   btnConfirmRemove.classList.add("is-disabled");
-  btnConfirmRemove.textContent = `Remove (${sec})`;
+  btnConfirmRemove.textContent = `Delete (${sec})`;
 
   confirmCountdown = setInterval(() => {
     sec -= 1;
@@ -333,17 +342,17 @@ function openConfirmRemove(name){
       clearConfirmCountdown();
       btnConfirmRemove.disabled = false;
       btnConfirmRemove.classList.remove("is-disabled");
-      btnConfirmRemove.textContent = "Remove";
-      return;
+      btnConfirmRemove.textContent = "Delete";
+    } else {
+      btnConfirmRemove.textContent = `Delete (${sec})`;
     }
-    btnConfirmRemove.textContent = `Remove (${sec})`;
   }, 1000);
 
   show(confirmModal);
 }
 
 function closeConfirmRemove(){
-  pendingRemoveName = null;
+  pendingRemoveNames = null;
   clearConfirmCountdown();
   hide(confirmModal);
 }
@@ -353,29 +362,34 @@ confirmModal?.addEventListener("click", (e) => { if (e.target === confirmModal) 
 
 btnConfirmRemove?.addEventListener("click", async () => {
   clearConfirmCountdown();
-  const name = pendingRemoveName;
-  if (!name) return;
+  const names = pendingRemoveNames;
+  if (!names || !names.length) return;
 
   btnConfirmRemove.disabled = true;
   btnConfirmRemove.classList.add("is-disabled");
-  btnConfirmRemove.textContent = "Removing…";
+  btnConfirmRemove.textContent = "Deleting…";
 
   try{
-    const fd = new FormData();
-    fd.set("name", name);
-    const data = await apiPost("/api/remove", fd);
-    toast(data.ok ? "Removed" : "Error", data.message || (data.ok ? "Done" : "Failed"));
-    closeConfirmRemove();
+    if (names.length === 1){
+      const fd = new FormData();
+      fd.set("name", names[0]);
+      const data = await apiPost("/api/remove", fd);
+      toast(data.ok ? "Deleted" : "Error", data.message || (data.ok ? "Deleted" : "Failed"));
+    } else {
+      const data = await postJson("/api/bulk-remove", {names});
+      toast(data.ok ? "Deleted" : "Error", data.message || (data.ok ? "Deleted" : "Failed"));
+    }
   }catch(e){
     toast("Error", e?.message || "Failed");
   }finally{
+    btnConfirmRemove.textContent = "Delete";
     btnConfirmRemove.disabled = false;
     btnConfirmRemove.classList.remove("is-disabled");
-    btnConfirmRemove.textContent = "Remove";
+    closeConfirmRemove();
+    clearBulkSelection();
     await refreshState(true);
   }
 });
-
 // ---- Info modal ----
 
   const infoModal = $("#infoModal");
@@ -390,6 +404,7 @@ btnConfirmRemove?.addEventListener("click", async () => {
   const infoLastPing = $("#infoLastPing");
   const infoLastResp = $("#infoLastResp");
   const infoLatency = $("#infoLatency");
+  const btnCopyEndpoint = $("#btnCopyEndpoint");
 
   const u24 = $("#u24");
   const u7 = $("#u7");
@@ -400,21 +415,45 @@ btnConfirmRemove?.addEventListener("click", async () => {
   const u30t = $("#u30t");
   const u90t = $("#u90t");
 
-  btnCloseInfo?.addEventListener("click", () => hide(infoModal));
+  
+  btnCopyEndpoint?.addEventListener("click", async () => {
+    const url = (infoEndpoint && infoEndpoint.textContent) ? String(infoEndpoint.textContent).trim() : "";
+    if (!url || url === "-") return;
+    try{
+      await navigator.clipboard.writeText(url);
+      toast("Copied", "Endpoint URL copied");
+    }catch(e){
+      const ta = document.createElement("textarea");
+      ta.value = url;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      toast("Copied", "Endpoint URL copied");
+    }
+  });
+
+btnCloseInfo?.addEventListener("click", () => hide(infoModal));
   infoModal?.addEventListener("click", (e) => { if (e.target === infoModal) hide(infoModal); });
 
   function setUptimeRow(barEl, textEl, stat){
     if (!barEl || !textEl) return;
-    if (!stat){
-      barEl.style.width = "0%";
+    if (!stat || !stat.series || !stat.series.length){
+      barEl.innerHTML = "";
       textEl.textContent = "-";
       return;
     }
+
     const pct = Number(stat.pct ?? 0);
-    barEl.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-    const s = `${pct}% (${stat.up}/${stat.samples})`;
-    const rtt = (stat.avg_rtt_ms === null || stat.avg_rtt_ms === undefined) ? "" : ` • avg ${stat.avg_rtt_ms}ms`;
-    textEl.textContent = s + rtt;
+    textEl.textContent = `${Math.max(0, Math.min(100, pct))}%` + ((stat.avg_rtt_ms === null || stat.avg_rtt_ms === undefined) ? "" : ` • avg ${stat.avg_rtt_ms}ms`);
+
+    const series = stat.series;
+    barEl.innerHTML = series.map(s => {
+      const cls = (s === "up") ? "tick up" : (s === "hb" ? "tick hb" : "tick down");
+      return `<span class="${cls}"></span>`;
+    }).join("");
   }
 
   function drawSparkline(container, points){
@@ -530,6 +569,7 @@ async function openInfo(name){
     fd.set("name", name);
     try{
       const data = await apiPost(enabled ? "/api/enable" : "/api/disable", fd);
+      if (data.ok && enabled) markForcedStarting(name);
       toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
       editEnabled.value = enabled ? "1" : "0";
       if (btnEditEnable) btnEditEnable.style.display = enabled ? "none" : "inline-flex";
@@ -633,31 +673,56 @@ async function openInfo(name){
   // ---- Menu actions ----
   
 
-    function statusClass(status, enabled, lastRttMs, lastRespEpoch){
+    const forcedStarting = new Map(); // name -> until (ms)
+
+function markForcedStarting(name){
+  if(!name) return;
+  forcedStarting.set(String(name), Date.now() + 10*60*1000);
+}
+
+function clearForcedStarting(name){
+  if(!name) return;
+  forcedStarting.delete(String(name));
+}
+
+function statusClass(name, status, enabled, lastRttMs, lastRespEpoch){
+  const nm = String(name||"");
   const st = String(status||"unknown").toLowerCase();
   const isEnabled = Number(enabled||0) === 1;
+
   const hbFail = isEnabled && st === "down" && Number(lastRttMs||-1) >= 0 && Number(lastRespEpoch||0) > 0;
+  const hasForced = forcedStarting.has(nm);
+
   if (!isEnabled) return "status-unknown";
-  if (st === "up") return "status-up";
+
+  if (st === "up")  { clearForcedStarting(nm); return "status-up"; }
+  if (hbFail)       { clearForcedStarting(nm); return "status-hb"; }
+  if (st === "down"){ clearForcedStarting(nm); return "status-down"; }
+
   if (st === "starting") return "status-starting";
-  if (hbFail) return "status-hb";
-  if (st === "down") return "status-down";
+  if (hasForced) return "status-starting";
+
   return "status-unknown";
 }
 
-function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
+function statusLabel(name, status, enabled, lastRttMs, lastRespEpoch){
+  const nm = String(name||"");
   const st = String(status||"unknown").toLowerCase();
   const isEnabled = Number(enabled||0) === 1;
+
   const hbFail = isEnabled && st === "down" && Number(lastRttMs||-1) >= 0 && Number(lastRespEpoch||0) > 0;
+  const hasForced = forcedStarting.has(nm);
+
   if (!isEnabled) return "DISABLED";
   if (st === "up") return "OK";
   if (st === "starting") return "STARTING..";
+  if (hasForced) return "STARTING..";
   if (hbFail) return "HEARTBEAT FAILED";
-  if (st === "down") return "FAILED";
+  if (st === "down") return "NOT RESPONDING";
   return st.toUpperCase();
 }
 
-  function renderSnapshots(snaps){
+function renderSnapshots(snaps){
     const arr = Array.isArray(snaps) ? snaps : [];
     const out = arr.slice(0,3).map(s => {
       const cls = (s && s.state) ? String(s.state) : "unknown";
@@ -698,9 +763,9 @@ function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
             </td>
             <td><code>${t.ip}</code></td>
             <td>
-              <span class="chip status-chip ${statusClass(t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}">
+              <span class="chip status-chip ${statusClass(t.name, t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}">
                 <span class="dot"></span>
-                <span class="status-text">${statusLabel(t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}</span>${renderSnapshots(t.snapshots)}
+                <span class="status-text">${statusLabel(t.name, t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}</span>${renderSnapshots(t.snapshots)}
               </span>
             </td>
             <td>
@@ -825,6 +890,7 @@ function attachMenuActions(){
               data = await apiPost("/api/enable", fd);
               toast(data.ok ? "Updated" : "Error", data.message || (data.ok ? "Enabled" : "Failed"));
               if (data.ok){
+                markForcedStarting(name);
                 // optimistic starting state + immediate verification ping
                 row.setAttribute("data-enabled","1");
                 row.setAttribute("data-status","starting");
@@ -906,6 +972,7 @@ function attachMenuActions(){
     toast("Bulk", `${label} ${names.length} targets…`);
     try{
       const data = await postJson(`/api/bulk-${action}`, {names});
+      if (data.ok && action === "enable") { names.forEach(n => markForcedStarting(n)); }
       toast(data.ok ? "Done" : "Error", data.message || (data.ok ? "Completed" : "Failed"));
     }catch(e){
       toast("Error", e?.message || "Failed");
@@ -932,152 +999,10 @@ function attachMenuActions(){
   bulkEnable?.addEventListener('click', () => bulkAction('enable'));
   bulkDisable?.addEventListener('click', () => bulkAction('disable'));
   bulkTest?.addEventListener('click', () => bulkAction('test'));
-  bulkRemove?.addEventListener('click', () => bulkAction('remove'));
+  bulkRemove?.addEventListener('click', () => { const names = getSelectedNames(); if(names.length) openConfirmRemove(names); });
 
 
-// ---- Pinned row details (side panel) ----
-const sidePanel = $("#sidePanel");
-const sideBackdrop = $("#sideBackdrop");
-const spTitle = $("#spTitle");
-const spMeta = $("#spMeta");
-const spClose = $("#spClose");
-const spInfo = $("#spInfo");
-const spEdit = $("#spEdit");
-const spEnable = $("#spEnable");
-const spDisable = $("#spDisable");
-const spTest = $("#spTest");
-const spRemove = $("#spRemove");
-const spOpenLogs = $("#spOpenLogs");
-
-const spName = $("#spName");
-const spIp = $("#spIp");
-const spEnabled = $("#spEnabled");
-const spInterval = $("#spInterval");
-const spEndpoint = $("#spEndpoint");
-const spStatus = $("#spStatus");
-const spLastPing = $("#spLastPing");
-const spLastResp = $("#spLastResp");
-const spLatency = $("#spLatency");
-const spLogBox = $("#spLogBox");
-
-const spU24 = $("#spU24"), spU7 = $("#spU7"), spU30 = $("#spU30"), spU90 = $("#spU90");
-const spU24t = $("#spU24t"), spU7t = $("#spU7t"), spU30t = $("#spU30t"), spU90t = $("#spU90t");
-const spSpark = $("#spSpark");
-
-let pinnedName = null;
-
-function closeSidePanel(){
-  pinnedName = null;
-  if (sideBackdrop){
-    sideBackdrop.classList.remove("is-open");
-  }
-  if (sidePanel){
-    sidePanel.classList.remove("is-open");
-    sidePanel.classList.add("is-hidden");
-  }
-  $$("tr.is-focused").forEach(r => r.classList.remove("is-focused"));
-}
-
-async function loadSidePanel(name){
-  if (!sidePanel) return;
-  pinnedName = name;
-
-  // visual focus
-  $$("tr.is-focused").forEach(r => r.classList.remove("is-focused"));
-  const row = $(`tr[data-name="${CSS.escape(name)}"]`);
-  if (row) row.classList.add("is-focused");
-
-  if (sideBackdrop){
-    sideBackdrop.classList.add("is-open");
-  }
-  sidePanel.classList.remove("is-hidden");
-  sidePanel.classList.add("is-open");
-  if (spTitle) spTitle.textContent = name;
-  if (spMeta) spMeta.textContent = "Pinned details";
-
-  // reset
-  [spName,spIp,spEnabled,spInterval,spEndpoint,spStatus,spLastPing,spLastResp,spLatency].forEach(el => { if (el) el.textContent = "-"; });
-  if (spLogBox) spLogBox.textContent = "Loading…";
-  [spU24,spU7,spU30,spU90].forEach(el => { if (el) el.style.width = "0%"; });
-  [spU24t,spU7t,spU30t,spU90t].forEach(el => { if (el) el.textContent = "-"; });
-  if (spSpark) spSpark.innerHTML = "";
-
-  try{
-    const data = await apiGet(`/api/info?name=${encodeURIComponent(name)}`);
-    if (!data || !data.ok){
-      if (spLogBox) spLogBox.textContent = "(failed to load)";
-      toast("Error", data?.message || "Failed to load information");
-      return;
-    }
-
-    spName.textContent = data.name || name;
-    spIp.textContent = data.ip || "-";
-    spEnabled.textContent = (data.enabled ? "Yes" : "No");
-    // Show only the relevant toggle action
-    if (spEnable) spEnable.style.display = data.enabled ? "none" : "inline-flex";
-    if (spDisable) spDisable.style.display = data.enabled ? "inline-flex" : "none";
-    spInterval.textContent = String(data.interval ?? "-");
-    spEndpoint.textContent = data.endpoint || "-";
-
-    const cur = data.current || {};
-    spStatus.textContent = (cur.status || "unknown").toUpperCase();
-    spLastPing.textContent = cur.last_ping_human || "-";
-    spLastResp.textContent = cur.last_response_human || "-";
-    spLatency.textContent = (cur.last_rtt_ms === undefined || cur.last_rtt_ms === null || Number(cur.last_rtt_ms) < 0) ? "-" : `${cur.last_rtt_ms} ms`;
-
-    const up = data.uptime || {};
-    setUptimeRow(spU24, spU24t, up["24h"]);
-    setUptimeRow(spU7, spU7t, up["7d"]);
-    setUptimeRow(spU30, spU30t, up["30d"]);
-    setUptimeRow(spU90, spU90t, up["90d"]);
-    drawSparkline(spSpark, up.points || []);
-
-    // quick log excerpt: reuse /logs and filter locally
-    try{
-      const lines = 220;
-      const logData = await apiGet(`/logs?lines=${encodeURIComponent(lines)}`);
-      const all = String(logData.text || "").split("\n");
-      const filtered = all.filter(l => l.toLowerCase().includes(String(name).toLowerCase())).slice(-20);
-      spLogBox.textContent = filtered.length ? filtered.join("\n") : "(no recent matches)";
-    }catch(e){
-      spLogBox.textContent = "(no logs)";
-    }
-  }catch(e){
-    if (spLogBox) spLogBox.textContent = "(error)";
-  }
-}
-
-function attachRowClickHandlers(){
-  $$("tr[data-name]").forEach(row => {
-    if (row.dataset.rowclick === "1") return;
-    row.dataset.rowclick = "1";
-    row.addEventListener("click", (e) => {
-      // don't hijack clicks on controls
-      if (e.target.closest(".menu") || e.target.closest(".row-check") || e.target.closest(".interval-input")) return;
-      const name = row.getAttribute("data-name");
-      if (!name) return;
-      // toggle: clicking the same row closes the panel
-      if (pinnedName && pinnedName === name && sidePanel && sidePanel.classList.contains('is-open')){
-        closeSidePanel();
-        return;
-      }
-      loadSidePanel(name);
-    });
-  });
-}
-
-spClose?.addEventListener("click", closeSidePanel);
-sideBackdrop?.addEventListener("click", closeSidePanel);
-spInfo?.addEventListener("click", () => { if (pinnedName) openInfo(pinnedName); });
-spEdit?.addEventListener("click", () => { if (pinnedName) openEdit(pinnedName); });
-spEnable?.addEventListener("click", async () => { if (!pinnedName) return; const fd = new FormData(); fd.set("name", pinnedName); await apiPost("/api/enable", fd); await refreshState(true); await loadSidePanel(pinnedName); });
-spDisable?.addEventListener("click", async () => { if (!pinnedName) return; const fd = new FormData(); fd.set("name", pinnedName); await apiPost("/api/disable", fd); await refreshState(true); await loadSidePanel(pinnedName); });
-spTest?.addEventListener("click", async () => { if (!pinnedName) return; const fd = new FormData(); fd.set("name", pinnedName); await apiPost("/api/test", fd); await refreshState(true); await loadSidePanel(pinnedName); });
-spRemove?.addEventListener("click", () => { if (pinnedName) openConfirmRemove(pinnedName); });
-spOpenLogs?.addEventListener("click", async () => { show(logModal); logFilter.value = pinnedName || ""; logFilter.focus(); await loadLogs(); });
-
-
-  // ---- Real-time-ish refresh + row blink ----
+// ---- Real-time-ish refresh + row blink ----
   function setStatusChip(row, status){
   const chip = row.querySelector(".status-chip");
   const text = row.querySelector(".status-text");
@@ -1590,9 +1515,9 @@ btnRunDetails?.addEventListener("click", () => {
   // Keyboard UX: Esc closes sidepanel/modals, Enter toggles sidepanel on focused/selected row
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape"){
-      // Close sidepanel first
-      if (sidePanel && sidePanel.classList.contains("is-open")){
-        closeSidePanel();
+      // Close Information modal first
+      if (infoModal && infoModal.classList.contains("show")){
+        hide(infoModal);
         e.preventDefault();
         return;
       }
@@ -1609,19 +1534,22 @@ btnRunDetails?.addEventListener("click", () => {
     }
 
     if (e.key === "Enter"){
-      // Avoid hijacking Enter while typing
       const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
       if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
-      // Don't trigger while a modal is open
-      if (document.querySelector(".modal.show")) return;
+
+      const openModal = Array.from(document.querySelectorAll(".modal.show")).filter(m => m && m.id !== "infoModal").pop();
+      if (openModal) return;
 
       const row = document.querySelector("tr.is-focused") || document.querySelector("tr.is-selected");
       if (!row) return;
       const name = row.getAttribute("data-name");
       if (!name) return;
 
-      if (pinnedName && pinnedName === name && sidePanel && sidePanel.classList.contains("is-open")) closeSidePanel();
-      else loadSidePanel(name);
+      if (infoModal && infoModal.classList.contains("show") && infoTitle && infoTitle.textContent === name){
+        hide(infoModal);
+      } else {
+        openInfo(name);
+      }
 
       e.preventDefault();
     }

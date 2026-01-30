@@ -1,3 +1,13 @@
+## 4.10.10 - 2026-01-30
+
+- Fix: New targets start in **STARTING** (no initial UNKNOWN).
+- Fix: Enable keeps **STARTING** until first OK / NOT RESPONDING.
+- Fix: Bulk **Delete** always requires confirmation modal.
+- Fix: Logs modal shows clean lines (timestamp + message only).
+- UX: Endpoint URL shows copy icon on hover (click to copy).
+- UX: Removed row side-panel workflow (back to modal-first).
+- UX: Uptime history now renders striped ticks (green / yellow / red) and windows align to local midnight.
+
 ## v4.10.9
 - Fixed: **Name** column now matches the row height exactly (no more taller “Name” cells).
 - Fixed: Hover behavior: checkbox shows, and the ping check/X icon hides while hovering or when the row is selected.

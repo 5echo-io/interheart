@@ -88,7 +88,18 @@ def journalctl_lines(lines: int) -> str:
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         raise RuntimeError((p.stderr or "journalctl failed").strip())
-    return (p.stdout or "").strip()
+
+    raw = (p.stdout or "").splitlines()
+    out_lines = []
+    rx = re.compile(r"^(\d{4}-\d{2}-\d{2}T\S+)\s+\S+\s+interheart\[\d+\]:\s*(.*)$")
+    for line in raw:
+        line = line.rstrip()
+        m = rx.match(line)
+        if m:
+            out_lines.append(f"{m.group(1)} {m.group(2)}")
+        else:
+            out_lines.append(line)
+    return "\n".join(out_lines).strip()
 
 def parse_run_summary(text: str):
     m = SUMMARY_RE.search(text or "")
@@ -383,22 +394,43 @@ def compute_snapshots(db_path: Path, name: str, enabled_now: int, days: int = 3)
         return []
 
 
-def compute_uptime_stats(db_path: Path, name: str, seconds: int):
-    """Return {samples, up, down, pct, avg_rtt_ms} for the given window.
+def _midnight_ts_local(ts: float) -> int:
+    dt = datetime.datetime.fromtimestamp(ts)
+    dt0 = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(dt0.timestamp())
 
-    Uses `history` table if present. If missing/empty, returns None.
+
+def compute_uptime_stats(db_path: Path, name: str, days: int):
+    """
+    Uptime aligned to local midnight.
+
+    Window: [start_midnight, now)
+    - 24h => today (midnight -> now)
+    - 7d/30d/90d => from midnight N-1 days ago -> now
+
+    Returns None until at least 1 hour has passed since the window start.
+    Also returns a small "series" list for the striped history view:
+      - "up"  (green)
+      - "hb"  (yellow, heartbeat failed)
+      - "down" (red, not responding)
     """
     import sqlite3
 
     if not db_path.exists():
         return None
 
-    since = int(time.time()) - int(seconds)
+    now = time.time()
+    start_midnight = _midnight_ts_local(now)
+    start = start_midnight - int((max(1, days) - 1) * 86400)
+
+    if now - start < 3600:
+        return None
+
     try:
         con = sqlite3.connect(str(db_path))
         con.row_factory = sqlite3.Row
         cur = con.cursor()
-        # Check table exists
+
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='history' LIMIT 1;")
         if not cur.fetchone():
             return None
@@ -406,30 +438,59 @@ def compute_uptime_stats(db_path: Path, name: str, seconds: int):
         cur.execute(
             """
             SELECT
-              SUM(CASE WHEN status='up' THEN 1 ELSE 0 END) AS up_cnt,
-              SUM(CASE WHEN status='down' THEN 1 ELSE 0 END) AS down_cnt,
+              SUM(CASE WHEN status='up' THEN 1 ELSE 0 END) AS ok_cnt,
+              SUM(CASE WHEN status='down' AND rtt_ms >= 0 THEN 1 ELSE 0 END) AS hb_cnt,
+              SUM(CASE WHEN status='down' AND (rtt_ms < 0 OR rtt_ms IS NULL) THEN 1 ELSE 0 END) AS down_cnt,
               AVG(CASE WHEN rtt_ms >= 0 THEN rtt_ms ELSE NULL END) AS avg_rtt
             FROM history
-            WHERE name=? AND ts>=? AND status IN ('up','down');
+            WHERE name=? AND ts>=? AND ts<? AND status IN ('up','down');
             """,
-            (name, since),
+            (name, int(start), int(now)),
         )
         row = cur.fetchone()
-        up_cnt = _safe_int(row["up_cnt"], 0)
+        ok_cnt = _safe_int(row["ok_cnt"], 0)
+        hb_cnt = _safe_int(row["hb_cnt"], 0)
         down_cnt = _safe_int(row["down_cnt"], 0)
-        samples = up_cnt + down_cnt
+        samples = ok_cnt + hb_cnt + down_cnt
         if samples <= 0:
             return None
 
-        pct = round((up_cnt / samples) * 100.0, 2)
+        pct = round((ok_cnt / samples) * 100.0, 2)
         avg_rtt = row["avg_rtt"]
         avg_rtt_ms = int(round(avg_rtt)) if avg_rtt is not None else None
+
+        cur.execute(
+            """
+            SELECT ts, status, rtt_ms
+            FROM history
+            WHERE name=? AND ts>=? AND ts<? AND status IN ('up','down')
+            ORDER BY ts DESC
+            LIMIT 200;
+            """,
+            (name, int(start), int(now)),
+        )
+        rows = cur.fetchall() or []
+        series = []
+        for r in reversed(rows):
+            st = (r["status"] or "").lower()
+            rtt = r["rtt_ms"]
+            if st == "up":
+                series.append("up")
+            else:
+                try:
+                    rttn = float(rtt)
+                except Exception:
+                    rttn = None
+                if rttn is not None and rttn >= 0:
+                    series.append("hb")
+                else:
+                    series.append("down")
+
         return {
             "samples": samples,
-            "up": up_cnt,
-            "down": down_cnt,
             "pct": pct,
             "avg_rtt_ms": avg_rtt_ms,
+            "series": series,
         }
     except Exception:
         return None
@@ -438,53 +499,6 @@ def compute_uptime_stats(db_path: Path, name: str, seconds: int):
             con.close()
         except Exception:
             pass
-
-
-@APP.get("/api/info")
-def api_info():
-    name = (request.args.get("name") or "").strip()
-    if not name:
-        return die_json("Missing name", 400)
-
-    # Get base target info via CLI (source of truth)
-    rc, out = run_cmd(["get", name])
-    if rc != 0:
-        return jsonify({"ok": False, "message": out or "Not found"})
-
-    # CLI get returns: name|ip|endpoint|interval|enabled
-    parts = (out or "").split("|")
-    ip = parts[1] if len(parts) > 1 else "-"
-    endpoint = parts[2] if len(parts) > 2 else "-"
-    interval = _safe_int(parts[3] if len(parts) > 3 else 60, 60)
-    enabled = _safe_int(parts[4] if len(parts) > 4 else 1, 1)
-
-    # Attach current runtime-ish view from /state aggregation
-    cur = None
-    try:
-        cur = next((t for t in merged_targets() if t.get("name") == name), None)
-    except Exception:
-        cur = None
-
-    windows = [
-        ("24h", 24 * 3600),
-        ("7d", 7 * 24 * 3600),
-        ("30d", 30 * 24 * 3600),
-        ("90d", 90 * 24 * 3600),
-    ]
-    uptime = {}
-    for k, secs in windows:
-        uptime[k] = compute_uptime_stats(DB_PATH, name, secs)
-
-    return jsonify({
-        "ok": True,
-        "name": name,
-        "ip": ip,
-        "endpoint": endpoint,
-        "interval": interval,
-        "enabled": 1 if enabled else 0,
-        "current": cur or {},
-        "uptime": uptime,
-    })
 
 # ---- Routes ----
 @APP.get("/")

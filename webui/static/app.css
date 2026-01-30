@@ -659,3 +659,17 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 .run-details{ margin-top:10px; }
 
 .modal-card--info{ width:min(880px, calc(100vw - 40px)); }
+
+/* Endpoint copy button (fade in on hover) */
+.endpoint-wrap{ position:relative; display:flex; align-items:center; gap:8px; width:100%; }
+.endpoint-code{ display:inline-block; word-break:break-all; flex:1 1 auto; }
+.copy-endpoint{ opacity:0; transform:translateY(1px); transition:opacity .15s ease, transform .15s ease; }
+.endpoint-wrap:hover .copy-endpoint{ opacity:1; transform:translateY(0); }
+
+/* Uptime striped ticks */
+.bar{ overflow:hidden; }
+.bar > div{ display:flex; align-items:stretch; gap:1px; height:100%; width:100%; }
+.bar .tick{ flex:1 1 0; min-width:2px; border-radius:2px; opacity:.95; }
+.bar .tick.up{ background: rgba(46, 204, 113, .85); }
+.bar .tick.hb{ background: rgba(241, 196, 15, .85); }
+.bar .tick.down{ background: rgba(231, 76, 60, .85); }

@@ -225,9 +225,8 @@
 
           <div class="metric info-span2">
             <b>Endpoint</b>
-            <div class="kv"><span>URL</span><code id="infoEndpoint" style="word-break:break-all;">-</code></div>
-            <div class="hint" id="infoEndpointHint" style="margin-top:8px;">Shown as stored in interheart</div>
-          </div>
+            <div class="kv endpoint-kv"><span>URL</span><div class="endpoint-wrap"><code id="infoEndpoint" class="endpoint-code">-</code><button class="btn btn-ghost btn-mini btn-icon copy-endpoint" id="btnCopyEndpoint" type="button" title="Copy endpoint URL" aria-label="Copy endpoint URL">⧉</button></div></div>
+            </div>
         </div>
 
         <div class="metric info-span2">
@@ -399,79 +398,7 @@
           </table>
   </div>
 
-  <div class="sidepanel-backdrop is-hidden" id="sideBackdrop" aria-hidden="true"></div>
-
-  <aside class="sidepanel is-hidden" id="sidePanel" aria-label="Pinned row details">
-    <div class="sidepanel-head">
-      <div class="sidepanel-title">
-        <b id="spTitle">No selection</b>
-        <span id="spMeta">Click a row to inspect</span>
-      </div>
-      <button class="btn btn-ghost btn-mini" id="spClose" type="button">Close</button>
-    </div>
-
-    <div class="sidepanel-actions" aria-label="Row actions">
-      <button class="btn btn-ghost btn-icon" id="spInfo" type="button" title="Open modal" aria-label="Open modal">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v7h-7"/><path d="M3 10V3h7"/><path d="M3 21h7"/></svg>
-      </button>
-      <button class="btn btn-ghost btn-icon" id="spEdit" type="button" title="Edit" aria-label="Edit">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-      </button>
-      <button class="btn btn-ghost btn-icon" id="spEnable" type="button" title="Enable" aria-label="Enable">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-      </button>
-      <button class="btn btn-ghost btn-icon" id="spDisable" type="button" title="Disable" aria-label="Disable">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>
-      </button>
-      <button class="btn btn-primary btn-icon" id="spTest" type="button" title="Test" aria-label="Test">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-      </button>
-      <button class="btn btn-danger btn-icon" id="spRemove" type="button" title="Delete" aria-label="Delete">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-      </button>
-    </div>
-
-    <div class="sidepanel-body">
-      <div class="metric">
-        <b>Basics</b>
-        <div class="kv"><span>Name</span><code id="spName">-</code></div>
-        <div class="kv"><span>IP</span><code id="spIp">-</code></div>
-        <div class="kv"><span>Enabled</span><code id="spEnabled">-</code></div>
-        <div class="kv"><span>Interval</span><code id="spInterval">-</code></div>
-      </div>
-
-      <div class="metric">
-        <b>Endpoint</b>
-        <div class="kv"><span>URL</span><code id="spEndpoint" style="word-break:break-all;">-</code></div>
-      </div>
-
-      <div class="metric">
-        <b>Live status</b>
-        <div class="kv"><span>Status</span><code id="spStatus">-</code></div>
-        <div class="kv"><span>Last ping</span><code id="spLastPing">-</code></div>
-        <div class="kv"><span>Last response</span><code id="spLastResp">-</code></div>
-        <div class="kv"><span>Latency</span><code id="spLatency">-</code></div>
-      </div>
-
-      <div class="metric">
-        <div class="uptime-head"><b>Uptime</b><div id="spSpark" class="sparkline" aria-hidden="true"></div></div>
-        <div class="uptime-wrap">
-          <div class="uptime-row"><span>24h</span><div class="bar"><div id="spU24"></div></div><code id="spU24t">-</code></div>
-          <div class="uptime-row"><span>7d</span><div class="bar"><div id="spU7"></div></div><code id="spU7t">-</code></div>
-          <div class="uptime-row"><span>30d</span><div class="bar"><div id="spU30"></div></div><code id="spU30t">-</code></div>
-          <div class="uptime-row"><span>90d</span><div class="bar"><div id="spU90"></div></div><code id="spU90t">-</code></div>
-        </div>
-      </div>
-
-      <div class="metric">
-        <div class="details-row">
-          <b>Logs excerpt</b>
-          <button class="btn btn-ghost btn-mini" id="spOpenLogs" type="button">Open Logs</button>
-        </div>
-        <div class="logbox logbox--compact" id="spLogBox">(select a row)</div>
-      </div>
-    </div>
-  </aside>
+  <div class="sidepanel-backdrop is-hidden" 
 </div>
 
       <div class="footer">
