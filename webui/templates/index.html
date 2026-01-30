@@ -59,7 +59,7 @@
           <div class="metric"><b>Checked</b><div class="v" id="mDue">-</div></div>
           <div class="metric"><b>Skipped</b><div class="v" id="mSkipped">-</div></div>
           <div class="metric"><b>Ping OK</b><div class="v" id="mOk">-</div></div>
-          <div class="metric"><b>Ping fail</b><div class="v" id="mFail">-</div></div>
+          <div class="metric"><b>Ping failed</b><div class="v" id="mFail">-</div></div>
         </div>
 
         <div class="metric">
@@ -291,8 +291,14 @@
 
       <div class="right-actions">
         <input id="filterInput" class="input input--sm" placeholder="Filter targets… (name / ip / status)">
-        <button class="btn btn-ghost btn-mini" id="openLogs" type="button">Logs</button>
-        <button class="btn btn-ghost btn-mini" id="openAdd" type="button">Add</button>
+        <select id="sortSelect" class="input input--sm" title="Sort">
+          <option value="ip_asc" selected>Sort: IP (asc)</option>
+          <option value="ip_desc">Sort: IP (desc)</option>
+          <option value="name_asc">Sort: Name (A→Z)</option>
+          <option value="status">Sort: Status</option>
+        </select>
+        <button class="btn btn-ghost btn-mini" id="btnSearchNetwork" type="button">Search network</button>
+                <button class="btn btn-ghost btn-mini" id="openAdd" type="button">Add target</button>
         <button class="btn btn-primary btn-mini" id="btnRunNow" type="button">Run now</button>
       </div>
     </div>
@@ -355,6 +361,112 @@
 
       <div class="footer">
         <div class="hint">WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Network scan modal -->
+  <div class="modal" id="scanModal" aria-hidden="true">
+    <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-label="Search network">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Search network</b>
+          <span id="scanTitleMeta">-</span>
+        </div>
+        <div class="modal-actions">
+          <div class="run-live" id="scanLive" style="display:none;">
+            <span class="pulse"></span>
+            <span id="scanLiveText">Scanning…</span>
+          </div>
+          <button class="btn btn-ghost btn-mini" id="btnCloseScan" type="button">Close</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="hint" style="margin-bottom:10px;">
+          Scans every local subnet (VLANs) the server is connected to. Requires <code>nmap</code>.
+        </div>
+
+        <div class="card card--soft" style="margin-bottom:12px;">
+          <div class="row">
+            <div class="kpi">
+              <div class="kpi-label">Subnets</div>
+              <div class="kpi-value" id="scanSubnets">-</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Found</div>
+              <div class="kpi-value" id="scanFoundCount">-</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">New</div>
+              <div class="kpi-value" id="scanNewCount">-</div>
+            </div>
+          </div>
+          <div class="progress"><div class="progress-bar" id="scanBar" style="width:0%"></div></div>
+          <div class="hint" id="scanStatusLine">-</div>
+        </div>
+
+        <div class="logbox logbox--compact" id="scanOutput">Click “Search network” to start…</div>
+
+        <div class="card" style="margin-top:14px;">
+          <div class="card-head">
+            <b>New devices</b>
+            <span class="hint">Click a device to add it as a target</span>
+          </div>
+          <div class="card-body">
+            <div class="scan-list" id="scanListEmpty">No new devices yet.</div>
+            <div class="scan-list" id="scanList"></div>
+          </div>
+        </div>
+      </div>
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add from scan modal -->
+  <div class="modal" id="scanAddModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Add target</b>
+          <span id="scanAddTitle">-</span>
+        </div>
+        <div class="modal-actions"></div>
+      </div>
+      <div class="modal-body">
+        <form id="scanAddForm">
+          <div class="grid3">
+            <div class="field">
+              <label>Name</label>
+              <input class="input" name="name" id="scanAddName" required>
+            </div>
+            <div class="field">
+              <label>IP address</label>
+              <input class="input" name="ip" id="scanAddIp" required>
+            </div>
+            <div class="field">
+              <label>Interval (sec)</label>
+              <input class="input" name="interval" id="scanAddInterval" type="number" min="10" max="86400" step="1" value="60" required>
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:12px;">
+            <label>Endpoint URL</label>
+            <input class="input" name="endpoint" id="scanAddEndpoint" placeholder="https://…" required>
+          </div>
+
+          <div class="modal-foot-actions">
+            <button class="btn btn-primary" type="submit" id="btnScanAddSubmit">Add target</button>
+            <button class="btn btn-ghost" type="button" id="btnScanAddCancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
         <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
       </div>
     </div>

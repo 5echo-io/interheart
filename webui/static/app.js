@@ -40,7 +40,7 @@
 
   // ---- Logs modal ----
   const logModal = $("#logModal");
-  const openLogs = $("#openLogs");
+  const openLogs = $("#openLogsFooter") || $("#openLogs");
   const closeLogs = $("#btnCloseLogs");
   const reloadLogs = $("#btnReloadLogs");
   const copyLogs = $("#btnCopyLogs");
@@ -49,6 +49,7 @@
   const logFilter = $("#logFilter");
   const logLinesLbl = $("#logLinesLbl");
   let rawLog = "";
+  let lastTargets = [];
 
   async function loadLogs(){
     const lines = logLinesLbl ? Number(logLinesLbl.textContent || "200") : 200;
@@ -67,12 +68,23 @@
 
   function applyLogFilter(){
     const q = (logFilter.value || "").trim().toLowerCase();
-    if (!q){
-      logBox.textContent = rawLog || "(empty)";
+    const all = (rawLog || "").split("\n");
+    const lines = !q ? all : all.filter(l => l.toLowerCase().includes(q));
+
+    if (!lines.length){
+      logBox.textContent = q ? "(no matches)" : "(empty)";
       return;
     }
-    const lines = (rawLog || "").split("\n").filter(l => l.toLowerCase().includes(q));
-    logBox.textContent = lines.join("\n") || "(no matches)";
+
+    const esc = (s) => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const html = lines.map(l => {
+      const ll = l.toLowerCase();
+      let cls = "level-info";
+      if (ll.includes("error") || ll.includes("failed")) cls = "level-error";
+      else if (ll.includes("warn") || ll.includes("warning")) cls = "level-warn";
+      return `<div class="log-line ${cls}">${esc(l)}</div>`;
+    }).join("");
+    logBox.innerHTML = html;
   }
 
   openLogs?.addEventListener("click", async () => { show(logModal); logFilter?.focus(); await loadLogs(); });
@@ -86,6 +98,7 @@
 
   // ---- Filter targets ----
   const filterInput = $("#filterInput");
+  const sortSelect = $("#sortSelect");
   const table = $("#targetsTable");
   function applyTargetFilter(){
     const q = (filterInput?.value || "").trim().toLowerCase();
@@ -406,7 +419,93 @@
   }
 
   // ---- Menu actions ----
-  function attachMenuActions(){
+  
+
+  // ---- Sorting + table re-render ----
+  function ipKey(ip){
+    try{
+      const [a,b,c,d] = String(ip||"0.0.0.0").split(".").map(x => parseInt(x,10));
+      return (a<<24) + (b<<16) + (c<<8) + d;
+    }catch(e){ return 0; }
+  }
+
+  function sortTargets(list, mode){
+    const arr = [...(list || [])];
+    const m = mode || (sortSelect?.value || "ip_asc");
+    if (m === "ip_desc"){
+      arr.sort((x,y) => ipKey(y.ip)-ipKey(x.ip));
+    } else if (m === "name_asc"){
+      arr.sort((x,y) => String(x.name).localeCompare(String(y.name)));
+    } else if (m === "status"){
+      const order = {up:0, down:1, disabled:2, unknown:3};
+      arr.sort((x,y) => (order[String(x.status||"unknown")]??9) - (order[String(y.status||"unknown")]??9) || ipKey(x.ip)-ipKey(y.ip));
+    } else {
+      arr.sort((x,y) => ipKey(x.ip)-ipKey(y.ip));
+    }
+    return arr;
+  }
+
+  function statusClass(status){
+    const s = String(status||"unknown");
+    if (s === "up") return "status-up";
+    if (s === "down") return "status-down";
+    return "status-unknown";
+  }
+
+  function buildRow(t){
+    const enabled = Number(t.enabled ?? 0) === 1 && String(t.status||"") !== "disabled";
+    return `<tr data-name="${t.name}" data-ip="${t.ip}" data-status="${t.status}" data-enabled="${enabled?1:0}"
+              data-last-ping="${t.last_ping_epoch||0}" data-last-resp="${t.last_response_epoch||0}">
+            <td><code>${t.name}</code></td>
+            <td><code>${t.ip}</code></td>
+            <td>
+              <span class="chip status-chip ${statusClass(t.status)}">
+                <span class="dot"></span>
+                <span class="status-text">${t.status}</span>
+              </span>
+            </td>
+            <td>
+              <div class="interval-wrap">
+                <input class="interval-input" data-interval="${t.interval}" value="${t.interval}" inputmode="numeric" />
+                <span class="interval-suffix">s</span>
+              </div>
+            </td>
+            <td><code class="last-ping">${t.last_ping_human||"-"}</code></td>
+            <td><code class="last-resp">${t.last_response_human||"-"}</code></td>
+            <td style="text-align:right;">
+              <div class="menu">
+                <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">⋯</button>
+                <div class="menu-dd" role="menu">
+                  <button class="menu-item" data-action="info" type="button">Information</button>
+                  <button class="menu-item" data-action="edit" type="button">Edit</button>
+                  <div class="menu-sep"></div>
+                  <button class="menu-item" data-action="enable" type="button">Enable</button>
+                  <button class="menu-item" data-action="disable" type="button">Disable</button>
+                  <div class="menu-sep"></div>
+                  <button class="menu-item" data-action="test" type="button">Test</button>
+                  <button class="menu-item danger" data-action="remove" type="button">Remove</button>
+                </div>
+              </div>
+            </td>
+          </tr>`;
+  }
+
+  function renderTargets(list){
+    const tbody = $("#targetsTable tbody");
+    if (!tbody) return;
+    const sorted = sortTargets(list, sortSelect?.value);
+    tbody.innerHTML = sorted.map(buildRow).join("");
+    attachIntervalHandlers();
+    attachMenuActions();
+    applyTargetFilter();
+    // keep visibility consistent
+    $$("tr[data-name]").forEach(row => {
+      const enabled = String(row.dataset.enabled||"0")==="1";
+      setActionVisibility(row, enabled);
+    });
+  }
+
+function attachMenuActions(){
     $$("tr[data-name]").forEach(row => {
       const name = row.getAttribute("data-name");
       row.querySelectorAll(".menu-item").forEach(btn => {
@@ -436,15 +535,33 @@
             if (action === "test"){
               toast("Testing", `Running test for ${name}…`);
               data = await apiPost("/api/test", fd);
+
+              const msg = (data.message || "").trim();
+              let title = "Test results";
+              let body = "";
+
+              if (msg.startsWith("OK:")){
+                body = `Success. ${name} responded.`;
+              } else if (msg.startsWith("WARN:")){
+                body = `Ping OK, but heartbeat failed for ${name}.`;
+              } else if (msg.startsWith("FAIL:")){
+                body = `Failed. No response from ${name}.`;
+              } else if (!data.ok){
+                body = msg || `Failed. No response from ${name}.`;
+              } else {
+                body = msg || `Success. ${name} responded.`;
+              }
+
+              toast(title, body);
             } else if (action === "enable"){
               data = await apiPost("/api/enable", fd);
+              toast(data.ok ? "Updated" : "Error", data.message || (data.ok ? "Enabled" : "Failed"));
             } else if (action === "disable"){
               data = await apiPost("/api/disable", fd);
+              toast(data.ok ? "Updated" : "Error", data.message || (data.ok ? "Disabled" : "Failed"));
             } else {
               return;
-            }
-            toast(data.ok ? "OK" : "Error", data.message || (data.ok ? "Done" : "Failed"));
-          }catch(e){
+            }          }catch(e){
             toast("Error", e?.message || "Failed");
           }finally{
             await refreshState(true);
@@ -481,6 +598,7 @@
   async function refreshState(force=false){
     try{
       const data = await apiGet("/state");
+      lastTargets = data.targets || [];
       const map = new Map();
       (data.targets || []).forEach(t => map.set(t.name, t));
 
@@ -555,6 +673,7 @@
   const runDoneLine = $("#runDoneLine");
 
   let runPoll = null;
+  let runDueExpected = 0;
 
   function setBar(done, due){
     const pct = (!due || due <= 0) ? 0 : Math.max(0, Math.min(100, Math.round((done / due) * 100)));
@@ -590,11 +709,11 @@
       }
     }catch(e){ /* ignore */ }
 
-    // Progress: count completed target lines (`run: <name> ...`)
-    const done = (outText.match(/^run:\s+/gm) || []).length;
+    // Progress: count completed targets (server-side)
+    const done = Number(out?.done ?? 0);
 
     // If summary exists (usually at end), prefer it
-    const due = summary ? Number(summary.due || 0) : Math.max(done, 0);
+    const due = summary ? Number(summary.due || 0) : Math.max(runDueExpected || 0, done || 0);
     if (summary){
       mTotal.textContent = String(summary.total ?? "-");
       mDue.textContent = String(summary.due ?? "-");
@@ -636,6 +755,11 @@
     btnRunNow.disabled = true;
     setRunInitial();
     show(runModal);
+    // Expected due count for progress (enabled targets)
+    try{
+      runDueExpected = $$("tr[data-name]").filter(r => String(r.dataset.enabled||"0")==="1").length;
+      mDue.textContent = String(runDueExpected);
+    }catch(e){ runDueExpected = 0; }
 
     try{
       const data = await apiPost("/api/run-now", new FormData());
@@ -658,10 +782,164 @@
     }
   });
 
+
+
+  // ---- Network scan ----
+  const btnSearchNetwork = $("#btnSearchNetwork");
+  const scanModal = $("#scanModal");
+  const btnCloseScan = $("#btnCloseScan");
+  const scanOutput = $("#scanOutput");
+  const scanBar = $("#scanBar");
+  const scanStatusLine = $("#scanStatusLine");
+  const scanSubnets = $("#scanSubnets");
+  const scanFoundCount = $("#scanFoundCount");
+  const scanNewCount = $("#scanNewCount");
+  const scanList = $("#scanList");
+  const scanListEmpty = $("#scanListEmpty");
+  const scanLive = $("#scanLive");
+  const scanTitleMeta = $("#scanTitleMeta");
+
+  const scanAddModal = $("#scanAddModal");
+  const scanAddForm = $("#scanAddForm");
+  const scanAddName = $("#scanAddName");
+  const scanAddIp = $("#scanAddIp");
+  const scanAddEndpoint = $("#scanAddEndpoint");
+  const scanAddTitle = $("#scanAddTitle");
+  const btnScanAddCancel = $("#btnScanAddCancel");
+
+  let scanPoll = null;
+  let scanFound = [];
+  let scanNew = [];
+  let scanSelected = null;
+
+  function renderScanList(){
+    if (!scanList || !scanListEmpty) return;
+    scanList.innerHTML = "";
+    if (!scanNew.length){
+      scanListEmpty.style.display = "block";
+      return;
+    }
+    scanListEmpty.style.display = "none";
+    scanNew.forEach(dev => {
+      const host = dev.host || dev.ip;
+      const el = document.createElement("div");
+      el.className = "scan-item";
+      el.innerHTML = `
+        <div class="meta">
+          <b>${host}</b>
+          <span>${dev.ip}</span>
+        </div>
+        <button class="btn btn-primary btn-mini" type="button">Add</button>
+      `;
+      el.querySelector("button").addEventListener("click", () => {
+        scanSelected = dev;
+        scanAddTitle.textContent = dev.ip;
+        scanAddName.value = dev.host || dev.ip;
+        scanAddIp.value = dev.ip;
+        scanAddEndpoint.value = "";
+        show(scanAddModal);
+        scanAddEndpoint.focus();
+      });
+      scanList.appendChild(el);
+    });
+  }
+
+  async function refreshScan(){
+    try{
+      const out = await apiGet(`/api/scan-output?lines=260`);
+      const meta = out.meta || {};
+      scanTitleMeta.textContent = meta.cidrs?.length ? `(${meta.cidrs.length} subnets)` : "";
+      scanSubnets.textContent = meta.cidrs?.length ? String(meta.cidrs.length) : "-";
+      scanOutput.textContent = out.text || "";
+      scanOutput.scrollTop = scanOutput.scrollHeight;
+
+      // Simple progress estimate: subnets started vs total
+      const txt = String(out.text||"");
+      const started = (txt.match(/^scan:\s+/gm) || []).length;
+      const total = (meta.cidrs||[]).length || 0;
+      const pct = total ? Math.min(100, Math.round((started/total)*100)) : 0;
+      scanBar.style.width = `${pct}%`;
+      scanStatusLine.textContent = total ? `Scanning subnet ${Math.min(started+1,total)} / ${total}` : (meta.error || "Scanning…");
+
+      const st = await apiGet(`/api/scan-status`);
+      if (st.running){
+        scanLive.style.display = "flex";
+        return;
+      }
+      scanLive.style.display = "none";
+
+      // finished -> get results
+      const res = await apiGet(`/api/scan-result`);
+      scanFound = res.found || [];
+      scanFoundCount.textContent = String(scanFound.length);
+
+      const existingIps = new Set((lastTargets||[]).map(t => String(t.ip||"")));
+      scanNew = scanFound.filter(d => !existingIps.has(String(d.ip||"")));
+      scanNewCount.textContent = String(scanNew.length);
+      renderScanList();
+
+      if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
+    }catch(e){
+      scanStatusLine.textContent = e?.message || "Scan failed";
+      scanLive.style.display = "none";
+      if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
+    }
+  }
+
+  btnSearchNetwork?.addEventListener("click", async () => {
+    show(scanModal);
+    scanOutput.textContent = "Starting scan…";
+    scanBar.style.width = "0%";
+    scanFoundCount.textContent = "-";
+    scanNewCount.textContent = "-";
+    scanSubnets.textContent = "-";
+    scanListEmpty.style.display = "block";
+    scanList.innerHTML = "";
+    scanLive.style.display = "flex";
+
+    const started = await apiPost("/api/scan-start", new FormData());
+    if (!started.ok){
+      scanLive.style.display = "none";
+      toast("Search network", started.message || "Failed to start scan");
+      return;
+    }
+    toast("Search network", "Scan started");
+    if (scanPoll) clearInterval(scanPoll);
+    scanPoll = setInterval(refreshScan, 800);
+    await refreshScan();
+  });
+
+  btnCloseScan?.addEventListener("click", () => { hide(scanModal); if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }});
+  btnScanAddCancel?.addEventListener("click", () => hide(scanAddModal));
+  scanAddForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try{
+      const fd = new FormData(scanAddForm);
+      const data = await apiPost("/api/add", fd);
+      if (!data.ok){
+        toast("Add target", data.message || "Failed");
+        return;
+      }
+      toast("Add target", "Added");
+      hide(scanAddModal);
+      // remove from new list
+      if (scanSelected){
+        scanNew = scanNew.filter(d => d.ip !== scanSelected.ip);
+        renderScanList();
+        scanNewCount.textContent = String(scanNew.length);
+        scanSelected = null;
+      }
+      await refreshState(true);
+    }catch(err){
+      toast("Add target", err?.message || "Failed");
+    }
+  });
+
   // init
   attachIntervalHandlers();
   attachMenuActions();
   applyTargetFilter();
+  sortSelect?.addEventListener("change", () => renderTargets(lastTargets || []));
   // Ensure Enable/Disable visibility + row datasets are synced immediately
   refreshState(true);
   setInterval(() => refreshState(false), 2000);

@@ -3,6 +3,23 @@ All notable changes to this project will be documented in this file.
 
 This project follows Semantic Versioning (SemVer).
 
+## [4.9.0] - 2026-01-30
+
+### Added
+- WebUI: **Search network** modal for discovering devices across all local subnets (VLANs), with live progress and “Add target” flow.
+- WebUI: Table **sorting** control (default: IP ascending).
+
+### Fixed
+- WebUI: Actions menu now correctly shows **Enable** only for disabled targets and **Disable** only for enabled targets.
+- WebUI: Toast notifications now appear **bottom-right** (no longer covering menu buttons).
+- WebUI: Test result popups are now human readable (e.g. “Failed. No response from <target>”).
+- WebUI: Run-now progress now counts all targets correctly and uses **Force run** to check everything when you click “Run now”.
+- WebUI: Logs view is cleaner and easier to scan.
+
+### Changed
+- WebUI: “Add” button renamed to **Add target**.
+- WebUI: Logs button moved to the footer.
+
 ## [4.8.1] - 2026-01-29
 
 ### Added

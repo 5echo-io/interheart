@@ -443,7 +443,7 @@ cmd_test() {
     # curl endpoint
     local code
     code="$(curl -sS -o /dev/null -m 5 -w "%{http_code}" "$endpoint" || true)"
-    if [[ "$code" =~ ^2|3 ]]; then
+    if [[ "$code" =~ ^[23] ]]; then
       # Mark up
       sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)
                 VALUES('${n_esc}','up', $((now + interval)), ${now}, ${now}, ${rtt_ms});" >/dev/null 2>&1 || true
@@ -572,7 +572,7 @@ cmd_run_now() {
         # curl endpoint on success
         local http_code
         http_code="$(curl -sS -o /dev/null -m 5 -w "%{http_code}" "$endpoint" || true)"
-        if [[ "$http_code" =~ ^2|3 ]]; then
+        if [[ "$http_code" =~ ^[23] ]]; then
           sent=$((sent+1))
           # status up
           sql_exec "INSERT OR REPLACE INTO runtime(name,status,next_due,last_ping,last_sent,last_rtt_ms)

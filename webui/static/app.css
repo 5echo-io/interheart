@@ -186,7 +186,7 @@ tr.flash-down{animation: flashDown 1s ease-in-out;}
 .menu-sep{height:1px;background:rgba(255,255,255,.10);margin:6px 6px}
 
 .toasts{
-  position:fixed;top:18px; right:18px;display:flex;flex-direction:column;gap:10px;
+  position:fixed;bottom:18px; right:18px;display:flex;flex-direction:column;gap:10px;
   z-index:9999;width:min(460px, calc(100vw - 24px));pointer-events:none;
 }
 .toast{
@@ -289,3 +289,81 @@ tr.flash-down{animation: flashDown 1s ease-in-out;}
   .summary-wrap{grid-template-columns:1fr 1fr}
   .input--sm{min-width: 180px;}
 }
+
+
+/* --- v4.9.0 tweaks --- */
+.link-btn{
+  background:transparent;
+  border:0;
+  color: var(--muted);
+  cursor:pointer;
+  padding:0;
+  font: inherit;
+  text-decoration: underline;
+}
+.link-btn:hover{ color: var(--text); }
+
+.modal-card--wide{ width:min(980px, calc(100vw - 24px)); }
+
+.modal-foot-actions--split{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  border-top:1px solid var(--line);
+  padding-top:14px;
+  margin-top:16px;
+}
+.modal-foot-actions--split .left,
+.modal-foot-actions--split .right{
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+.modal-foot-actions--split .left{
+  padding-right:14px;
+  border-right:1px solid var(--line);
+}
+
+.logbox{
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.logbox--compact{
+  max-height: 220px;
+  overflow:auto;
+}
+.log-line{
+  padding:6px 8px;
+  border-bottom:1px dashed rgba(255,255,255,.08);
+}
+.log-line:last-child{ border-bottom:0; }
+.log-line.level-error{ color: rgba(255,60,92,.92); }
+.log-line.level-warn{ color: rgba(255,211,77,.92); }
+.log-line.level-info{ color: rgba(255,255,255,.86); }
+
+.scan-list{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.scan-item{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255,255,255,.03);
+}
+.scan-item .meta{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.scan-item .meta b{ font-size: 14px; }
+.scan-item .meta span{ color: var(--muted); font-family: var(--mono); font-size: 12px; }

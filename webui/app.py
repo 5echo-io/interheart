@@ -30,6 +30,9 @@ DB_PATH = STATE_DIR / "state.db"
 RUN_META_FILE = STATE_DIR / "run_meta.json"
 RUN_OUT_FILE = STATE_DIR / "run_last_output.txt"
 
+SCAN_META_FILE = STATE_DIR / "scan_meta.json"
+SCAN_OUT_FILE = STATE_DIR / "scan_last_output.txt"
+
 SUMMARY_RE = re.compile(
     r"total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)"
 )
@@ -55,7 +58,7 @@ def ensure_state_dir():
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         # ensure meta/output exists
-        for p in (RUN_META_FILE, RUN_OUT_FILE):
+        for p in (RUN_META_FILE, RUN_OUT_FILE, SCAN_META_FILE, SCAN_OUT_FILE):
             if not p.exists():
                 p.write_text("", encoding="utf-8")
                 try:
@@ -129,6 +132,27 @@ def save_run_meta(meta: dict):
     except Exception:
         pass
 
+def load_scan_meta() -> dict:
+    try:
+        if SCAN_META_FILE.exists():
+            raw = SCAN_META_FILE.read_text(encoding="utf-8").strip()
+            if raw:
+                return json.loads(raw)
+    except Exception:
+        pass
+    return {}
+
+def save_scan_meta(meta: dict):
+    ensure_state_dir()
+    try:
+        SCAN_META_FILE.write_text(json.dumps(meta), encoding="utf-8")
+        try:
+            os.chmod(str(SCAN_META_FILE), 0o644)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
 def mask_endpoint(url: str) -> str:
     if not url:
         return "-"
@@ -158,22 +182,42 @@ def parse_list_targets(list_output: str):
             continue
         if not line.strip():
             continue
+
         parts = line.split()
-        # Expected columns from CLI `list`:
-        # NAME IP INTERVAL ENABLED ENDPOINT
+        # CLI `list` is fixed-width and prints interval as "<n>     s" (note the literal "s" column),
+        # so we need to be tolerant:
+        # NAME IP INTERVAL s ENABLED ENDPOINT
+        # or sometimes: NAME IP 60s ENABLED ENDPOINT
         if len(parts) < 5:
             continue
+
         name = parts[0]
         ip = parts[1]
-        interval = parts[2].replace("s", "").strip()
-        enabled = parts[3]
-        endpoint_masked = parts[4]
+
+        interval_raw = parts[2]
+        enabled = None
+        endpoint_masked = None
+
+        if interval_raw.endswith("s") and interval_raw[:-1].isdigit():
+            interval = int(interval_raw[:-1])
+            enabled = parts[3] if len(parts) > 3 else "0"
+            endpoint_masked = parts[4] if len(parts) > 4 else "***"
+        elif len(parts) >= 6 and parts[3] == "s":
+            # interval printed as "<n>     s"
+            interval = int(interval_raw) if interval_raw.isdigit() else 60
+            enabled = parts[4]
+            endpoint_masked = parts[5]
+        else:
+            interval = int(interval_raw.replace("s", "")) if interval_raw.replace("s", "").isdigit() else 60
+            enabled = parts[3]
+            endpoint_masked = parts[4]
+
         targets.append({
             "name": name,
             "ip": ip,
-            "interval": int(interval) if interval.isdigit() else 60,
+            "interval": interval,
             "enabled": 1 if str(enabled).strip() == "1" else 0,
-            "endpoint_masked": endpoint_masked
+            "endpoint_masked": endpoint_masked or "***",
         })
     return targets
 
@@ -244,6 +288,15 @@ def merged_targets():
             # kept for info modal / masking
             "endpoint_masked": t.get("endpoint_masked") or "-",
         })
+        # Default sort: IP ascending
+    def ip_key(ip: str):
+        try:
+            a,b,c,d = [int(x) for x in (ip or "0.0.0.0").split(".")]
+            return (a,b,c,d)
+        except Exception:
+            return (999,999,999,999)
+
+    merged.sort(key=lambda x: ip_key(x.get("ip")))
     return merged
 
 
@@ -473,7 +526,7 @@ def api_run_now():
     if existing_pid and pid_is_running(existing_pid):
         return jsonify({"ok": True, "message": "Already running", "pid": existing_pid})
 
-    cmd = [CLI, "run-now"]
+    cmd = [CLI, "run-now", "--force"]
     try:
         # truncate output file
         RUN_OUT_FILE.write_text("", encoding="utf-8")
@@ -524,18 +577,27 @@ def api_run_output():
     lines = max(20, min(800, lines))
 
     try:
-        if RUN_OUT_FILE.exists():
-            raw = RUN_OUT_FILE.read_text(encoding="utf-8", errors="replace")
-        else:
-            raw = ""
+        raw = RUN_OUT_FILE.read_text(encoding="utf-8", errors="replace") if RUN_OUT_FILE.exists() else ""
         arr = raw.splitlines()
         tail = "\n".join(arr[-lines:]) if arr else ""
         summary = parse_run_summary(raw)
-        return jsonify({"ok": True, "text": tail, "summary": summary})
+
+        # Progress: count distinct targets completed based on "run:" lines
+        done_names = []
+        for ln in arr:
+            if ln.startswith("run:"):
+                parts = ln.split()
+                if len(parts) >= 2:
+                    done_names.append(parts[1])
+        done = len(set(done_names))
+        last_line = arr[-1] if arr else ""
+
+        return jsonify({"ok": True, "text": tail, "summary": summary, "done": done, "last_line": last_line})
     except Exception as e:
-        return jsonify({"ok": False, "text": f"(error reading output: {str(e)})", "summary": None})
+        return jsonify({"ok": False, "text": f"(error reading output: {str(e)})", "summary": None, "done": 0, "last_line": ""})
 
 @APP.get("/api/run-result")
+
 def api_run_result():
     meta = load_run_meta()
     try:
@@ -550,5 +612,171 @@ def api_run_result():
 
     return jsonify({"ok": ok, "message": out or ("OK" if ok else "Failed"), "summary": summary, "meta": meta})
 
+
+# ---- API: network scan ----
+def _get_local_cidrs():
+    """Return a list of IPv4 CIDRs from local interfaces (best-effort)."""
+    cidrs = []
+    try:
+        p = subprocess.run(["ip", "-j", "addr"], capture_output=True, text=True)
+        if p.returncode != 0:
+            return cidrs
+        data = json.loads(p.stdout or "[]")
+        for iface in data:
+            ifname = iface.get("ifname") or ""
+            if ifname in ("lo",):
+                continue
+            # skip known virtuals that tend to be noisy
+            if ifname.startswith(("docker", "br-", "veth", "wt0", "tailscale", "tun", "tap")):
+                continue
+            for a in (iface.get("addr_info") or []):
+                if a.get("family") != "inet":
+                    continue
+                local = a.get("local")
+                prefix = a.get("prefixlen")
+                if not local or prefix is None:
+                    continue
+                cidrs.append(f"{local}/{prefix}")
+    except Exception:
+        pass
+    # de-dupe
+    out = []
+    for c in cidrs:
+        if c not in out:
+            out.append(c)
+    return out
+
+def _scan_worker():
+    """Background scan: runs nmap -sn over each local CIDR and writes output."""
+    ensure_state_dir()
+    cidrs = _get_local_cidrs()
+    meta = load_scan_meta()
+    meta.update({"started": int(time.time()), "finished": 0, "rc": None, "cidrs": cidrs})
+    save_scan_meta(meta)
+
+    SCAN_OUT_FILE.write_text("", encoding="utf-8")
+    found = []
+    try:
+        if not cidrs:
+            raise RuntimeError("No local subnets found (ip addr)")
+        # require nmap
+        pchk = subprocess.run(["sh", "-lc", "command -v nmap"], capture_output=True, text=True)
+        if pchk.returncode != 0:
+            raise RuntimeError("Missing dependency: nmap (install: sudo apt-get install -y nmap)")
+
+        with open(str(SCAN_OUT_FILE), "a", encoding="utf-8") as out_f:
+            for cidr in cidrs:
+                out_f.write(f"scan: {cidr}\n")
+                out_f.flush()
+                p = subprocess.run(["nmap", "-sn", "-n", cidr], capture_output=True, text=True)
+                out_f.write((p.stdout or "").strip() + "\n")
+                out_f.flush()
+
+        raw = SCAN_OUT_FILE.read_text(encoding="utf-8", errors="replace")
+        # Parse: 'Nmap scan report for <host> (<ip>)' OR '... for <ip>'
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("Nmap scan report for "):
+                continue
+            rest = line.replace("Nmap scan report for ", "", 1).strip()
+            m = re.match(r"(.+) \((\d+\.\d+\.\d+\.\d+)\)$", rest)
+            if m:
+                host = m.group(1).strip()
+                ip = m.group(2).strip()
+            else:
+                host = ""
+                ip = rest.strip()
+            if re.match(r"^\d+\.\d+\.\d+\.\d+$", ip):
+                found.append({"ip": ip, "host": host})
+        # de-dupe by ip
+        uniq = {}
+        for f in found:
+            uniq[f["ip"]] = f
+        found = list(uniq.values())
+
+        meta.update({"found": found, "rc": 0})
+        save_scan_meta(meta)
+    except Exception as e:
+        with open(str(SCAN_OUT_FILE), "a", encoding="utf-8") as out_f:
+            out_f.write(f"error: {str(e)}\n")
+        meta.update({"rc": 1, "error": str(e)})
+        save_scan_meta(meta)
+    finally:
+        meta = load_scan_meta()
+        meta["finished"] = int(time.time())
+        meta["pid"] = 0
+        save_scan_meta(meta)
+
+@APP.post("/api/scan-start")
+def api_scan_start():
+    ensure_state_dir()
+    meta = load_scan_meta()
+    pid = int(meta.get("pid") or 0)
+    if pid and pid_is_running(pid):
+        return jsonify({"ok": True, "message": "Already running", "pid": pid})
+
+    try:
+        # Start a detached python thread via subprocess to keep it simple
+        # (Flask may run with multiple workers; subprocess is predictable)
+        cmd = ["python3", "-c", "import webui.app as a; a._scan_worker()"]
+        # Fallback: run within same file path
+    except Exception:
+        cmd = None
+
+    try:
+        # Use this script itself as module
+        p = subprocess.Popen(["python3", str(BASE_DIR / "scan_worker.py")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        save_scan_meta({"pid": p.pid, "started": int(time.time()), "finished": 0, "rc": None})
+        return jsonify({"ok": True, "message": "Started", "pid": p.pid})
+    except Exception as e:
+        save_scan_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1, "error": str(e)})
+        return jsonify({"ok": False, "message": f"Failed to start scan: {str(e)}"})
+
+@APP.get("/api/scan-status")
+def api_scan_status():
+    meta = load_scan_meta()
+    pid = int(meta.get("pid") or 0)
+    started = int(meta.get("started") or 0)
+    finished = int(meta.get("finished") or 0)
+
+    if pid and pid_is_running(pid):
+        return jsonify({"running": True, "finished": False, "pid": pid, "started": started})
+
+    if started and not finished:
+        meta["finished"] = int(time.time())
+        meta["pid"] = 0
+        save_scan_meta(meta)
+
+    return jsonify({
+        "running": False,
+        "finished": bool(started),
+        "pid": pid,
+        "started": started,
+        "finished_at": int(meta.get("finished") or 0),
+        "rc": meta.get("rc"),
+        "error": meta.get("error", ""),
+    })
+
+@APP.get("/api/scan-output")
+def api_scan_output():
+    try:
+        lines = int(request.args.get("lines", "200"))
+    except Exception:
+        lines = 200
+    lines = max(50, min(1200, lines))
+    try:
+        raw = SCAN_OUT_FILE.read_text(encoding="utf-8", errors="replace") if SCAN_OUT_FILE.exists() else ""
+        arr = raw.splitlines()
+        tail = "\n".join(arr[-lines:]) if arr else ""
+        meta = load_scan_meta()
+        return jsonify({"ok": True, "text": tail, "meta": meta})
+    except Exception as e:
+        return jsonify({"ok": False, "text": f"(error reading scan output: {str(e)})", "meta": {}})
+
+@APP.get("/api/scan-result")
+def api_scan_result():
+    meta = load_scan_meta()
+    found = meta.get("found") or []
+    return jsonify({"ok": True, "found": found, "meta": meta})
 if __name__ == "__main__":
     APP.run(host=BIND_HOST, port=BIND_PORT, threaded=True)
