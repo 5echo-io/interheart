@@ -754,6 +754,7 @@ function statusLabel(status, enabled, lastRttMs, lastRespEpoch){
   attachIntervalHandlers();
   attachMenuActions();
   attachBulkHandlers();
+  attachRowClickHandlers();
   // Restore selection
   $$("tr[data-name]").forEach(row => {
     const name = row.getAttribute("data-name");
@@ -883,7 +884,11 @@ function attachMenuActions(){
   }
 
   function clearBulkSelection(){
-    $$('tr[data-name] .row-check').forEach(cb => cb.checked = false);
+    $$('tr[data-name]').forEach(row => {
+      const cb = row.querySelector('.row-check');
+      if (cb) cb.checked = false;
+      row.classList.remove('is-selected');
+    });
     updateBulkBar();
   }
 
@@ -926,6 +931,129 @@ function attachMenuActions(){
   bulkDisable?.addEventListener('click', () => bulkAction('disable'));
   bulkTest?.addEventListener('click', () => bulkAction('test'));
   bulkRemove?.addEventListener('click', () => bulkAction('remove'));
+
+
+// ---- Pinned row details (side panel) ----
+const sidePanel = $("#sidePanel");
+const spTitle = $("#spTitle");
+const spMeta = $("#spMeta");
+const spClose = $("#spClose");
+const spInfo = $("#spInfo");
+const spEdit = $("#spEdit");
+const spEnable = $("#spEnable");
+const spDisable = $("#spDisable");
+const spTest = $("#spTest");
+const spRemove = $("#spRemove");
+const spOpenLogs = $("#spOpenLogs");
+
+const spName = $("#spName");
+const spIp = $("#spIp");
+const spEnabled = $("#spEnabled");
+const spInterval = $("#spInterval");
+const spEndpoint = $("#spEndpoint");
+const spStatus = $("#spStatus");
+const spLastPing = $("#spLastPing");
+const spLastResp = $("#spLastResp");
+const spLatency = $("#spLatency");
+const spLogBox = $("#spLogBox");
+
+const spU24 = $("#spU24"), spU7 = $("#spU7"), spU30 = $("#spU30"), spU90 = $("#spU90");
+const spU24t = $("#spU24t"), spU7t = $("#spU7t"), spU30t = $("#spU30t"), spU90t = $("#spU90t");
+const spSpark = $("#spSpark");
+
+let pinnedName = null;
+
+function closeSidePanel(){
+  pinnedName = null;
+  if (sidePanel) sidePanel.classList.add("is-hidden");
+  $$("tr.is-focused").forEach(r => r.classList.remove("is-focused"));
+}
+
+async function loadSidePanel(name){
+  if (!sidePanel) return;
+  pinnedName = name;
+
+  // visual focus
+  $$("tr.is-focused").forEach(r => r.classList.remove("is-focused"));
+  const row = $(`tr[data-name="${CSS.escape(name)}"]`);
+  if (row) row.classList.add("is-focused");
+
+  sidePanel.classList.remove("is-hidden");
+  if (spTitle) spTitle.textContent = name;
+  if (spMeta) spMeta.textContent = "Pinned details";
+
+  // reset
+  [spName,spIp,spEnabled,spInterval,spEndpoint,spStatus,spLastPing,spLastResp,spLatency].forEach(el => { if (el) el.textContent = "-"; });
+  if (spLogBox) spLogBox.textContent = "Loading…";
+  [spU24,spU7,spU30,spU90].forEach(el => { if (el) el.style.width = "0%"; });
+  [spU24t,spU7t,spU30t,spU90t].forEach(el => { if (el) el.textContent = "-"; });
+  if (spSpark) spSpark.innerHTML = "";
+
+  try{
+    const data = await apiGet(`/api/info?name=${encodeURIComponent(name)}`);
+    if (!data || !data.ok){
+      if (spLogBox) spLogBox.textContent = "(failed to load)";
+      toast("Error", data?.message || "Failed to load information");
+      return;
+    }
+
+    spName.textContent = data.name || name;
+    spIp.textContent = data.ip || "-";
+    spEnabled.textContent = (data.enabled ? "Yes" : "No");
+    spInterval.textContent = String(data.interval ?? "-");
+    spEndpoint.textContent = data.endpoint || "-";
+
+    const cur = data.current || {};
+    spStatus.textContent = (cur.status || "unknown").toUpperCase();
+    spLastPing.textContent = cur.last_ping_human || "-";
+    spLastResp.textContent = cur.last_response_human || "-";
+    spLatency.textContent = (cur.last_rtt_ms === undefined || cur.last_rtt_ms === null || Number(cur.last_rtt_ms) < 0) ? "-" : `${cur.last_rtt_ms} ms`;
+
+    const up = data.uptime || {};
+    setUptimeRow(spU24, spU24t, up["24h"]);
+    setUptimeRow(spU7, spU7t, up["7d"]);
+    setUptimeRow(spU30, spU30t, up["30d"]);
+    setUptimeRow(spU90, spU90t, up["90d"]);
+    drawSparkline(spSpark, up.points || []);
+
+    // quick log excerpt: reuse /logs and filter locally
+    try{
+      const lines = 220;
+      const logData = await apiGet(`/logs?lines=${encodeURIComponent(lines)}`);
+      const all = String(logData.text || "").split("\n");
+      const filtered = all.filter(l => l.toLowerCase().includes(String(name).toLowerCase())).slice(-20);
+      spLogBox.textContent = filtered.length ? filtered.join("\n") : "(no recent matches)";
+    }catch(e){
+      spLogBox.textContent = "(no logs)";
+    }
+  }catch(e){
+    if (spLogBox) spLogBox.textContent = "(error)";
+  }
+}
+
+function attachRowClickHandlers(){
+  $$("tr[data-name]").forEach(row => {
+    if (row.dataset.rowclick === "1") return;
+    row.dataset.rowclick = "1";
+    row.addEventListener("click", (e) => {
+      // don't hijack clicks on controls
+      if (e.target.closest(".menu") || e.target.closest(".row-check") || e.target.closest(".interval-input")) return;
+      const name = row.getAttribute("data-name");
+      if (!name) return;
+      loadSidePanel(name);
+    });
+  });
+}
+
+spClose?.addEventListener("click", closeSidePanel);
+spInfo?.addEventListener("click", () => { if (pinnedName) openInfo(pinnedName); });
+spEdit?.addEventListener("click", () => { if (pinnedName) openEdit(pinnedName); });
+spEnable?.addEventListener("click", async () => { if (!pinnedName) return; const fd = new FormData(); fd.set("name", pinnedName); await apiPost("/api/enable", fd); await refreshState(true); await loadSidePanel(pinnedName); });
+spDisable?.addEventListener("click", async () => { if (!pinnedName) return; const fd = new FormData(); fd.set("name", pinnedName); await apiPost("/api/disable", fd); await refreshState(true); await loadSidePanel(pinnedName); });
+spTest?.addEventListener("click", async () => { if (!pinnedName) return; const fd = new FormData(); fd.set("name", pinnedName); await apiPost("/api/test", fd); await refreshState(true); await loadSidePanel(pinnedName); });
+spRemove?.addEventListener("click", () => { if (pinnedName) openConfirmRemove(pinnedName); });
+spOpenLogs?.addEventListener("click", async () => { show(logModal); logFilter.value = pinnedName || ""; logFilter.focus(); await loadLogs(); });
+
 
   // ---- Real-time-ish refresh + row blink ----
   function setStatusChip(row, status){
@@ -1009,7 +1137,7 @@ function attachMenuActions(){
           row.setAttribute("data-last-ping", String(nextPing));
           row.classList.remove("flash-up","flash-down");
           row.classList.add((t.status === "up") ? "flash-up" : "flash-down");
-          setTimeout(() => row.classList.remove("flash-up","flash-down"), 1000);
+          setTimeout(() => row.classList.remove("flash-up","flash-down"), 3000);
         }
         const nextResp = Number(t.last_response_epoch || 0);
         row.setAttribute("data-last-resp", String(nextResp));
@@ -1030,6 +1158,8 @@ function attachMenuActions(){
       attachIntervalHandlers();
       attachMenuActions();
       attachBulkHandlers();
+      attachRowClickHandlers();
+  attachRowClickHandlers();
     }catch(e){
       // silent
     }
@@ -1056,6 +1186,8 @@ function attachMenuActions(){
   const runDoneLine = $("#runDoneLine");
   const runFeedWrap = $("#runFeedWrap");
   const runFeed = $("#runFeed");
+  const btnRunDetails = $("#btnRunDetails");
+  let runShowDetails = false;
 
   let runPoll = null;
   let runDueExpected = 0;
@@ -1066,6 +1198,9 @@ function attachMenuActions(){
   }
 
   function setRunInitial(){
+    runShowDetails = false;
+    if (runFeedWrap) runFeedWrap.style.display = "none";
+    if (btnRunDetails) btnRunDetails.textContent = "Show details";
     runTitleMeta.textContent = "running…";
     runLive.style.display = "inline-flex";
     runLiveText.textContent = "Running…";
@@ -1081,6 +1216,13 @@ function attachMenuActions(){
     runDoneLine.textContent = "done: 0 / 0";
     setBar(0, 0);
   }
+
+btnRunDetails?.addEventListener("click", () => {
+  runShowDetails = !runShowDetails;
+  if (runFeedWrap) runFeedWrap.style.display = runShowDetails ? "block" : "none";
+  if (btnRunDetails) btnRunDetails.textContent = runShowDetails ? "Hide details" : "Show details";
+});
+
 
   async function pollRun(){
     // Use output tail only for progress counting (no live output UI)

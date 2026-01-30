@@ -1,3 +1,13 @@
+## v4.10.7
+- Fixed: Row selection + Actions menu no longer causes subtle column misalignment (layout is now stable while interacting).
+- UI: Ping feedback is now **icon-only** (no full-row blink) and the check/X indicator stays visible for **3s**.
+- UI: Status chip content is now left-aligned (keeps the same width, reads cleaner).
+- UI: Enable/Disable/Clear selection state no longer gets “stuck” after clearing bulk selection.
+- UI: Dark-mode checkbox styling updated to blend with the theme.
+- UI: “Name” header aligned with target names (selection gutter no longer shifts the header).
+- Run now: Quiet mode by default + optional “Show details” fold-out for recent output.
+- UX: Added **Pinned row details** side panel (click a row to inspect, with quick actions + log excerpt).
+
 ## v4.10.6
 - Fixed: Removed a JS syntax regression that could break Actions/selection interactions.
 - UI: Row selection should be clickable again (no invisible overlay blocking the checkbox).

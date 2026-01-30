@@ -95,7 +95,17 @@
           </div>
         </div>
 
-        <!-- Live progress removed (kept simple on purpose) -->
+<div class="metric">
+  <div class="details-row">
+    <b>Details</b>
+    <button class="btn btn-ghost btn-mini" id="btnRunDetails" type="button">Show details</button>
+  </div>
+  <div class="run-details" id="runFeedWrap" style="display:none;">
+    <div class="logbox logbox--compact" id="runFeed">(no output yet)</div>
+    <div class="hint" style="margin-top:8px;">Tip: Use Logs for full history.</div>
+  </div>
+</div>
+
       </div>
 
       <div class="footer footer--modal">
@@ -185,7 +195,7 @@
 
   <!-- Info modal -->
   <div class="modal" id="infoModal" aria-hidden="true">
-    <div class="modal-card small" role="dialog" aria-modal="true" aria-label="Target information">
+    <div class="modal-card modal-card--info" role="dialog" aria-modal="true" aria-label="Target information">
       <div class="modal-head">
         <div class="modal-title">
           <b>Target information</b>
@@ -220,7 +230,7 @@
           </div>
         </div>
 
-        <div class="metric">
+        <div class="metric info-span2">
           <div class="uptime-head"><b>Uptime (history samples)</b><div id="uptimeSpark" class="sparkline" aria-hidden="true"></div></div>
           <div class="uptime-wrap" id="uptimeWrap">
             <div class="uptime-row"><span>24h</span><div class="bar"><div id="u24"></div></div><code id="u24t">-</code></div>
@@ -320,15 +330,23 @@
           <button class="btn btn-ghost btn-mini" id="bulkEnable" type="button">Enable</button>
           <button class="btn btn-ghost btn-mini" id="bulkDisable" type="button">Disable</button>
           <button class="btn btn-ghost btn-mini" id="bulkTest" type="button">Test</button>
-          <button class="btn btn-danger btn-mini" id="bulkRemove" type="button">Remove</button>
-          <button class="btn btn-ghost btn-mini" id="bulkClear" type="button">Clear</button>
+          <div class="menu" id="bulkMoreMenu">
+            <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="More">⋯</button>
+            <div class="menu-dd" role="menu">
+              <button class="menu-item danger" id="bulkRemove" type="button"><span>Remove</span></button>
+              <button class="menu-item" id="bulkClear" type="button"><span>Clear</span></button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <table id="targetsTable">
+
+      <div class="content-grid">
+        <div class="table-wrap">
+          <table id="targetsTable">
         <thead>
           <tr>
-            <th style="width: 260px;" class="th-sort sortable" data-sort="name"><span>Name</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 260px;" class="th-sort sortable name-th" data-sort="name"><span>Name</span><span class="sort-ind" aria-hidden="true"></span></th>
             <th style="width: 160px;" class="th-sort sortable" data-sort="ip"><span>IP</span><span class="sort-ind" aria-hidden="true"></span></th>
             <th style="width: 150px;" class="th-sort sortable" data-sort="status"><span>Status</span><span class="sort-ind" aria-hidden="true"></span></th>
             <th style="width: 170px;" class="th-sort sortable" data-sort="interval"><span>Interval</span><span class="sort-ind" aria-hidden="true"></span></th>
@@ -381,7 +399,69 @@
           </tr>
         {% endfor %}
         </tbody>
-      </table>
+          </table>
+  </div>
+
+  <aside class="sidepanel is-hidden" id="sidePanel" aria-label="Pinned row details">
+    <div class="sidepanel-head">
+      <div class="sidepanel-title">
+        <b id="spTitle">No selection</b>
+        <span id="spMeta">Click a row to inspect</span>
+      </div>
+      <button class="btn btn-ghost btn-mini" id="spClose" type="button">Close</button>
+    </div>
+
+    <div class="sidepanel-actions">
+      <button class="btn btn-ghost btn-mini" id="spInfo" type="button">Open modal</button>
+      <button class="btn btn-ghost btn-mini" id="spEdit" type="button">Edit</button>
+      <button class="btn btn-ghost btn-mini" id="spEnable" type="button">Enable</button>
+      <button class="btn btn-ghost btn-mini" id="spDisable" type="button">Disable</button>
+      <button class="btn btn-primary btn-mini" id="spTest" type="button">Test</button>
+      <button class="btn btn-danger btn-mini" id="spRemove" type="button">Remove</button>
+    </div>
+
+    <div class="sidepanel-body">
+      <div class="metric">
+        <b>Basics</b>
+        <div class="kv"><span>Name</span><code id="spName">-</code></div>
+        <div class="kv"><span>IP</span><code id="spIp">-</code></div>
+        <div class="kv"><span>Enabled</span><code id="spEnabled">-</code></div>
+        <div class="kv"><span>Interval</span><code id="spInterval">-</code></div>
+      </div>
+
+      <div class="metric">
+        <b>Endpoint</b>
+        <div class="kv"><span>URL</span><code id="spEndpoint" style="word-break:break-all;">-</code></div>
+      </div>
+
+      <div class="metric">
+        <b>Live status</b>
+        <div class="kv"><span>Status</span><code id="spStatus">-</code></div>
+        <div class="kv"><span>Last ping</span><code id="spLastPing">-</code></div>
+        <div class="kv"><span>Last response</span><code id="spLastResp">-</code></div>
+        <div class="kv"><span>Latency</span><code id="spLatency">-</code></div>
+      </div>
+
+      <div class="metric">
+        <div class="uptime-head"><b>Uptime</b><div id="spSpark" class="sparkline" aria-hidden="true"></div></div>
+        <div class="uptime-wrap">
+          <div class="uptime-row"><span>24h</span><div class="bar"><div id="spU24"></div></div><code id="spU24t">-</code></div>
+          <div class="uptime-row"><span>7d</span><div class="bar"><div id="spU7"></div></div><code id="spU7t">-</code></div>
+          <div class="uptime-row"><span>30d</span><div class="bar"><div id="spU30"></div></div><code id="spU30t">-</code></div>
+          <div class="uptime-row"><span>90d</span><div class="bar"><div id="spU90"></div></div><code id="spU90t">-</code></div>
+        </div>
+      </div>
+
+      <div class="metric">
+        <div class="details-row">
+          <b>Logs excerpt</b>
+          <button class="btn btn-ghost btn-mini" id="spOpenLogs" type="button">Open Logs</button>
+        </div>
+        <div class="logbox logbox--compact" id="spLogBox">(select a row)</div>
+      </div>
+    </div>
+  </aside>
+</div>
 
       <div class="footer">
         <div class="hint">WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code> • <a href="#" id="openLogsFooter">Logs</a></div>
