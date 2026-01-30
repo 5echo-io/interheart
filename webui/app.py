@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, Response, send_file
 import os
 import subprocess
 import time
 import json
 import re
+import socket
+from io import BytesIO
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -451,6 +453,102 @@ def logs():
     except Exception as e:
         return jsonify({"ok": False, "source": "journalctl (error)", "lines": 1, "updated": updated, "text": f"(journalctl error: {str(e)})"})
 
+
+def filter_log_text(text: str, q: str = "", level: str = "all") -> list[str]:
+    q = (q or "").strip().lower()
+    level = (level or "all").strip().lower()
+    lines = (text or "").splitlines()
+
+    def level_ok(line: str) -> bool:
+        ll = line.lower()
+        if level == "all":
+            return True
+        if level == "error":
+            return ("error" in ll) or ("fail" in ll)
+        if level == "warn":
+            return ("warn" in ll) or ("warning" in ll)
+        if level == "info":
+            return not (("error" in ll) or ("fail" in ll) or ("warn" in ll) or ("warning" in ll))
+        return True
+
+    out = []
+    for l in lines:
+        if not level_ok(l):
+            continue
+        if q and q not in l.lower():
+            continue
+        out.append(l)
+    return out
+
+
+@APP.get("/api/logs-export")
+def api_logs_export():
+    fmt = (request.args.get("fmt") or "csv").strip().lower()
+    try:
+        lines_n = int(request.args.get("lines", str(LOG_LINES_DEFAULT)))
+    except Exception:
+        lines_n = LOG_LINES_DEFAULT
+    lines_n = max(50, min(5000, lines_n))
+    q = (request.args.get("q") or "").strip()
+    level = (request.args.get("level") or "all").strip().lower()
+
+    text = journalctl_lines(lines_n)
+    lines = filter_log_text(text, q=q, level=level)
+
+    ts = time.strftime("%Y%m%d-%H%M%S", time.localtime(int(time.time())))
+    base = f"interheart-logs-{ts}"
+
+    if fmt == "csv":
+        csv_text = "line\n" + "\n".join([json.dumps(l)[1:-1] for l in lines])
+        return Response(csv_text, mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename={base}.csv"})
+
+    if fmt == "xlsx":
+        try:
+            from openpyxl import Workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Logs"
+            ws.append(["line"])
+            for l in lines:
+                ws.append([l])
+            bio = BytesIO()
+            wb.save(bio)
+            bio.seek(0)
+            return send_file(bio, as_attachment=True, download_name=f"{base}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except Exception as e:
+            return die_json(f"XLSX export failed: {e}", 500)
+
+    if fmt == "pdf":
+        try:
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import letter
+            bio = BytesIO()
+            c = canvas.Canvas(bio, pagesize=letter)
+            width, height = letter
+            y = height - 40
+            c.setFont("Helvetica", 10)
+            c.drawString(40, y, f"interheart logs ({ts})")
+            y -= 20
+            c.setFont("Helvetica", 8)
+            for l in lines:
+                if y < 40:
+                    c.showPage()
+                    y = height - 40
+                    c.setFont("Helvetica", 8)
+                # trim to fit
+                s = l
+                if len(s) > 160:
+                    s = s[:157] + "..."
+                c.drawString(40, y, s)
+                y -= 12
+            c.save()
+            bio.seek(0)
+            return send_file(bio, as_attachment=True, download_name=f"{base}.pdf", mimetype="application/pdf")
+        except Exception as e:
+            return die_json(f"PDF export failed: {e}", 500)
+
+    return die_json("Unknown format", 400)
+
 # ---- API: targets ----
 @APP.post("/api/add")
 def api_add():
@@ -485,6 +583,69 @@ def api_disable():
     rc, out = run_cmd(["disable", name])
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed")})
 
+
+def bulk_from_json() -> list[str]:
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        names = payload.get("names") or []
+        if not isinstance(names, list):
+            return []
+        return [str(n).strip() for n in names if str(n).strip()]
+    except Exception:
+        return []
+
+
+@APP.post("/api/bulk-enable")
+def api_bulk_enable():
+    names = bulk_from_json()
+    if not names:
+        return jsonify({"ok": False, "message": "No targets selected"})
+    ok = 0
+    for n in names:
+        rc, _ = run_cmd(["enable", n])
+        if rc == 0:
+            ok += 1
+    return jsonify({"ok": ok == len(names), "message": f"Enabled {ok}/{len(names)}"})
+
+
+@APP.post("/api/bulk-disable")
+def api_bulk_disable():
+    names = bulk_from_json()
+    if not names:
+        return jsonify({"ok": False, "message": "No targets selected"})
+    ok = 0
+    for n in names:
+        rc, _ = run_cmd(["disable", n])
+        if rc == 0:
+            ok += 1
+    return jsonify({"ok": ok == len(names), "message": f"Disabled {ok}/{len(names)}"})
+
+
+@APP.post("/api/bulk-test")
+def api_bulk_test():
+    names = bulk_from_json()
+    if not names:
+        return jsonify({"ok": False, "message": "No targets selected"})
+    ok = 0
+    for n in names:
+        rc, _ = run_cmd(["test", n])
+        if rc == 0:
+            ok += 1
+    return jsonify({"ok": True, "message": f"Tested {len(names)} targets"})
+
+
+@APP.post("/api/bulk-remove")
+def api_bulk_remove():
+    names = bulk_from_json()
+    if not names:
+        return jsonify({"ok": False, "message": "No targets selected"})
+    ok = 0
+    for n in names:
+        rc, _ = run_cmd(["remove", n])
+        if rc == 0:
+            ok += 1
+    return jsonify({"ok": ok == len(names), "message": f"Removed {ok}/{len(names)}"})
+
 @APP.post("/api/set-target-interval")
 def api_set_target_interval():
     name = request.form.get("name", "").strip()
@@ -515,6 +676,24 @@ def api_get():
     if m:
         masked = mask_endpoint(m.group(1))
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed"), "endpoint_masked": masked})
+
+
+# ---- API: name suggestion (reverse DNS best-effort) ----
+@APP.get("/api/name-suggest")
+def api_name_suggest():
+    ip = (request.args.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"ok": False, "name": ""})
+    name = ""
+    try:
+        # reverse DNS
+        name = socket.gethostbyaddr(ip)[0]
+    except Exception:
+        name = ""
+    # keep it short / UI friendly
+    if name:
+        name = name.strip().split(".")[0]
+    return jsonify({"ok": True, "name": name})
 
 # ---- API: run-now (live output tail) ----
 @APP.post("/api/run-now")
@@ -647,52 +826,120 @@ def _get_local_cidrs():
     return out
 
 def _scan_worker():
-    """Background scan: runs nmap -sn over each local CIDR and writes output."""
+    """Background scan.
+
+    Uses nmap ping-scan and streams output to SCAN_OUT_FILE so the UI can show progress.
+    Best effort: collect hostname, mac, vendor and a simple "type" + confidence score.
+    """
     ensure_state_dir()
     cidrs = _get_local_cidrs()
     meta = load_scan_meta()
-    meta.update({"started": int(time.time()), "finished": 0, "rc": None, "cidrs": cidrs})
+    meta.update({
+        "started": int(time.time()),
+        "finished": 0,
+        "rc": None,
+        "error": "",
+        "cidrs": cidrs,
+        "current_ip": "",
+        "pid": int(meta.get("pid") or 0),
+    })
     save_scan_meta(meta)
 
     SCAN_OUT_FILE.write_text("", encoding="utf-8")
-    found = []
+
+    found_map: dict[str, dict] = {}
+    last_ip = ""
+
+    def guess_type(host: str, vendor: str) -> tuple[str, int]:
+        h = (host or "").lower()
+        v = (vendor or "").lower()
+        if any(x in v for x in ["ubiquiti", "mikrotik", "cisco", "aruba", "juniper", "netgear", "tp-link"]):
+            return ("switch/ap", 75)
+        if any(x in v for x in ["canon", "brother", "epson", "lexmark", "kyocera", "xerox"]):
+            return ("printer", 75)
+        if any(x in v for x in ["axis", "hikvision", "dahua", "hanwha", "uniview", "birddog"]):
+            return ("camera", 75)
+        if any(x in h for x in ["printer", "mfp"]):
+            return ("printer", 60)
+        if any(x in h for x in ["cam", "camera", "ptz", "ndi"]):
+            return ("camera", 55)
+        if any(x in h for x in ["switch", "ap", "udm", "usw", "u6"]):
+            return ("switch/ap", 55)
+        return ("device", 40)
+
     try:
-        if not cidrs:
-            raise RuntimeError("No local subnets found (ip addr)")
-        # require nmap
+        # require nmap early
         pchk = subprocess.run(["sh", "-lc", "command -v nmap"], capture_output=True, text=True)
         if pchk.returncode != 0:
             raise RuntimeError("Missing dependency: nmap (install: sudo apt-get install -y nmap)")
+        if not cidrs:
+            raise RuntimeError("No local subnets found (ip addr)")
 
         with open(str(SCAN_OUT_FILE), "a", encoding="utf-8") as out_f:
             for cidr in cidrs:
                 out_f.write(f"scan: {cidr}\n")
                 out_f.flush()
-                p = subprocess.run(["nmap", "-sn", "-n", cidr], capture_output=True, text=True)
-                out_f.write((p.stdout or "").strip() + "\n")
-                out_f.flush()
 
-        raw = SCAN_OUT_FILE.read_text(encoding="utf-8", errors="replace")
-        # Parse: 'Nmap scan report for <host> (<ip>)' OR '... for <ip>'
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line.startswith("Nmap scan report for "):
-                continue
-            rest = line.replace("Nmap scan report for ", "", 1).strip()
-            m = re.match(r"(.+) \((\d+\.\d+\.\d+\.\d+)\)$", rest)
-            if m:
-                host = m.group(1).strip()
-                ip = m.group(2).strip()
-            else:
-                host = ""
-                ip = rest.strip()
-            if re.match(r"^\d+\.\d+\.\d+\.\d+$", ip):
-                found.append({"ip": ip, "host": host})
-        # de-dupe by ip
-        uniq = {}
-        for f in found:
-            uniq[f["ip"]] = f
-        found = list(uniq.values())
+                cmd = [
+                    "nmap", "-sn", "-n", "-PR", "--stats-every", "1s",
+                    "--max-retries", "1", "--host-timeout", "800ms", cidr
+                ]
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+                meta = load_scan_meta()
+                meta["pid"] = int(p.pid or 0)
+                save_scan_meta(meta)
+
+                for line in p.stdout or []:
+                    s = (line or "").rstrip("\n")
+                    if not s:
+                        continue
+                    out_f.write(s + "\n")
+                    out_f.flush()
+
+                    if s.startswith("Nmap scan report for "):
+                        rest = s.replace("Nmap scan report for ", "", 1).strip()
+                        m = re.match(r"(.+) \((\d+\.\d+\.\d+\.\d+)\)$", rest)
+                        host = ""
+                        ip = ""
+                        if m:
+                            host = m.group(1).strip()
+                            ip = m.group(2).strip()
+                        else:
+                            ip = rest.strip()
+                        if re.match(r"^\d+\.\d+\.\d+\.\d+$", ip):
+                            last_ip = ip
+                            meta = load_scan_meta()
+                            meta["current_ip"] = ip
+                            save_scan_meta(meta)
+                            found_map.setdefault(ip, {"ip": ip, "host": host})
+                            if host:
+                                found_map[ip]["host"] = host
+
+                    if s.startswith("MAC Address:") and last_ip:
+                        mm = re.match(r"MAC Address:\s+([0-9A-Fa-f:]{17})\s*(?:\((.+)\))?", s)
+                        if mm:
+                            found_map.setdefault(last_ip, {"ip": last_ip})
+                            found_map[last_ip]["mac"] = mm.group(1).strip().upper()
+                            if mm.group(2):
+                                found_map[last_ip]["vendor"] = mm.group(2).strip()
+
+                p.wait(timeout=None)
+
+        found = []
+        for ip, d in found_map.items():
+            host = d.get("host", "")
+            vendor = d.get("vendor", "")
+            dtype, conf = guess_type(host, vendor)
+            d["type"] = dtype
+            d["confidence"] = conf
+            found.append(d)
+
+        def ip_key(x):
+            parts = [int(p) for p in str(x.get("ip", "0.0.0.0")).split(".") if p.isdigit()]
+            return parts + [0] * (4 - len(parts))
+
+        found.sort(key=ip_key)
 
         meta.update({"found": found, "rc": 0})
         save_scan_meta(meta)
@@ -726,7 +973,9 @@ def api_scan_start():
     try:
         # Use this script itself as module
         p = subprocess.Popen(["python3", str(BASE_DIR / "scan_worker.py")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        save_scan_meta({"pid": p.pid, "started": int(time.time()), "finished": 0, "rc": None})
+        m = load_scan_meta()
+        m.update({"pid": p.pid, "started": int(time.time()), "finished": 0, "rc": None, "error": ""})
+        save_scan_meta(m)
         return jsonify({"ok": True, "message": "Started", "pid": p.pid})
     except Exception as e:
         save_scan_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1, "error": str(e)})
@@ -756,6 +1005,23 @@ def api_scan_status():
         "rc": meta.get("rc"),
         "error": meta.get("error", ""),
     })
+
+
+@APP.post("/api/scan-cancel")
+def api_scan_cancel():
+    meta = load_scan_meta()
+    pid = int(meta.get("pid") or 0)
+    if not pid or not pid_is_running(pid):
+        return jsonify({"ok": True, "message": "Not running"})
+    try:
+        import signal
+        os.kill(pid, signal.SIGTERM)
+        meta["error"] = "Cancelled"
+        meta["rc"] = 1
+        save_scan_meta(meta)
+        return jsonify({"ok": True, "message": "Cancelled"})
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)})
 
 @APP.get("/api/scan-output")
 def api_scan_output():

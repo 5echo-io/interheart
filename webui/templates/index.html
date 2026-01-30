@@ -19,9 +19,18 @@
           <span>Last <span id="logLinesLbl">{{ log_lines }}</span> lines</span>
         </div>
         <div class="modal-actions">
-          <input id="logFilter" class="input input--sm" placeholder="filter (e.g. anl-0161)">
+          <div class="chips" id="logChips">
+            <button class="chip-btn" data-level="all" type="button">All</button>
+            <button class="chip-btn" data-level="info" type="button">INFO</button>
+            <button class="chip-btn" data-level="warn" type="button">WARN</button>
+            <button class="chip-btn" data-level="error" type="button">ERROR</button>
+          </div>
+          <input id="logFilter" class="input input--sm" placeholder="Filter… (e.g. anl-0161)">
           <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">Reload</button>
           <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">Copy</button>
+          <button class="btn btn-ghost btn-mini" id="btnDlCsv" type="button">CSV</button>
+          <button class="btn btn-ghost btn-mini" id="btnDlXlsx" type="button">XLSX</button>
+          <button class="btn btn-ghost btn-mini" id="btnDlPdf" type="button">PDF</button>
           <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">Close</button>
         </div>
       </div>
@@ -81,7 +90,10 @@
           </div>
         </div>
 
-        <!-- Live output removed (v4.8.7): progress + summary is enough -->
+        <div class="metric" id="runFeedWrap" style="display:none;">
+          <b>Live progress</b>
+          <div class="logbox logbox--compact" id="runFeed">-</div>
+        </div>
       </div>
 
       <div class="footer footer--modal">
@@ -298,9 +310,23 @@
       <div class="hint">“Last ping” / “Last response” updates live ({{ poll_seconds }}s refresh)</div>
       <div class="sep"></div>
 
+      <div class="bulkbar" id="bulkBar" style="display:none;">
+        <div class="bulkbar-left">
+          <b id="bulkCount">0 selected</b>
+        </div>
+        <div class="bulkbar-actions">
+          <button class="btn btn-ghost btn-mini" id="bulkEnable" type="button">Enable</button>
+          <button class="btn btn-ghost btn-mini" id="bulkDisable" type="button">Disable</button>
+          <button class="btn btn-ghost btn-mini" id="bulkTest" type="button">Test</button>
+          <button class="btn btn-danger btn-mini" id="bulkRemove" type="button">Remove</button>
+          <button class="btn btn-ghost btn-mini" id="bulkClear" type="button">Clear</button>
+        </div>
+      </div>
+
       <table id="targetsTable">
         <thead>
           <tr>
+            <th class="sel-col"><span class="sr-only">Select</span></th>
             <th style="width: 260px;" class="th-sort sortable" data-sort="name"><span>Name</span><span class="sort-ind" aria-hidden="true"></span></th>
             <th style="width: 160px;" class="th-sort sortable" data-sort="ip"><span>IP</span><span class="sort-ind" aria-hidden="true"></span></th>
             <th style="width: 150px;" class="th-sort sortable" data-sort="status"><span>Status</span><span class="sort-ind" aria-hidden="true"></span></th>
@@ -314,6 +340,7 @@
         {% for t in targets %}
           <tr data-name="{{ t.name }}" data-ip="{{ t.ip }}" data-status="{{ t.status }}" data-enabled="{{ t.enabled }}"
               data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
+            <td class="sel-col"><input class="row-check" type="checkbox" aria-label="Select row"></td>
             <td><code>{{ t.name }}</code></td>
             <td><code>{{ t.ip }}</code></td>
             <td>
@@ -371,6 +398,8 @@
             <span class="pulse"></span>
             <span id="scanLiveText">Scanning…</span>
           </div>
+          <button class="btn btn-ghost btn-mini" id="btnCancelScan" type="button" style="display:none;">Cancel scan</button>
+          <button class="btn btn-ghost btn-mini" id="btnScanAgain" type="button" style="display:none;">Scan again</button>
           <button class="btn btn-ghost btn-mini" id="btnCloseScan" type="button">Close</button>
         </div>
       </div>

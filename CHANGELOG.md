@@ -1,3 +1,14 @@
+## v4.9.2
+- Fixed: Table headers + sorting reworked (headers are stable again, clickable, and show sort direction).
+- Fixed: Target list rendering no longer loops/crashes (filter + sort play nicely together).
+- Network scan: Now streams nmap output live, shows current activity, and supports **Cancel scan** + **Scan again**.
+- Network scan: Found devices now include best-effort **MAC/vendor**, guessed **type** (printer/camera/switch/device) and a simple confidence score.
+- UX: Scan can keep running even if you close the modal (open again anytime to see progress/result).
+- Add target: Smart assist suggests **Name** from reverse DNS when you type an IP.
+- Logs: Added level filter chips (ERROR/WARN/INFO), “Copy filtered” stays in sync, and exports: **CSV / XLSX / PDF**.
+- Run now: Added a compact real-time “progress feed” while a run is active.
+- Bulk actions: Select multiple targets to Enable/Disable/Test/Remove in one go (bulk bar appears only when something is selected).
+
 ## v4.9.1
 - Fixed: “Run now” no longer crashes WebUI (“out is not defined”) and progress updates correctly.
 - UI: Sorting is now done by clicking table headers (Name, IP, Status, Interval, Last ping, Last response).
