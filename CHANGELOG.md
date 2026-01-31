@@ -6,6 +6,12 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.23.43 – 2026-01-31
+
+### Fixed
+- WebUI: Table sorting headers are now bound using **event delegation**, ensuring clicks always register (even when the table re-renders or you click inner header text).
+
+
 ## v5.23.42 – 2026-01-31
 
 ### Fixed

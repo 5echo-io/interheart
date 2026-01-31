@@ -269,10 +269,13 @@
   function bindSortHeaders(){
     const tableEl = $("#targetsTable");
     if (!tableEl) return;
-    $$("th.sortable", tableEl).forEach(th => {
-      if (th.dataset.bound === "1") return;
-      th.dataset.bound = "1";
-      th.addEventListener("click", () => {
+    // Use event delegation so sorting keeps working even if headers are
+    // re-rendered or inner spans are clicked.
+    if (tableEl.dataset.sortBound !== "1"){
+      tableEl.dataset.sortBound = "1";
+      tableEl.addEventListener("click", (e) => {
+        const th = e.target?.closest?.("th.sortable");
+        if (!th) return;
         const key = th.dataset.sort || "name";
         if (sortKey === key){
           sortDir = (sortDir === "asc") ? "desc" : "asc";
@@ -283,7 +286,7 @@
         updateSortIndicators();
         renderTargets(lastTargets);
       });
-    });
+    }
     updateSortIndicators();
   }
 
