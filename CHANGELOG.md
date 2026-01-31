@@ -6,6 +6,18 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.25.47 – 2026-01-31
+
+### Added
+- WebUI: Discovery debug panel now includes a **Copy** button for quickly copying the full debug output.
+
+### Fixed
+- WebUI: Discovery Start now reflects the real backend state (handles "already running" correctly and keeps UI in sync).
+- WebUI: Discovery progress updates reliably by starting fallback polling immediately (covers environments where SSE silently stalls).
+- WebUI: Prevented duplicate Start requests by guarding against re-entrant Start clicks.
+
+---
+
 ## v5.25.46 – 2026-01-31
 
 ### Fixed

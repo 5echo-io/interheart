@@ -1466,6 +1466,7 @@ function attachMenuActions(){
   const discoverDebugCard = $("#discoverDebugCard");
   const discoverDebugOut = $("#discoverDebugOut");
   const btnDiscoverDebugClose = $("#btnDiscoverDebugClose");
+  const btnDiscoverDebugCopy = $("#btnDiscoverDebugCopy");
   const discoverIface = $("#discoverIface");
   const discoverScope = $("#discoverScope");
   const discoverCustom = $("#discoverCustom");
@@ -1495,6 +1496,8 @@ function attachMenuActions(){
   let discoverDevices = [];
   let discoverSelected = null;
   let discoverRenderTimer = null;
+  let discoverStartInFlight = false;
+  let discoverGotSSE = false;
 
   // Lightweight debug logger for Discovery.
   // Keeps last ~200 entries and renders them into the debug box.
@@ -1699,6 +1702,8 @@ function attachMenuActions(){
 
   async function startDiscovery(){
     try{
+      if (discoverStartInFlight) { discoverDbg('Start ignored (already in flight)'); return; }
+      discoverStartInFlight = true;
       resetDiscoverUI();
       discoverDbg('Start clicked', {
         iface: discoverIface?.value || 'auto',
@@ -1729,11 +1734,27 @@ function attachMenuActions(){
       discoverDbg('Start response', r);
 
       if (!r || !r.ok){
-        if (discoverError){ discoverError.textContent = (r && r.message) ? r.message : 'Failed to start'; discoverError.style.display='block'; }
+        const msg = (r && r.message) ? String(r.message) : 'Failed to start';
+        // If a discovery worker is already running, treat this as "running" and attach to progress.
+        if (msg.toLowerCase().includes('already running')){
+          if (discoverStatus) discoverStatus.textContent = 'Running…';
+          if (discoverError){ discoverError.style.display='none'; discoverError.textContent=''; }
+          if (btnDiscoverStart){ btnDiscoverStart.style.display='none'; btnDiscoverStart.disabled=false; }
+          if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
+          connectDiscoveryStream();
+          if (!discoverFallbackPoll){
+            discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1000);
+            pollDiscoveryFallback();
+          }
+          discoverStartInFlight = false;
+          return;
+        }
+        if (discoverError){ discoverError.textContent = msg; discoverError.style.display='block'; }
         if (discoverStatus) discoverStatus.textContent = 'Error';
         if (btnDiscoverStart) btnDiscoverStart.disabled = false;
         // auto open debug box so the user can copy logs
         openDiscoverDebug();
+        discoverStartInFlight = false;
         return;
       }
 
@@ -1742,7 +1763,14 @@ function attachMenuActions(){
     if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
 
       connectDiscoveryStream();
+      // Start fallback polling immediately (some proxies "hang" SSE without firing error).
+      if (!discoverFallbackPoll){
+        discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1000);
+        pollDiscoveryFallback();
+      }
+      discoverStartInFlight = false;
     }catch(err){
+      discoverStartInFlight = false;
       // If anything throws before we update the UI, it can look like "Idle".
       try{
         discoverDbg('JS exception in startDiscovery', { message: String(err?.message || err), stack: String(err?.stack||'') });
@@ -1795,6 +1823,29 @@ function attachMenuActions(){
   btnDiscoverCancel?.addEventListener('click', cancelDiscovery);
   btnDiscoverDebug?.addEventListener('click', runDiscoveryDebug);
   btnDiscoverDebugClose?.addEventListener('click', closeDiscoverDebug);
+  btnDiscoverDebugCopy?.addEventListener('click', async () => {
+    try{
+      const txt = discoverDebugOut ? (discoverDebugOut.textContent || '') : '';
+      if (!txt.trim()) { discoverDbg('Copy: nothing to copy'); return; }
+      if (navigator.clipboard && navigator.clipboard.writeText){
+        await navigator.clipboard.writeText(txt);
+      }else{
+        const ta = document.createElement('textarea');
+        ta.value = txt;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      discoverDbg('Copied debug output to clipboard');
+    }catch(e){
+      discoverDbg('Copy failed', { message: String(e?.message || e) });
+      openDiscoverDebug();
+    }
+  });
+
 
   
   let discoverFallbackPoll = null;
@@ -1808,6 +1859,12 @@ function attachMenuActions(){
       if (discoverBar && st.progress){
         const cur = Number(st.progress.current||0); const tot = Number(st.progress.total||0);
         discoverBar.style.width = tot ? `${Math.round((cur/tot)*100)}%` : '0%';
+      }
+      if (st && (st.status === 'running' || st.status === 'starting' || st.status === 'cancelling')){
+        if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
+        if (btnDiscoverAgain) btnDiscoverAgain.style.display='none';
+        if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+        if (discoverStatus && st.status === 'cancelling') discoverStatus.textContent = st.message || 'Cancelling…';
       }
       if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
         if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
@@ -1823,6 +1880,8 @@ function connectDiscoveryStream(){
 
     discoverES.addEventListener('status', (ev) => {
       try{
+        discoverGotSSE = true;
+        if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         const obj = JSON.parse(ev.data);
         const st = obj.status || obj?.message || '';
         if (obj.cidrs != null && discoverSubnets) discoverSubnets.textContent = String(obj.cidrs);
@@ -1835,7 +1894,13 @@ function connectDiscoveryStream(){
           const s = (obj.scanning || (obj.progress && obj.progress.cidr) || '')
           discoverScanning.textContent = s ? String(s) : '-';
         }
-        if (obj.status === 'done' || obj.status === 'cancelled'){
+        if (obj.status === 'running' || obj.status === 'starting' || obj.status === 'cancelling'){
+          if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
+          if (btnDiscoverAgain) btnDiscoverAgain.style.display='none';
+          if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+          if (discoverStatus && obj.status === 'cancelling') discoverStatus.textContent = obj.message || 'Cancelling…';
+        }
+        if (obj.status === 'done' || obj.status === 'cancelled' || obj.status === 'error'){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
           if (btnDiscoverAgain) btnDiscoverAgain.style.display='inline-flex';
           if (btnDiscoverStart){ btnDiscoverStart.style.display='none'; btnDiscoverStart.disabled=false; }
@@ -1845,6 +1910,8 @@ function connectDiscoveryStream(){
 
     discoverES.addEventListener('device', (ev) => {
       try{
+        discoverGotSSE = true;
+        if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         const obj = JSON.parse(ev.data);
         const dev = obj.device;
         if (!dev) return;

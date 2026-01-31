@@ -505,7 +505,10 @@
         <div class="card card--soft" id="discoverDebugCard" style="display:none; margin-top:10px;">
           <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
             <b>Discovery debug</b>
-            <button class="btn btn-ghost btn-mini" id="btnDiscoverDebugClose" type="button">Close</button>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn btn-ghost btn-mini" id="btnDiscoverDebugCopy" type="button">Copy</button>
+              <button class="btn btn-ghost btn-mini" id="btnDiscoverDebugClose" type="button">Close</button>
+            </div>
           </div>
           <div class="card-body">
             <pre class="pre" id="discoverDebugOut" style="white-space:pre-wrap; word-break:break-word; max-height: 240px; overflow:auto; margin:0;">(no debug output yet)</pre>
