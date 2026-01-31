@@ -1390,7 +1390,7 @@ def api_run_result():
 
 
 # ---- API: network scan ----
-def _get_local_cidrs() -> list[str]:
+def _get_local_cidrs(prefer_iface: str | None = None) -> list[str]:
     """Best-effort list of CIDRs to scan.
 
     Strategy:
@@ -1405,8 +1405,11 @@ def _get_local_cidrs() -> list[str]:
     try:
         j = subprocess.check_output(["ip", "-j", "addr", "show"], text=True)
         data = json.loads(j)
+        pref = (prefer_iface or '').strip().lower()
         for itf in data:
             ifname = str(itf.get("ifname") or itf.get("name") or "").strip().lower()
+            if pref and ifname != pref:
+                continue
             for a in itf.get("addr_info", []) or []:
                 if a.get("family") != "inet":
                     continue
@@ -2140,6 +2143,9 @@ def _discover_build_cidrs(opts: dict) -> list[str]:
     We try hard to scan the same networks the box can already reach (including VLANs).
     """
     scope = (opts.get('scope') or 'auto').lower()
+    prefer_iface = (opts.get('iface') or '').strip().lower()
+    if prefer_iface in ('', 'auto', 'default'):
+        prefer_iface = ''
     cidrs: list[str] = []
 
     # Scope values supported by the WebUI:
@@ -2163,7 +2169,7 @@ def _discover_build_cidrs(opts: dict) -> list[str]:
             cidrs += _gateway_first_cidrs(gw, series=scope)
         elif scope in ('auto','local','all'):
             # Reachable routed nets + targets (covers VLAN routes)
-            cidrs += _get_local_cidrs()
+            cidrs += _get_local_cidrs(prefer_iface or None)
             cidrs += _cidrs_from_existing_targets()
 
     # de-dup
@@ -2208,6 +2214,9 @@ def _nmap_args_for_profile(profile: str) -> list[str]:
 def _discover_worker():
     meta = load_discovery_meta() or {}
     opts = meta.get('opts') or {}
+    prefer_iface = str(opts.get('iface') or '').strip()
+    if prefer_iface.lower() in ('', 'auto', 'default'):
+        prefer_iface = ''
     cancel_path = STATE_DIR / 'discovery_cancel'
 
     # reset output/events
@@ -2269,7 +2278,11 @@ def _discover_worker():
             'progress': {'current': idx+1, 'total': len(cidrs), 'cidr': cidr}
         })
 
-        args = ['nmap','-sn','-n'] + _nmap_args_for_profile(meta.get('profile')) + [cidr]
+        args = ['nmap','-sn','-n']
+        if prefer_iface:
+            # Force interface selection to avoid VPN/overlay interfaces becoming the default.
+            args += ['-e', prefer_iface]
+        args += _nmap_args_for_profile(meta.get('profile')) + [cidr]
         # stream normal output
         try:
             p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -2372,6 +2385,7 @@ def api_discover_start():
     opts = {
         'scope': data.get('scope') or 'auto',
         'custom': data.get('custom') or '',
+        'iface': data.get('iface') or 'auto',
         'profile': data.get('profile') or 'safe',
         'cap': data.get('cap') or 2048,
     }
@@ -2425,6 +2439,54 @@ def api_discover_cancel():
     meta['status'] = 'cancelling'
     save_discovery_meta(meta)
     return jsonify({'ok': True, 'message':'Cancelling'})
+
+
+@APP.get('/api/netifs')
+def api_netifs():
+    """Return a list of local network interfaces.
+
+    Used by the Discovery UI so the user can force nmap to use a specific interface
+    (e.g. eth0) and avoid VPN/overlay interfaces.
+    """
+    interfaces = []
+    try:
+        j = subprocess.check_output(["ip", "-j", "addr", "show"], text=True)
+        data = json.loads(j)
+        for itf in data:
+            name = str(itf.get("ifname") or itf.get("name") or "").strip()
+            if not name or name == "lo":
+                continue
+            low = name.lower()
+            addrs = []
+            for a in (itf.get("addr_info") or []):
+                if a.get("family") != "inet":
+                    continue
+                local = a.get("local")
+                pref = a.get("prefixlen")
+                if not local or pref is None:
+                    continue
+                ip = str(local)
+                if ip.startswith("127.") or ip.startswith("169.254."):
+                    continue
+                addrs.append(f"{ip}/{pref}")
+            if not addrs:
+                # still show interface name, but without meta
+                interfaces.append({"name": name, "meta": ""})
+                continue
+            meta = ", ".join(addrs[:2])
+            if len(addrs) > 2:
+                meta += f" (+{len(addrs)-2})"
+            interfaces.append({"name": name, "meta": meta})
+    except Exception:
+        interfaces = []
+
+    # Sort: prefer non-overlay interfaces first for nicer UX
+    def is_overlay(n: str) -> bool:
+        n = (n or '').lower()
+        return any(x in n for x in ("wt0", "netbird", "tailscale", "wg", "wireguard", "tun", "tap"))
+
+    interfaces.sort(key=lambda x: (is_overlay(x.get("name")), x.get("name") or ""))
+    return jsonify({"ok": True, "interfaces": interfaces})
 
 
 def _sse_format(event: str, data: str, event_id: int | None = None) -> str:

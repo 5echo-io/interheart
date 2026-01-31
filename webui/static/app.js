@@ -193,10 +193,12 @@
 
   // ---- Filter targets ----
   const filterInput = $("#filterInput");
-  const table = $("#targetsTable");
-  // ---- Sorting state (default: Ping asc) ----
-  // "Ping" here maps to the "Last ping" column.
-  let sortKey = "last_ping";
+
+  // ---- Sorting state (default: IP asc) ----
+  // IMPORTANT: Don't cache #targetsTable here.
+  // The script can load before the table exists; caching would keep it null,
+  // and sorting would silently fail.
+  let sortKey = "ip";
   let sortDir = "asc"; // asc|desc
 
   function ipKey(ip){
@@ -249,7 +251,9 @@
   }
 
   function updateSortIndicators(){
-    $$("th.sortable", table).forEach(th => {
+    const tableEl = $("#targetsTable");
+    if (!tableEl) return;
+    $$("th.sortable", tableEl).forEach(th => {
       const key = th.dataset.sort || "";
       const ind = th.querySelector(".sort-ind");
       th.classList.toggle("is-sorted", key === sortKey);
@@ -263,7 +267,9 @@
   }
 
   function bindSortHeaders(){
-    $$("th.sortable", table).forEach(th => {
+    const tableEl = $("#targetsTable");
+    if (!tableEl) return;
+    $$("th.sortable", tableEl).forEach(th => {
       if (th.dataset.bound === "1") return;
       th.dataset.bound = "1";
       th.addEventListener("click", () => {
@@ -272,7 +278,7 @@
           sortDir = (sortDir === "asc") ? "desc" : "asc";
         } else {
           sortKey = key;
-          sortDir = (key === "name" || key === "status") ? "asc" : "asc";
+          sortDir = "asc";
         }
         updateSortIndicators();
         renderTargets(lastTargets);
@@ -865,12 +871,12 @@ function renderSnapshotsInner(snaps){
                 <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">⋯</button>
                 <div class="menu-dd" role="menu">
                   <button class="menu-item" data-action="info" type="button"><span class="mi-ic" aria-hidden="true">${ic.info}</span><span>Information</span></button>
+                  <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">${ic.test}</span><span>Test</span></button>
                   <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">${ic.edit}</span><span>Edit</span></button>
                   <div class="menu-sep"></div>
                   <button class="menu-item" data-action="enable" type="button" style="display:${enabled ? 'none' : 'flex'}"><span class="mi-ic" aria-hidden="true">${ic.enable}</span><span>Enable</span></button>
                   <button class="menu-item" data-action="disable" type="button" style="display:${enabled ? 'flex' : 'none'}"><span class="mi-ic" aria-hidden="true">${ic.disable}</span><span>Disable</span></button>
                   <div class="menu-sep"></div>
-                  <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">${ic.test}</span><span>Test</span></button>
                   <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">${ic.remove}</span><span>Delete</span></button>
                 </div>
               </div>
@@ -1243,10 +1249,7 @@ function attachMenuActions(){
   const runBar = $("#runBar");
   const runNowLine = $("#runNowLine");
   const runDoneLine = $("#runDoneLine");
-  const runFeedWrap = $("#runFeedWrap");
-  const runFeed = $("#runFeed");
-  const btnRunDetails = $("#btnRunDetails");
-  let runShowDetails = false;
+  // Details feed removed (it was unreliable and confusing)
 
   let runPoll = null;
   let runDueExpected = 0;
@@ -1257,9 +1260,6 @@ function attachMenuActions(){
   }
 
   function setRunInitial(){
-    runShowDetails = false;
-    if (runFeedWrap) runFeedWrap.style.display = "none";
-    if (btnRunDetails) btnRunDetails.textContent = "Show details";
     runTitleMeta.textContent = "running…";
     runLive.style.display = "inline-flex";
     runLiveText.textContent = "Running…";
@@ -1276,12 +1276,6 @@ function attachMenuActions(){
     setBar(0, 0);
   }
 
-btnRunDetails?.addEventListener("click", () => {
-  runShowDetails = !runShowDetails;
-  if (runFeedWrap) runFeedWrap.style.display = runShowDetails ? "block" : "none";
-  if (btnRunDetails) btnRunDetails.textContent = runShowDetails ? "Hide details" : "Show details";
-});
-
 
   async function pollRun(){
     // Use output tail only for progress counting (no live output UI)
@@ -1296,21 +1290,14 @@ btnRunDetails?.addEventListener("click", () => {
       }
     }catch(e){ /* ignore */ }
 
-    // Live feed (last lines)
-    if (runFeed && runFeedWrap){
+    // Update the top "what's happening" line from the output tail
+    try{
       const lines = (outText || "").split("\n").filter(Boolean);
-      const tail = lines.slice(-12);
-      if (tail.length){
-        if (runShowDetails){
-          runFeedWrap.style.display = "block";
-          runFeed.innerHTML = tail.map(l => `<div class=\"log-line\">${escapeHtml(l)}</div>`).join("");
-        }
-        runNowLine.textContent = tail[tail.length-1];
+      const tail = lines.slice(-1);
+      if (tail.length && runNowLine){
+        runNowLine.textContent = tail[0];
       }
-      if (!runShowDetails){
-        runFeedWrap.style.display = "none";
-      }
-    }
+    }catch(_){ /* ignore */ }
 
     // Progress: count completed targets (server-side)
     const done = Number(outResp?.done ?? 0);
@@ -1396,6 +1383,7 @@ btnRunDetails?.addEventListener("click", () => {
   const btnDiscoverStart = $("#btnDiscoverStart");
   const btnDiscoverCancel = $("#btnDiscoverCancel");
   const btnDiscoverAgain = $("#btnDiscoverAgain");
+  const discoverIface = $("#discoverIface");
   const discoverScope = $("#discoverScope");
   const discoverCustom = $("#discoverCustom");
   const discoverProfile = $("#discoverProfile");
@@ -1435,12 +1423,41 @@ btnRunDetails?.addEventListener("click", () => {
 
   function openDiscover(){
     if (!discoverPanel || !discoverBackdrop) return;
+    // Load interface list on open (helps when VPN/overlay interfaces are present)
+    try{ loadDiscoverIfaces(); }catch(_){ }
     discoverPanel.classList.remove('is-hidden');
     discoverBackdrop.classList.remove('is-hidden');
     requestAnimationFrame(() => {
       discoverPanel.classList.add('is-open');
       discoverBackdrop.classList.add('is-open');
     });
+  }
+
+  async function loadDiscoverIfaces(){
+    if (!discoverIface) return;
+    let res = null;
+    try{
+      res = await apiGet('/api/netifs');
+    }catch(e){
+      res = null;
+    }
+
+    const keep = String(discoverIface.value || 'auto');
+    const items = Array.isArray(res?.interfaces) ? res.interfaces : [];
+    const opts = [];
+    opts.push({ value: 'auto', label: 'Interface: Auto' });
+    items.forEach(it => {
+      const name = String(it.name || '').trim();
+      if (!name) return;
+      const meta = String(it.meta || '').trim();
+      const label = meta ? `${name} • ${meta}` : name;
+      opts.push({ value: name, label });
+    });
+
+    discoverIface.innerHTML = opts.map(o => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join('');
+    // restore selection if possible
+    const exists = opts.some(o => o.value === keep);
+    discoverIface.value = exists ? keep : 'auto';
   }
   function closeDiscover(){
     if (!discoverPanel || !discoverBackdrop) return;
@@ -1583,6 +1600,7 @@ btnRunDetails?.addEventListener("click", () => {
     const payload = {
       scope,
       custom,
+      iface: discoverIface?.value || 'auto',
       profile: discoverProfile?.value || 'safe',
       cap: 4096,
     };

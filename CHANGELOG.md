@@ -6,6 +6,20 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.23.42 – 2026-01-31
+
+### Fixed
+- WebUI: Table sorting now works reliably on first load (no more silent failure when the script loads before the table exists).
+- WebUI: Default sort is now **IP (ascending)**.
+- Discovery: The selected interface is now respected end-to-end (CIDR selection + nmap execution), preventing scans from accidentally running via VPN/overlay routes.
+
+### Added
+- WebUI: Discovery now includes an **Interface** dropdown (Auto / eth0 / wlan0 / etc.), populated from the server.
+
+### Changed
+- WebUI: Actions menu order: **Test** now appears above **Edit**.
+- WebUI: “Run now” modal: removed the **Details** section (it was unreliable and confusing).
+
 ## v5.20.39 – 2026-01-31
 
 ### Fixed
