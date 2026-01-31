@@ -729,3 +729,42 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 .bar .tick.up{ background: rgba(46, 204, 113, .85); }
 .bar .tick.hb{ background: rgba(241, 196, 15, .85); }
 .bar .tick.down{ background: rgba(231, 76, 60, .85); }
+
+/* Input: subtle clear button */
+.input-with-clear{
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+}
+.input-with-clear input{
+  width: 100%;
+  padding-right: 30px;
+}
+.input-with-clear--sm{
+  width: auto;
+}
+.input-with-clear--sm input{
+  width: auto;
+  padding-right: 28px;
+}
+.btn-clear{
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--b3);
+  background: var(--bg);
+  color: var(--t2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  opacity: .55;
+}
+.btn-clear:hover{ opacity: .9; }

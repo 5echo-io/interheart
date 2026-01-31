@@ -25,7 +25,10 @@
             <button class="chip-btn" data-level="warn" type="button">WARN</button>
             <button class="chip-btn" data-level="error" type="button">ERROR</button>
           </div>
-          <input id="logFilter" class="input input--sm" placeholder="Filter… (e.g. anl-0161)">
+          <div class="input-with-clear input-with-clear--sm">
+            <input id="logFilter" class="input input--sm" placeholder="Filter… (e.g. anl-0161)">
+            <button class="btn-clear" type="button" data-clear-for="logFilter" aria-label="Clear filter">×</button>
+          </div>
           <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">Reload</button>
           <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">Copy</button>
           <div class="menu" id="logDlMenu">
@@ -311,7 +314,10 @@
       </div>
 
       <div class="right-actions">
-        <input id="filterInput" class="input input--sm" placeholder="Filter targets… (name / ip / status)">
+        <div class="input-with-clear input-with-clear--sm">
+          <input id="filterInput" class="input input--sm" placeholder="Filter targets… (name / ip / status)">
+          <button class="btn-clear" type="button" data-clear-for="filterInput" aria-label="Clear filter">×</button>
+        </div>
         <button class="btn btn-ghost btn-mini" id="openAdd" type="button">Add target</button>
         <button class="btn btn-ghost btn-mini" id="btnDiscover" type="button">Discover</button>
         <button class="btn btn-primary btn-mini" id="btnRunNow" type="button">Run now</button>
@@ -448,17 +454,21 @@
 
   
 
-  <div class="sidepanel-backdrop is-hidden" id="discoverBackdrop"></div>
-  <div class="sidepanel is-hidden" id="discoverPanel" aria-label="Network discovery">
-    <div class="sidepanel-head">
-      <div class="sidepanel-title">
-        <b>Network discovery</b>
-        <span id="discoverMeta">nmap • safe scan</span>
+  <!-- Network discovery (modal) -->
+  <div class="modal" id="discoverModal" aria-hidden="true">
+    <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-label="Network discovery">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Network discovery</b>
+          <span class="hint" id="discoverMeta">nmap • safe scan</span>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost btn-mini" id="btnCloseDiscover" type="button">Close</button>
+        </div>
       </div>
-      <button class="btn btn-ghost btn-mini" id="btnCloseDiscover" type="button">Close</button>
-    </div>
 
-    <div class="sidepanel-actions">
+      <div class="modal-body">
+      <div class="sidepanel-actions" style="padding:0; margin-bottom:10px;">
       <select class="input input--sm" id="discoverIface" aria-label="Interface">
         <option value="auto" selected>Interface: Auto</option>
       </select>
@@ -470,23 +480,22 @@
         <option value="all">RFC1918: All (slow)</option>
         <option value="custom">Custom CIDR</option>
       </select>
-      <select class="input input--sm" id="discoverProfile" aria-label="Profile">
-        <option value="safe" selected>Safe</option>
-        <option value="normal">Normal</option>
-        <option value="fast">Fast</option>
-      </select>
+        <!-- Profile selector removed: safe scan only -->
       <input class="input input--sm" id="discoverCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24" style="display:none; min-width: 240px;" />
       <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Start</button>
       <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
       <button class="btn btn-ghost btn-mini" id="btnDiscoverAgain" type="button" style="display:none;" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Search again</button>
       <button class="btn btn-ghost btn-mini" id="btnDiscoverDebug" type="button" title="Run discovery diagnostics">Debug</button>
-      <label class="toggle" style="margin-left:auto;">
-        <input type="checkbox" id="discoverOnlyNew" />
-        <span>Show only new</span>
-      </label>
+        <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
+          <button class="btn btn-ghost btn-mini" id="btnDiscoverShowAll" type="button">All results</button>
+          <label class="toggle">
+            <input type="checkbox" id="discoverOnlyNew" checked />
+            <span>New devices</span>
+          </label>
+        </div>
     </div>
 
-    <div class="sidepanel-body">
+      <div class="sidepanel-body" style="padding:0;">
       <div class="card card--soft">
         <div class="row">
           <div class="kpi">
@@ -517,7 +526,10 @@
       </div>
 
       <div class="field" style="margin-top:-2px;">
-        <input id="discoverFilter" class="input" placeholder="Filter devices… (name / ip / mac / vendor)">
+        <div class="input-with-clear">
+          <input id="discoverFilter" class="input" placeholder="Filter devices… (name / ip / mac / vendor)">
+          <button class="btn-clear" type="button" data-clear-for="discoverFilter" aria-label="Clear filter">×</button>
+        </div>
       </div>
 
       <div class="chips" id="discoverLegend">
@@ -576,6 +588,8 @@
 
       <div class="logbox logbox--compact" id="discoverLog" style="display:none;"></div>
 
+      </div>
+      </div>
     </div>
   </div>
 <script>

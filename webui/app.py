@@ -2402,9 +2402,19 @@ def api_discover_start():
         worker_path = BASE_DIR / 'discovery_worker.py'
         if not worker_path.exists():
             raise FileNotFoundError(f"discovery worker missing: {worker_path}")
-        p = subprocess.Popen([sys.executable, str(worker_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Start the worker in its own process group so we can cancel fast (killpg)
+        p = subprocess.Popen(
+            [sys.executable, str(worker_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid,
+        )
         meta = load_discovery_meta() or {}
         meta['pid'] = int(p.pid)
+        try:
+            meta['pgid'] = int(os.getpgid(int(p.pid)))
+        except Exception:
+            meta['pgid'] = 0
         meta['status'] = 'running'
         save_discovery_meta(meta)
         return jsonify({'ok': True, 'message':'Discovery started'})
@@ -2554,13 +2564,29 @@ def api_discover_debug():
 
 @APP.post('/api/discover-cancel')
 def api_discover_cancel():
+    # Mark cancel flag for the worker loop
     try:
         (STATE_DIR / 'discovery_cancel').write_text('1', encoding='utf-8')
     except Exception:
         pass
+
     meta = load_discovery_meta() or {}
     meta['status'] = 'cancelling'
     save_discovery_meta(meta)
+
+    # Best-effort fast cancel: terminate the worker process group.
+    # This avoids waiting for a long-running nmap invocation to return.
+    try:
+        import signal
+        pid = int(meta.get('pid') or 0)
+        pgid = int(meta.get('pgid') or 0)
+        if pgid:
+            os.killpg(pgid, signal.SIGTERM)
+        elif pid:
+            os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+
     return jsonify({'ok': True, 'message':'Cancelling'})
 
 

@@ -6,6 +6,22 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.31.50 – 2026-01-31
+
+### Improved
+- WebUI: Discovery is now shown in a **modal** (consistent with other dialogs) for cleaner UI/UX.
+- WebUI: Discovery defaults to **New devices** view, with a quick **Show all** button.
+- WebUI: Discovery scan settings simplified to a single **Safe** mode, and default scan cap lowered to reduce server load.
+- WebUI: Added subtle **Clear** buttons in filter inputs for faster cleanup.
+- WebUI: Actions menu ordering adjusted so **Edit** sits directly above **Delete**.
+
+### Fixed
+- WebUI: Discovery no longer shows duplicate device rows (deduped by IP).
+- WebUI: Discovery progress and counters (Found/Subnets) stay in sync with real results.
+- Backend: Discovery cancel is now much faster (kills the discovery worker process group).
+
+---
+
 ## v5.25.47 – 2026-01-31
 
 ### Added

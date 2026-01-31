@@ -413,6 +413,19 @@
   bindSmartAssist(addIp, addName);
 
   openAdd?.addEventListener("click", () => show(addModal));
+
+  // Subtle clear buttons for search/filter inputs
+  document.querySelectorAll('[data-clear-for]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-clear-for');
+      if (!id) return;
+      const inp = document.getElementById(id);
+      if (!inp) return;
+      inp.value = '';
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      inp.focus();
+    });
+  });
   addCancel?.addEventListener("click", () => hide(addModal));
   addModal?.addEventListener("click", (e) => { if (e.target === addModal) hide(addModal); });
 
@@ -951,11 +964,11 @@ function renderSnapshotsInner(snaps){
                 <div class="menu-dd" role="menu">
                   <button class="menu-item" data-action="info" type="button"><span class="mi-ic" aria-hidden="true">${ic.info}</span><span>Information</span></button>
                   <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">${ic.test}</span><span>Test</span></button>
-                  <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">${ic.edit}</span><span>Edit</span></button>
                   <div class="menu-sep"></div>
                   <button class="menu-item" data-action="enable" type="button" style="display:${enabled ? 'none' : 'flex'}"><span class="mi-ic" aria-hidden="true">${ic.enable}</span><span>Enable</span></button>
                   <button class="menu-item" data-action="disable" type="button" style="display:${enabled ? 'flex' : 'none'}"><span class="mi-ic" aria-hidden="true">${ic.disable}</span><span>Disable</span></button>
                   <div class="menu-sep"></div>
+                  <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">${ic.edit}</span><span>Edit</span></button>
                   <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">${ic.remove}</span><span>Delete</span></button>
                 </div>
               </div>
@@ -1454,10 +1467,9 @@ function attachMenuActions(){
 
   
 
-  // ---- Network discovery (side panel, nmap SSE) ----
+  // ---- Network discovery (modal, nmap SSE) ----
   const discoverBtn = $("#btnDiscover");
-  const discoverPanel = $("#discoverPanel");
-  const discoverBackdrop = $("#discoverBackdrop");
+  const discoverModal = $("#discoverModal");
   const btnCloseDiscover = $("#btnCloseDiscover");
   const btnDiscoverStart = $("#btnDiscoverStart");
   const btnDiscoverCancel = $("#btnDiscoverCancel");
@@ -1470,8 +1482,8 @@ function attachMenuActions(){
   const discoverIface = $("#discoverIface");
   const discoverScope = $("#discoverScope");
   const discoverCustom = $("#discoverCustom");
-  const discoverProfile = $("#discoverProfile");
   const discoverOnlyNew = $("#discoverOnlyNew");
+  const btnDiscoverShowAll = $("#btnDiscoverShowAll");
   const discoverFilter = $("#discoverFilter");
   const discoverList = $("#discoverList");
   const discoverListEmpty = $("#discoverListEmpty");
@@ -1494,6 +1506,7 @@ function attachMenuActions(){
 
   let discoverES = null;
   let discoverDevices = [];
+  let discoverDeviceMap = new Map(); // key: ip
   let discoverSelected = null;
   let discoverRenderTimer = null;
   let discoverStartInFlight = false;
@@ -1532,15 +1545,20 @@ function attachMenuActions(){
   }
 
   function openDiscover(){
-    if (!discoverPanel || !discoverBackdrop) return;
+    if (!discoverModal) return;
     // Load interface list on open (helps when VPN/overlay interfaces are present)
     try{ loadDiscoverIfaces(); }catch(_){ }
-    discoverPanel.classList.remove('is-hidden');
-    discoverBackdrop.classList.remove('is-hidden');
-    requestAnimationFrame(() => {
-      discoverPanel.classList.add('is-open');
-      discoverBackdrop.classList.add('is-open');
-    });
+    show(discoverModal);
+    // Default: show only new devices
+    try{ if (discoverOnlyNew) discoverOnlyNew.checked = true; }catch(_){ }
+    // Sync UI with backend state immediately (handles "already running" cases)
+    try{
+      pollDiscoveryFallback();
+      connectDiscoveryStream();
+      if (!discoverFallbackPoll){
+        discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1200);
+      }
+    }catch(_){ }
   }
 
   async function loadDiscoverIfaces(){
@@ -1570,18 +1588,17 @@ function attachMenuActions(){
     discoverIface.value = exists ? keep : 'auto';
   }
   function closeDiscover(){
-    if (!discoverPanel || !discoverBackdrop) return;
-    discoverPanel.classList.remove('is-open');
-    discoverBackdrop.classList.remove('is-open');
-    setTimeout(() => {
-      if (!discoverPanel.classList.contains('is-open')) discoverPanel.classList.add('is-hidden');
-      if (!discoverBackdrop.classList.contains('is-open')) discoverBackdrop.classList.add('is-hidden');
-    }, 190);
+    if (!discoverModal) return;
+    hide(discoverModal);
   }
 
   discoverBtn?.addEventListener('click', openDiscover);
   btnCloseDiscover?.addEventListener('click', closeDiscover);
-  discoverBackdrop?.addEventListener('click', closeDiscover);
+  discoverModal?.addEventListener('click', (e) => { if (e.target === discoverModal) closeDiscover(); });
+  btnDiscoverShowAll?.addEventListener('click', () => {
+    if (discoverOnlyNew) discoverOnlyNew.checked = false;
+    renderDiscoverList();
+  });
 
   function updateDiscoverScopeUI(){
     const v = String(discoverScope?.value || 'auto');
@@ -1590,8 +1607,6 @@ function attachMenuActions(){
     }
   }
 
-  discoverScope?.addEventListener('change', updateDiscoverScopeUI);
-  updateDiscoverScopeUI();
   discoverScope?.addEventListener('change', updateDiscoverScopeUI);
   updateDiscoverScopeUI();
 
@@ -1630,7 +1645,11 @@ function attachMenuActions(){
     discoverList.innerHTML = '';
     let shown = 0;
 
-    discoverDevices.forEach(dev => {
+    // Always render a deduped view (keyed by IP)
+    const list = Array.from(discoverDeviceMap.values());
+    if (discoverFound) discoverFound.textContent = String(list.length);
+
+    list.forEach(dev => {
       const ip = String(dev.ip||'');
       if (!ip) return;
       const already = !!dev.already_added || existingIps.has(ip);
@@ -1686,6 +1705,7 @@ function attachMenuActions(){
 
   function resetDiscoverUI(){
     discoverDevices = [];
+    discoverDeviceMap = new Map();
     discoverSelected = null;
     if (discoverAddCard) discoverAddCard.style.display = 'none';
     if (discoverError){ discoverError.style.display='none'; discoverError.textContent=''; }
@@ -1694,6 +1714,7 @@ function attachMenuActions(){
     if (discoverScanning) discoverScanning.textContent = '-';
     if (discoverSubnets) discoverSubnets.textContent = '-';
     if (discoverFound) discoverFound.textContent = '0';
+    try{ if (discoverOnlyNew) discoverOnlyNew.checked = true; }catch(_){ }
     if (btnDiscoverAgain) btnDiscoverAgain.style.display = 'none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display = 'none';
     if (btnDiscoverStart) btnDiscoverStart.style.display = 'inline-flex';
@@ -1708,7 +1729,7 @@ function attachMenuActions(){
       discoverDbg('Start clicked', {
         iface: discoverIface?.value || 'auto',
         scope: discoverScope?.value || 'auto',
-        profile: discoverProfile?.value || 'safe'
+        profile: 'safe'
       });
       if (discoverStatus) discoverStatus.textContent = 'Starting…';
       if (discoverScanning) discoverScanning.textContent = '-';
@@ -1720,8 +1741,9 @@ function attachMenuActions(){
       scope,
       custom,
       iface: discoverIface?.value || 'auto',
-      profile: discoverProfile?.value || 'safe',
-      cap: 4096,
+      profile: 'safe',
+      // Keep server load down by default. The backend will also dedupe/limit.
+      cap: 1024,
     };
 
       let r = null;
@@ -1743,7 +1765,7 @@ function attachMenuActions(){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
           connectDiscoveryStream();
           if (!discoverFallbackPoll){
-            discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1000);
+            discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1200);
             pollDiscoveryFallback();
           }
           discoverStartInFlight = false;
@@ -1765,7 +1787,7 @@ function attachMenuActions(){
       connectDiscoveryStream();
       // Start fallback polling immediately (some proxies "hang" SSE without firing error).
       if (!discoverFallbackPoll){
-        discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1000);
+        discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1200);
         pollDiscoveryFallback();
       }
       discoverStartInFlight = false;
@@ -1881,7 +1903,6 @@ function connectDiscoveryStream(){
     discoverES.addEventListener('status', (ev) => {
       try{
         discoverGotSSE = true;
-        if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         const obj = JSON.parse(ev.data);
         const st = obj.status || obj?.message || '';
         if (obj.cidrs != null && discoverSubnets) discoverSubnets.textContent = String(obj.cidrs);
@@ -1911,12 +1932,21 @@ function connectDiscoveryStream(){
     discoverES.addEventListener('device', (ev) => {
       try{
         discoverGotSSE = true;
-        if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         const obj = JSON.parse(ev.data);
         const dev = obj.device;
         if (!dev) return;
-        discoverDevices.push(dev);
-        if (discoverFound) discoverFound.textContent = String(discoverDevices.length);
+        const ip = String(dev.ip||'').trim();
+        if (!ip) return;
+        // Deduplicate: update existing record if we already saw this IP.
+        const prev = discoverDeviceMap.get(ip) || null;
+        if (prev){
+          discoverDeviceMap.set(ip, Object.assign({}, prev, dev));
+        } else {
+          discoverDeviceMap.set(ip, dev);
+        }
+        // Keep array for any legacy callers, but render uses the map.
+        discoverDevices = Array.from(discoverDeviceMap.values());
+        if (discoverFound) discoverFound.textContent = String(discoverDeviceMap.size);
         scheduleDiscoverRender();
       }catch(e){}
     });
@@ -1924,7 +1954,7 @@ function connectDiscoveryStream(){
     discoverES.addEventListener('error', (ev) => {
       // Some proxies block SSE. Fall back to polling status so the user still sees progress.
       if (!discoverFallbackPoll){
-        discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1000);
+        discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1200);
         pollDiscoveryFallback();
       }
     });
