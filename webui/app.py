@@ -378,6 +378,47 @@ def merged_targets_safe():
     # Prefer DB-backed state
     ok, rows = db_read_targets(DB_PATH)
     if ok and rows is not None:
+        # Edge case:
+        # The DB can exist but contain 0 rows in `targets` (e.g. state.db created,
+        # but targets were not imported/populated yet). In that situation the UI
+        # must not wipe the table on first load; we fall back to CLI if CLI has
+        # targets.
+        if len(rows) == 0:
+            try:
+                rc_list, list_out = run_cmd(["list"])
+                if rc_list == 0:
+                    cli_targets = parse_list_targets(list_out)
+                    if cli_targets:
+                        rc_st, st_out = run_cmd(["status"])
+                        state = parse_status(st_out) if rc_st == 0 else {}
+                        merged = []
+                        for t in cli_targets:
+                            st = state.get(t["name"], {})
+                            status = st.get("status", "unknown")
+                            if int(t.get("enabled") or 0) == 1 and str(status).lower() == "disabled":
+                                status = "starting"
+                            last_ping_epoch = st.get("last_ping_epoch", 0)
+                            last_sent_epoch = st.get("last_sent_epoch", 0)
+                            merged.append({
+                                "name": t["name"],
+                                "ip": t["ip"],
+                                "interval": t["interval"],
+                                "status": status,
+                                "enabled": int(t.get("enabled") or 0),
+                                "last_ping_human": human_ts(last_ping_epoch),
+                                "last_response_human": human_ts(last_sent_epoch),
+                                "last_ping_epoch": last_ping_epoch,
+                                "last_response_epoch": last_sent_epoch,
+                                "last_rtt_ms": int(st.get("last_rtt_ms", -1) or -1),
+                                "endpoint_masked": t.get("endpoint_masked") or "-",
+                                "snapshots": t.get("snapshots") or [],
+                            })
+                        _LAST_STATE_CACHE = {"updated": int(time.time()), "targets": merged}
+                        return True, merged
+            except Exception:
+                # If CLI fallback fails, continue with DB rows (empty)
+                pass
+
         _LAST_STATE_CACHE = {"updated": int(time.time()), "targets": rows}
         return True, rows
 

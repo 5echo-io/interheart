@@ -1,3 +1,7 @@
+## 4.10.16 - 2026-01-31
+
+- Fix: Prevent WebUI from wiping the targets table on first load when `state.db` exists but has an empty `targets` table (falls back to CLI if CLI has targets).
+
 ## 4.10.15 - 2026-01-31
 
 - Fix: WebUI table now populates immediately on page load even before the first-ever run (fallback to CLI when state DB is missing).
