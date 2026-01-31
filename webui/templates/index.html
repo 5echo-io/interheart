@@ -446,7 +446,7 @@
         </div>
 
         <div class="scan-actions">
-          <button class="btn btn-primary btn-mini" id="btnScanNow" type="button">Scan now</button>
+          <button class="btn btn-primary btn-mini" id="btnScanNow" type="button">Start search</button>
           <button class="btn btn-ghost btn-mini" id="btnAbortScan" type="button" style="display:none;">Abort</button>
         </div>
 
@@ -467,17 +467,18 @@
           </div>
           <div class="progress"><div class="progress-bar" id="scanBar" style="width:0%"></div></div>
           <div class="hint" id="scanStatusLine">-</div>
+          <div class="alert alert--error" id="scanError" style="display:none;"></div>
         </div>
 
         <div class="logbox logbox--compact" id="scanOutput">Press “Scan now” to start…</div>
 
         <div class="card" style="margin-top:14px;">
           <div class="card-head">
-            <b>New devices</b>
+            <b>Devices found</b>
             <span class="hint">Click a device to add it as a target</span>
           </div>
           <div class="card-body">
-            <div class="scan-list" id="scanListEmpty">No new devices yet.</div>
+            <div class="scan-list" id="scanListEmpty">No devices found yet.</div>
             <div class="scan-list" id="scanList"></div>
           </div>
         </div>

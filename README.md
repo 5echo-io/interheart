@@ -46,7 +46,7 @@ You decide what the endpoint means per target.
 - Clear statuses: **OK**, **STARTING..**, **HEARTBEAT FAILED**, **NOT RESPONDING**, **DISABLED**
 - Target actions: **Enable/Disable/Test/Edit/Delete**
 - Bulk actions for faster ops
-- Network scan to discover devices on your local subnets (uses `nmap` automatically if installed)
+- Network scan to discover devices on your local subnets (requires `nmap`)
 - Logs viewer with filters and export (CSV/XLSX/PDF)
 
 ---

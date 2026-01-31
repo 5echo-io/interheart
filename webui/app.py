@@ -15,6 +15,7 @@ import threading
 import concurrent.futures
 from io import BytesIO
 from pathlib import Path
+import sqlite3
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -119,6 +120,19 @@ def _debug_log(msg: str, force: bool = False):
 
 def die_json(msg: str, code: int = 500):
     return jsonify({"ok": False, "message": msg}), code
+
+
+@APP.errorhandler(Exception)
+def _handle_all_errors(err):
+    """Return JSON for API routes so the frontend doesn't explode on HTML errors."""
+    try:
+        if request and request.path and request.path.startswith("/api/"):
+            code = getattr(err, "code", 500)
+            return jsonify({"ok": False, "message": str(err)}), code
+    except Exception:
+        pass
+    # fall back to default Flask handler
+    raise err
 
 def run_cmd(args):
     cmd = [CLI] + args
@@ -1364,13 +1378,23 @@ def _get_local_cidrs() -> list[str]:
                 # Skip loopback + link-local
                 if str(local).startswith("127.") or str(local).startswith("169.254."):
                     continue
-                cidrs.append(f"{local}/{prefix}")
+                # Some setups assign /32 to interfaces (point-to-point, overlays). A /32 scan is useless,
+                # so we broaden it to /24 for scanning purposes.
+                try:
+                    pref_i = int(prefix)
+                except Exception:
+                    pref_i = prefix
+                if isinstance(pref_i, int) and pref_i >= 29:
+                    cidrs.append(str(ipaddress.ip_network(f"{local}/24", strict=False)))
+                else:
+                    cidrs.append(f"{local}/{prefix}")
     except Exception:
         pass
 
     # 2) Routed private networks (helps scanning across VLANs)
     try:
-        j = subprocess.check_output(["ip", "-j", "route", "show"], text=True)
+        # include routes from non-main tables too (e.g. policy routing, overlay tables)
+        j = subprocess.check_output(["ip", "-j", "route", "show", "table", "all"], text=True)
         routes = json.loads(j)
         for r in routes:
             dst = r.get("dst")
@@ -1379,12 +1403,13 @@ def _get_local_cidrs() -> list[str]:
             # only RFC1918
             if not (dst.startswith("10.") or dst.startswith("192.168.") or dst.startswith("172.")):
                 continue
-            # avoid massive scans
+            # avoid massive scans by default (user can use Custom scope for very large ranges)
             m = re.match(r"^\d+\.\d+\.\d+\.\d+/(\d+)$", dst)
             if not m:
                 continue
             pref = int(m.group(1))
             if pref < 16:
+                # too large – skip here, but we may still include a smaller set based on known targets
                 continue
             cidrs.append(dst)
     except Exception:
@@ -1401,6 +1426,47 @@ def _get_local_cidrs() -> list[str]:
     return uniq
 
 
+def _cidrs_from_existing_targets() -> list[str]:
+    """Derive candidate subnets from existing targets.
+
+    This makes scanning useful even when routing tables are minimal, or when VLAN routes
+    live in non-main tables, or when the host is on an overlay network but targets are not.
+    """
+    out: list[str] = []
+    try:
+        if not DB_PATH.exists():
+            return out
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT ip FROM targets")
+            ips = [r[0] for r in cur.fetchall() if r and r[0]]
+        finally:
+            conn.close()
+
+        for ip in ips:
+            try:
+                addr = ipaddress.ip_address(str(ip).strip())
+                # default to /24 for IPv4
+                if addr.version == 4:
+                    net = ipaddress.ip_network(f"{addr}/24", strict=False)
+                    out.append(str(net))
+            except Exception:
+                continue
+    except Exception:
+        return out
+
+    # de-dup while preserving order
+    seen = set()
+    uniq = []
+    for c in out:
+        if c in seen:
+            continue
+        seen.add(c)
+        uniq.append(c)
+    return uniq
+
+
 def _scan_log(line: str):
     """Append a line to scan output file."""
     ensure_state_dir()
@@ -1409,6 +1475,41 @@ def _scan_log(line: str):
             f.write((line or "").rstrip("\n") + "\n")
     except Exception:
         pass
+
+
+def _get_target_ips() -> list[str]:
+    """Read target IPs from the SQLite state DB.
+
+    We use this to make network scanning more reliable across VLANs:
+    if the system can already ping targets manually added, we should
+    at minimum scan the same subnets as those targets live in.
+    """
+    ips: list[str] = []
+    try:
+        if not DB_PATH.exists():
+            return ips
+        con = sqlite3.connect(str(DB_PATH))
+        try:
+            cur = con.cursor()
+            cur.execute("SELECT ip FROM targets;")
+            for (ip,) in cur.fetchall() or []:
+                ip = str(ip or "").strip()
+                if ip:
+                    ips.append(ip)
+        finally:
+            con.close()
+    except Exception:
+        return []
+
+    # de-dup
+    seen = set()
+    out = []
+    for ip in ips:
+        if ip in seen:
+            continue
+        seen.add(ip)
+        out.append(ip)
+    return out
 
 
 def _mac_vendor_from_nmap_prefixes(mac: str) -> str:
@@ -1483,24 +1584,33 @@ def _scan_with_nmap(cidrs: list[str], speed: str, cancel_flag: threading.Event) 
             break
         _scan_log(f"scan: {cidr}")
         try:
-            # -sn = ping scan, -n = no DNS (we do reverse DNS ourselves)
+            # We intentionally prefer nmap because it handles host discovery more reliably than
+            # pure ping sweeps (and can still work when some devices don't respond to ICMP).
+            #
+            # -sn = host discovery only
+            # -n  = no DNS (we do reverse DNS ourselves to keep output consistent)
+            # -oX - = XML output to stdout (we parse minimal fields)
             cmd = [
                 "nmap",
                 "-sn",
                 "-n",
                 timing,
                 "--max-retries",
-                "1",
+                "2",
                 "--host-timeout",
-                "1200ms",
+                "3s",
                 "-oX",
                 "-",
                 cidr,
             ]
-            xml = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
-        except subprocess.CalledProcessError as e:
-            _scan_log(f"warn: nmap failed on {cidr}: {str(e)}")
-            continue
+
+            p = subprocess.run(cmd, capture_output=True, text=True)
+            xml = (p.stdout or "") + ("\n" + (p.stderr or "") if p.stderr else "")
+            if p.returncode != 0:
+                # Include nmap output – this is often the only clue (permissions, missing binary, etc.)
+                short = " ".join((xml or "").strip().splitlines()[-3:])
+                _scan_log(f"warn: nmap rc={p.returncode} on {cidr}: {short}")
+                # Still try to parse if any XML was produced.
         except Exception as e:
             _scan_log(f"warn: nmap error on {cidr}: {str(e)}")
             continue
@@ -1637,6 +1747,7 @@ def _build_scan_cidrs(opts: dict) -> list[str]:
     if scope in ("custom", "local+custom"):
         if scope == "local+custom":
             cidrs.extend(_get_local_cidrs())
+            cidrs.extend(_cidrs_from_existing_targets())
         for part in re.split(r"[\s,;]+", custom.strip()):
             if not part:
                 continue
@@ -1645,7 +1756,9 @@ def _build_scan_cidrs(opts: dict) -> list[str]:
             except Exception:
                 continue
     else:
-        cidrs = _get_local_cidrs()
+        cidrs = []
+        cidrs.extend(_get_local_cidrs())
+        cidrs.extend(_cidrs_from_existing_targets())
 
     # de-dup
     seen = set()
@@ -1708,14 +1821,17 @@ def _scan_worker():
 
     speed = (opts.get("speed") or "normal").strip().lower()
 
-    # Prefer nmap when available
-    devices: list[dict] = []
-    if shutil.which("nmap"):
-        _scan_log("info: using nmap")
-        devices = _scan_with_nmap(cidrs, speed, cancel_flag)
-    else:
-        _scan_log("info: nmap not found; using ping sweep")
-        devices = _scan_with_ping(cidrs, speed, cancel_flag)
+    # Use nmap as the primary scanner.
+    # If nmap is missing, stop with a clear message instead of silently returning no results.
+    if not shutil.which("nmap"):
+        meta.update({"finished": int(time.time()), "rc": 1, "error": "nmap is not installed on this host"})
+        save_scan_meta(meta)
+        _scan_log("error: nmap is not installed on this host")
+        _scan_log("hint: install with: sudo apt-get update && sudo apt-get install -y nmap")
+        return
+
+    _scan_log("info: using nmap")
+    devices: list[dict] = _scan_with_nmap(cidrs, speed, cancel_flag)
 
     if cancel_flag.is_set():
         meta.update({"finished": int(time.time()), "rc": 1, "error": "Cancelled"})

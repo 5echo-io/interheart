@@ -31,11 +31,39 @@
   // ---- API helpers ----
   async function apiPost(url, fd){
     const res = await fetch(url, {method:"POST", body: fd});
-    return await res.json();
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    let data = null;
+    if (ct.includes("application/json")){
+      data = await res.json();
+    } else {
+      const txt = await res.text();
+      // avoid blowing up the UI when the server returns HTML on error
+      data = { ok: res.ok, message: txt ? String(txt).slice(0,240) : (res.statusText || "Error") };
+    }
+    if (!res.ok && data && data.ok !== true){
+      // Normalize common fetch failures
+      data.ok = false;
+      data.message = data.message || res.statusText || "Request failed";
+    }
+    return data;
   }
   async function apiGet(url){
     const res = await fetch(url, {cache:"no-store"});
-    return await res.json();
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("application/json")){
+      const data = await res.json();
+      if (!res.ok){
+        // Bubble up a readable error (this avoids "Failed to fetch" with no context)
+        throw new Error(data?.message || res.statusText || "Request failed");
+      }
+      return data;
+    }
+    const txt = await res.text();
+    if (!res.ok){
+      throw new Error(res.statusText || "Request failed");
+    }
+    // Non-JSON but OK (rare) -> return wrapper
+    return { ok: true, text: txt };
   }
 
   // ---- Logs modal ----
@@ -1312,6 +1340,7 @@ btnRunDetails?.addEventListener("click", () => {
   const scanOutput = $("#scanOutput");
   const scanBar = $("#scanBar");
   const scanStatusLine = $("#scanStatusLine");
+  const scanError = $("#scanError");
   const scanSubnets = $("#scanSubnets");
   const scanFoundCount = $("#scanFoundCount");
   const scanNewCount = $("#scanNewCount");
@@ -1417,6 +1446,7 @@ btnRunDetails?.addEventListener("click", () => {
 
   async function refreshScan(){
     try{
+      if (scanError){ scanError.style.display = "none"; scanError.textContent = ""; }
       const out = await apiGet(`/api/scan-output?lines=260`);
       const meta = out.meta || {};
       scanTitleMeta.textContent = meta.cidrs?.length ? `(${meta.cidrs.length} subnets)` : "";
@@ -1431,7 +1461,12 @@ btnRunDetails?.addEventListener("click", () => {
       const pct = total ? Math.min(100, Math.round((started/total)*100)) : 0;
       scanBar.style.width = `${pct}%`;
       const currentIp = meta.current_ip ? String(meta.current_ip) : "";
-      scanStatusLine.textContent = total ? `Scanning ${Math.min(started+1,total)} / ${total}${currentIp ? " • " + currentIp : ""}` : (meta.error || "Scanning…");
+      const errTxt = (meta.error || "").trim();
+      scanStatusLine.textContent = total ? `Scanning ${Math.min(started+1,total)} / ${total}${currentIp ? " • " + currentIp : ""}` : (errTxt || "Scanning…");
+      if (errTxt && scanError){
+        scanError.textContent = errTxt;
+        scanError.style.display = "block";
+      }
 
       const st = await apiGet(`/api/scan-status`);
       if (st.running){
@@ -1444,7 +1479,7 @@ btnRunDetails?.addEventListener("click", () => {
       scanLive.style.display = "none";
       if (btnAbortScan) btnAbortScan.style.display = "none";
       if (btnScanNow) btnScanNow.style.display = "inline-flex";
-      if (btnScanNow) btnScanNow.textContent = st.finished ? "Scan again" : "Scan now";
+      if (btnScanNow) btnScanNow.textContent = st.finished ? "Search again" : "Start search";
       btnSearchNetwork?.classList.remove("is-running");
 
       // finished -> get results
@@ -1468,6 +1503,11 @@ btnRunDetails?.addEventListener("click", () => {
       }
     }catch(e){
       scanStatusLine.textContent = e?.message || "Scan failed";
+      if (scanError){
+        scanError.textContent = e?.message || "Scan failed";
+        scanError.style.display = "block";
+      }
+      toast("Search network", e?.message || "Failed to fetch");
       scanLive.style.display = "none";
       if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
     }
@@ -1481,6 +1521,7 @@ btnRunDetails?.addEventListener("click", () => {
     scanNewCount.textContent = "-";
     scanSubnets.textContent = "-";
     scanStatusLine.textContent = "-";
+    if (scanError){ scanError.style.display = "none"; scanError.textContent = ""; }
     scanListEmpty.style.display = "block";
     scanList.innerHTML = "";
   }
@@ -1516,7 +1557,7 @@ btnRunDetails?.addEventListener("click", () => {
 
   btnScanNow?.addEventListener("click", async () => {
     resetScanUi();
-    scanOutput.textContent = "Starting scan…";
+    scanOutput.textContent = "Starting search…";
     scanLive.style.display = "flex";
     const cur = await apiGet(`/api/scan-status`);
     const ok = await startScan(!!cur.finished);
@@ -1524,7 +1565,7 @@ btnRunDetails?.addEventListener("click", () => {
       scanLive.style.display = "none";
       return;
     }
-    toast("Search network", "Scan started");
+    toast("Search network", "Search started");
     if (scanPoll) clearInterval(scanPoll);
     scanPoll = setInterval(refreshScan, 800);
     await refreshScan();

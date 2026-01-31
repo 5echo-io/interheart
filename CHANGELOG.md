@@ -6,6 +6,20 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.3.21 – 2026-01-31
+
+### Improved
+- WebUI: **Search network** now uses **nmap only** (no silent fallback), with better timeouts and clearer scan logging.
+- WebUI: More reliable subnet discovery by reading routes from **all routing tables** and broadening /32 interface addresses to a practical scan range.
+- WebUI: Cleaner scan UX (renamed actions to **Start search / Search again**, clearer device list wording).
+
+### Fixed
+- WebUI: API calls now surface readable errors instead of generic **“Failed to fetch”**.
+- WebUI: Scan modal now shows an inline error banner when the backend reports a scan error (e.g. missing nmap).
+
+### Notes
+- This release intentionally **requires `nmap`** for scanning. If missing, the UI will tell you exactly what to install.
+
 ## v5.1.20 – 2026-01-31
 
 ### Changed
