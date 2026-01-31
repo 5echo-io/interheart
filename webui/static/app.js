@@ -1586,6 +1586,10 @@ btnRunDetails?.addEventListener("click", () => {
     connectDiscoveryStream();
   }
 
+  // Expose a stable global hook as a safety net.
+  // This avoids situations where a browser/extension interferes with event binding.
+  window.__ihStartDiscovery = startDiscovery;
+
   async function cancelDiscovery(){
     await apiPostJson('/api/discover-cancel', {});
     if (discoverStatus) discoverStatus.textContent = 'Cancelling…';
@@ -1723,7 +1727,7 @@ function connectDiscoveryStream(){
       await refreshState(true);
     }catch(e){
       // If the first state fetch fails, still bind handlers for the server-rendered rows.
-      try{ attachIntervalHandlers(); attachMenuActions(); attachBulkHandlers(); attachRowClickHandlers(); }catch(_){}
+      try{ attachIntervalHandlers(); attachMenuActions(); attachBulkHandlers(); attachRowClickHandlers(); bindSortHeaders(); }catch(_){}
     }
 
     // periodic refresh

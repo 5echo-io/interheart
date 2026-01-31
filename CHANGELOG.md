@@ -6,6 +6,18 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.20.35 – 2026-01-31
+
+### Fixed
+- WebUI: Discovery **Start** button now always triggers a backend request (added a safe fallback hook so clicks can’t silently do nothing).
+- WebUI: Table sorting is restored even if the initial `/state` fetch fails (sort handlers are now bound on server-rendered rows too).
+- WebUI: Status snapshots are now part of the server-rendered table as well (no more “layout shift” / missing dots before first refresh).
+
+### Improved
+- WebUI: Discovery side panel is wider for easier use.
+- WebUI: “Show only new” toggle is now clearly **dark-mode** styled.
+- WebUI: Status chip alignment tightened: fixed width, left-aligned text, right-aligned dots.
+
 ## v5.17.31 – 2026-01-31
 
 ### Fixed

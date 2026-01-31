@@ -2356,6 +2356,11 @@ def api_discover_start():
         'profile': data.get('profile') or 'safe',
         'cap': data.get('cap') or 2048,
     }
+
+    try:
+        app.logger.info("DISCOVERY_START request from %s opts=%s", request.remote_addr, opts)
+    except Exception:
+        pass
     meta = {'opts': opts, 'status':'starting', 'started':int(time.time()), 'finished':0, 'found':[], 'rc':0, 'error':''}
     save_discovery_meta(meta)
 
