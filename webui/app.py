@@ -348,22 +348,36 @@ def merged_targets():
 _LAST_STATE_CACHE = {"updated": 0, "targets": []}
 
 def merged_targets_safe():
-    """Return merged targets, but keep the last good state if the CLI errors.
+    """Return merged targets, preferring direct SQLite reads.
 
-    This avoids the WebUI clearing the table when the DB is temporarily locked
-    (e.g. while a run is updating), or when the CLI emits a transient error.
+    We previously depended on parsing CLI output (list/status). That turned out
+    to be fragile across CLI format changes and could cause the WebUI to show
+    an empty table until a "Run now" happened.
+
+    This function reads from /var/lib/interheart/state.db directly.
+    If the DB is temporarily locked (e.g. while a run updates), we serve the
+    last known good cached state instead of wiping the UI.
     """
     global _LAST_STATE_CACHE
+
+    # Prefer DB-backed state
+    ok, rows = db_read_targets(DB_PATH)
+    if ok and rows is not None:
+        _LAST_STATE_CACHE = {"updated": int(time.time()), "targets": rows}
+        return True, rows
+
+    # If DB read failed, serve cache if available
+    if _LAST_STATE_CACHE.get("targets"):
+        return False, _LAST_STATE_CACHE.get("targets")
+
+    # Last resort: fall back to CLI parsing for fresh installs
     try:
         rc_list, list_out = run_cmd(["list"])
         rc_st, st_out = run_cmd(["status"])
         if rc_list != 0 or rc_st != 0:
-            # serve cached targets if available
-            if _LAST_STATE_CACHE.get("targets"):
-                return False, _LAST_STATE_CACHE.get("targets")
+            return False, []
         targets = parse_list_targets(list_out)
         state = parse_status(st_out)
-
         merged = []
         for t in targets:
             st = state.get(t["name"], {})
@@ -386,21 +400,90 @@ def merged_targets_safe():
                 "endpoint_masked": t.get("endpoint_masked") or "-",
                 "snapshots": t.get("snapshots") or [],
             })
-
-        def ip_key(ip: str):
-            try:
-                a,b,c,d = [int(x) for x in (ip or "0.0.0.0").split(".")]
-                return (a,b,c,d)
-            except Exception:
-                return (999,999,999,999)
-
-        merged.sort(key=lambda x: ip_key(x.get("ip")))
         _LAST_STATE_CACHE = {"updated": int(time.time()), "targets": merged}
         return True, merged
     except Exception:
-        if _LAST_STATE_CACHE.get("targets"):
-            return False, _LAST_STATE_CACHE.get("targets")
         return False, []
+
+
+def db_read_targets(db_path: Path):
+    """Read targets + state directly from SQLite.
+
+    Returns (ok, targets). ok=False on transient errors (locked/unavailable).
+    """
+    import sqlite3
+    if not db_path.exists():
+        return True, []
+    try:
+        con = sqlite3.connect(str(db_path), timeout=2.0)
+        con.row_factory = sqlite3.Row
+        try:
+            con.execute("PRAGMA busy_timeout=2000;")
+        except Exception:
+            pass
+        cur = con.cursor()
+        cur.execute(
+            """
+            SELECT
+              t.name,
+              t.ip,
+              t.endpoint,
+              t.interval,
+              t.enabled,
+              COALESCE(r.status, 'unknown') AS last_status,
+              COALESCE(r.last_ping, 0) AS last_ping,
+              COALESCE(r.last_sent, 0) AS last_response,
+              COALESCE(r.last_rtt_ms, -1) AS last_latency
+            FROM targets t
+            LEFT JOIN runtime r ON r.name = t.name
+            ORDER BY t.ip ASC;
+            """
+        )
+        rows = cur.fetchall() or []
+
+        out = []
+        for r in rows:
+            enabled = int(r["enabled"] or 0)
+            status = (r["last_status"] or "unknown")
+
+            # UI rules:
+            # - enabled=0 => DISABLED
+            # - enabled=1 + status unknown => STARTING.. until first up/down
+            if enabled != 1:
+                status = "disabled"
+            else:
+                if str(status).lower() in ("unknown", ""):
+                    status = "starting"
+                if str(status).lower() == "disabled":
+                    status = "starting"
+
+            last_ping_epoch = _safe_int(r["last_ping"], 0)
+            last_resp_epoch = _safe_int(r["last_response"], 0)
+            last_rtt_ms = _safe_int(r["last_latency"], -1)
+
+            out.append({
+                "name": r["name"],
+                "ip": r["ip"],
+                "interval": _safe_int(r["interval"], 60),
+                "status": str(status),
+                "enabled": enabled,
+                "last_ping_human": human_ts(last_ping_epoch),
+                "last_response_human": human_ts(last_resp_epoch),
+                "last_ping_epoch": last_ping_epoch,
+                "last_response_epoch": last_resp_epoch,
+                "last_rtt_ms": last_rtt_ms,
+                "endpoint_masked": mask_endpoint(r["endpoint"] or ""),
+                "snapshots": compute_snapshots(db_path, r["name"], enabled, days=3),
+            })
+
+        return True, out
+    except Exception:
+        return False, None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
 
 # ---- API: info (DB-backed, uses history samples if present) ----
@@ -867,6 +950,102 @@ def api_get():
     if m:
         masked = mask_endpoint(m.group(1))
     return jsonify({"ok": rc == 0, "message": out or ("OK" if rc == 0 else "Failed"), "endpoint_masked": masked})
+
+
+@APP.get("/api/info")
+def api_info():
+    """Return structured target info for the Information + Edit modals.
+
+    This is DB-backed (SQLite) to avoid depending on CLI output format.
+    """
+    import sqlite3
+
+    name = (request.args.get("name") or "").strip()
+    if not name:
+        return die_json("Missing name", 400)
+
+    if not DB_PATH.exists():
+        return die_json("Database not found", 404)
+
+    try:
+        con = sqlite3.connect(str(DB_PATH), timeout=2.0)
+        con.row_factory = sqlite3.Row
+        try:
+            con.execute("PRAGMA busy_timeout=2000;")
+        except Exception:
+            pass
+
+        cur = con.cursor()
+        cur.execute(
+            """
+            SELECT
+              t.name,
+              t.ip,
+              t.endpoint,
+              t.interval,
+              t.enabled,
+              COALESCE(r.status, 'unknown') AS last_status,
+              COALESCE(r.last_ping, 0) AS last_ping,
+              COALESCE(r.last_sent, 0) AS last_response,
+              COALESCE(r.last_rtt_ms, -1) AS last_latency
+            FROM targets t
+            LEFT JOIN runtime r ON r.name = t.name
+            WHERE t.name = ?
+            LIMIT 1;
+            """,
+            (name,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return die_json("Target not found", 404)
+
+        enabled = int(row["enabled"] or 0)
+        status = (row["last_status"] or "unknown")
+
+        if enabled != 1:
+            status = "disabled"
+        else:
+            if str(status).lower() in ("unknown", ""):
+                status = "starting"
+            if str(status).lower() == "disabled":
+                status = "starting"
+
+        last_ping_epoch = _safe_int(row["last_ping"], 0)
+        last_resp_epoch = _safe_int(row["last_response"], 0)
+        last_rtt_ms = _safe_int(row["last_latency"], -1)
+
+        uptime = {
+            "24h": compute_uptime_stats(DB_PATH, name, 1),
+            "7d": compute_uptime_stats(DB_PATH, name, 7),
+            "30d": compute_uptime_stats(DB_PATH, name, 30),
+            "90d": compute_uptime_stats(DB_PATH, name, 90),
+        }
+
+        return jsonify({
+            "ok": True,
+            "name": row["name"],
+            "ip": row["ip"],
+            "endpoint": row["endpoint"],
+            "endpoint_masked": mask_endpoint(row["endpoint"] or ""),
+            "interval": _safe_int(row["interval"], 60),
+            "enabled": True if enabled == 1 else False,
+            "current": {
+                "status": str(status),
+                "last_ping_epoch": last_ping_epoch,
+                "last_response_epoch": last_resp_epoch,
+                "last_ping_human": human_ts(last_ping_epoch),
+                "last_response_human": human_ts(last_resp_epoch),
+                "last_rtt_ms": last_rtt_ms,
+            },
+            "uptime": uptime,
+        })
+    except Exception as e:
+        return die_json(f"Failed to read info: {e}", 500)
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
 
 # ---- API: name suggestion (reverse DNS best-effort) ----

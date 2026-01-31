@@ -1,3 +1,9 @@
+## 4.10.14 - 2026-01-31
+
+- Fix: WebUI `/state` now reads the **real** runtime table (`runtime`) instead of legacy `state` table, so targets render immediately without needing **Run now**.
+- Fix: Information + Edit modals now populate correctly again (`/api/info` added + DB-backed).
+- Fix: Enabled/Disabled status in UI now follows `targets.enabled` + `runtime.status` reliably (no more "everything looks disabled").
+
 ## 4.10.13 - 2026-01-31
 
 - Fix: WebUI no longer clears the targets table on transient `/state` errors (uses last known good state).
