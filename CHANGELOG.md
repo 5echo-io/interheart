@@ -6,6 +6,27 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.42.51 – 2026-01-31
+
+### Added
+- WebUI Discovery: Live feed panel showing latest scan activity (new devices + scan status).
+- WebUI Discovery: Stop-after-N-subnets toggle to limit scan scope.
+- WebUI Discovery: Progress percent label and progress bar synced to scan progress.
+
+### Improved
+- WebUI Discovery: UI updates are rate-limited to reduce lag during large scans.
+- WebUI Discovery: Scan start is manual (does not auto-start when opening the modal).
+- WebUI Discovery: Closing the modal keeps the scan running in the background unless you press Stop.
+- WebUI Discovery: Server-side guard prevents multiple concurrent scans (also across multiple browsers).
+- WebUI Discovery: Default view is “New devices”; use “All results” to expand.
+- WebUI: Search fields show a subtle Clear button only when text is present.
+- WebUI Discovery: Selected device is highlighted; clicking it again deselects.
+
+### Fixed
+- WebUI Discovery: Debug action no longer crashes due to undefined `discoverProfile`.
+
+---
+
 ## v5.31.50 – 2026-01-31
 
 ### Improved

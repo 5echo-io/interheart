@@ -482,11 +482,17 @@
       </select>
         <!-- Profile selector removed: safe scan only -->
       <input class="input input--sm" id="discoverCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24" style="display:none; min-width: 240px;" />
-      <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Start</button>
+      <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Start scan</button>
       <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
       <button class="btn btn-ghost btn-mini" id="btnDiscoverAgain" type="button" style="display:none;" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Search again</button>
       <button class="btn btn-ghost btn-mini" id="btnDiscoverDebug" type="button" title="Run discovery diagnostics">Debug</button>
         <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
+          <label class="toggle" title="Stop after scanning N subnets">
+            <input type="checkbox" id="discoverStopAfterToggle" />
+            <span>Stop after</span>
+          </label>
+          <input class="input input--sm" id="discoverStopAfterCount" type="number" min="1" max="4096" value="10" style="width:84px; display:none;" aria-label="Stop after subnet count" />
+
           <button class="btn btn-ghost btn-mini" id="btnDiscoverShowAll" type="button">All results</button>
           <label class="toggle">
             <input type="checkbox" id="discoverOnlyNew" checked />
@@ -507,9 +513,19 @@
             <div class="kpi-value" id="discoverFound">0</div>
           </div>
         </div>
-        <div class="progress"><div class="progress-bar" id="discoverBar" style="width:0%"></div></div>
+        <div class="progress"><div class="progress-bar" id="discoverBar" style="width:0%"></div></div><div class="progress-meta"><span id="discoverPercent">0%</span></div>
         <div class="hint" id="discoverStatus">Idle</div>
         <div class="hint" id="discoverScanning" style="margin-top:-6px; opacity:.75;">-</div>
+        <div class="card card--soft" id="discoverLiveCard" style="margin-top:10px;">
+          <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <b>Live feed</b>
+            <span class="hint" id="discoverLiveHint">-</span>
+          </div>
+          <div class="card-body" style="padding-top:8px;">
+            <div class="live-feed" id="discoverLiveFeed"></div>
+          </div>
+        </div>
+
         <div class="alert alert--error" id="discoverError" style="display:none;"></div>
         <div class="card card--soft" id="discoverDebugCard" style="display:none; margin-top:10px;">
           <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
@@ -528,7 +544,7 @@
       <div class="field" style="margin-top:-2px;">
         <div class="input-with-clear">
           <input id="discoverFilter" class="input" placeholder="Filter devices… (name / ip / mac / vendor)">
-          <button class="btn-clear" type="button" data-clear-for="discoverFilter" aria-label="Clear filter">×</button>
+          <button class="btn-clear is-hidden" type="button" data-clear-for="discoverFilter" aria-label="Clear filter">×</button>
         </div>
       </div>
 

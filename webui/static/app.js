@@ -423,6 +423,7 @@
       if (!inp) return;
       inp.value = '';
       inp.dispatchEvent(new Event('input', { bubbles: true }));
+      try{ toggleClearButtons(); }catch(_){ }
       inp.focus();
     });
   });
@@ -1485,6 +1486,11 @@ function attachMenuActions(){
   const discoverOnlyNew = $("#discoverOnlyNew");
   const btnDiscoverShowAll = $("#btnDiscoverShowAll");
   const discoverFilter = $("#discoverFilter");
+  const discoverStopAfterToggle = $("#discoverStopAfterToggle");
+  const discoverStopAfterCount = $("#discoverStopAfterCount");
+  const discoverPercent = $("#discoverPercent");
+  const discoverLiveFeed = $("#discoverLiveFeed");
+  const discoverLiveHint = $("#discoverLiveHint");
   const discoverList = $("#discoverList");
   const discoverListEmpty = $("#discoverListEmpty");
   const discoverFound = $("#discoverFound");
@@ -1512,6 +1518,11 @@ function attachMenuActions(){
   let discoverStartInFlight = false;
   let discoverGotSSE = false;
 
+  let discoverLive = []; // recent device/status items
+  let discoverLastEventId = 0;
+  let discoverUiTick = null;
+  let discoverUiDirty = false;
+
   // Lightweight debug logger for Discovery.
   // Keeps last ~200 entries and renders them into the debug box.
   let discoverDebugLines = [];
@@ -1537,11 +1548,13 @@ function attachMenuActions(){
   }
 
   function scheduleDiscoverRender(){
+    // Rate-limit UI updates to keep the server/UI smooth during large scans.
     if (discoverRenderTimer) return;
     discoverRenderTimer = setTimeout(() => {
       discoverRenderTimer = null;
       renderDiscoverList();
-    }, 120);
+      renderDiscoverLiveFeed();
+    }, 250);
   }
 
   function openDiscover(){
@@ -1610,6 +1623,14 @@ function attachMenuActions(){
   discoverScope?.addEventListener('change', updateDiscoverScopeUI);
   updateDiscoverScopeUI();
 
+  function updateDiscoverStopAfterUI(){
+    if (!discoverStopAfterToggle || !discoverStopAfterCount) return;
+    const on = !!discoverStopAfterToggle.checked;
+    discoverStopAfterCount.style.display = on ? 'inline-flex' : 'none';
+  }
+  discoverStopAfterToggle?.addEventListener('change', updateDiscoverStopAfterUI);
+  updateDiscoverStopAfterUI();
+
   function suggestEndpoint(ip){
     if (!ip) return '';
     return `http://${ip}`;
@@ -1659,7 +1680,7 @@ function attachMenuActions(){
 
       shown += 1;
       const el = document.createElement('div');
-      el.className = 'scan-item' + (addedNow ? ' is-added' : '') + (already ? ' is-disabled' : '');
+      el.className = 'scan-item' + (addedNow ? ' is-added' : '') + (already ? ' is-disabled' : '') + ((discoverSelected && String(discoverSelected.ip||'')===ip) ? ' is-selected' : '');
 
       const lbl = computeDeviceLabel(dev);
       const chipTxt = addedNow ? 'Added now' : (already ? 'Already added' : 'New');
@@ -1680,13 +1701,21 @@ function attachMenuActions(){
           toast('Network discovery', 'Already added');
           return;
         }
+        // Toggle select/deselect
+        if (discoverSelected && String(discoverSelected.ip||'') === ip){
+          discoverSelected = null;
+          if (discoverAddCard) discoverAddCard.style.display = 'none';
+          scheduleDiscoverRender();
+          return;
+        }
         discoverSelected = dev;
-        discoverAddCard.style.display = 'block';
-        discoverAddHint.textContent = ip;
-        discoverAddIp.value = ip;
-        discoverAddName.value = suggestName(dev);
-        discoverAddEndpoint.value = suggestEndpoint(ip);
-        discoverAddEndpoint.focus();
+        if (discoverAddCard) discoverAddCard.style.display = 'block';
+        if (discoverAddHint) discoverAddHint.textContent = ip;
+        if (discoverAddIp) discoverAddIp.value = ip;
+        if (discoverAddName) discoverAddName.value = suggestName(dev);
+        if (discoverAddEndpoint) discoverAddEndpoint.value = suggestEndpoint(ip);
+        try{ discoverAddEndpoint?.focus(); }catch(_){}
+        scheduleDiscoverRender();
       });
 
       discoverList.appendChild(el);
@@ -1696,8 +1725,39 @@ function attachMenuActions(){
     if (discoverCountHint) discoverCountHint.textContent = `${shown} shown`;
   }
 
-  discoverFilter?.addEventListener('input', () => renderDiscoverList());
-  discoverOnlyNew?.addEventListener('change', () => renderDiscoverList());
+
+  function renderDiscoverLiveFeed(){
+    if (!discoverLiveFeed) return;
+    const items = Array.isArray(discoverLive) ? discoverLive.slice(0, 20) : [];
+    discoverLiveFeed.innerHTML = '';
+    if (!items.length){
+      discoverLiveFeed.innerHTML = '<div class="hint">No activity yet.</div>';
+      if (discoverLiveHint) discoverLiveHint.textContent = '-';
+      return;
+    }
+    items.forEach(it => {
+      const el = document.createElement('div');
+      el.className = 'live-item';
+      const left = it.ip ? `<b>${escapeHtml(it.ip)}</b>` : `<b>${escapeHtml(it.title||'')}</b>`;
+      const right = it.vendor ? `<span class="muted">${escapeHtml(it.vendor)}</span>` : `<span class="muted">${escapeHtml(it.meta||'')}</span>`;
+      el.innerHTML = `<div>${left}</div><div>${right}</div>`;
+      discoverLiveFeed.appendChild(el);
+    });
+    const top = items[0];
+    if (discoverLiveHint) discoverLiveHint.textContent = top.ip ? `${top.ip}${top.vendor ? ' • ' + top.vendor : ''}` : (top.title||'-');
+  }
+
+  function toggleClearButtons(){
+    document.querySelectorAll('.btn-clear[data-clear-for]').forEach(btn => {
+      const id = btn.getAttribute('data-clear-for');
+      const inp = id ? document.getElementById(id) : null;
+      const has = !!(inp && String(inp.value||'').length);
+      btn.classList.toggle('is-hidden', !has);
+    });
+  }
+
+  discoverFilter?.addEventListener('input', () => { toggleClearButtons(); scheduleDiscoverRender(); });
+  discoverOnlyNew?.addEventListener('change', () => scheduleDiscoverRender());
   discoverScope?.addEventListener('change', () => {
     const v = discoverScope.value || 'auto';
     if (discoverCustom) discoverCustom.style.display = (v === 'custom') ? 'inline-flex' : 'none';
@@ -1742,8 +1802,9 @@ function attachMenuActions(){
       custom,
       iface: discoverIface?.value || 'auto',
       profile: 'safe',
-      // Keep server load down by default. The backend will also dedupe/limit.
+      // Keep server load down by default.
       cap: 1024,
+      stop_after: (discoverStopAfterToggle?.checked ? Number(discoverStopAfterCount?.value || 0) : 0),
     };
 
       let r = null;
@@ -1823,7 +1884,7 @@ function attachMenuActions(){
         scope: (discoverScope?.value || 'auto'),
         custom: (discoverCustom?.value || '').trim(),
         iface: discoverIface?.value || 'auto',
-        profile: discoverProfile?.value || 'safe',
+        profile: 'safe',
         cap: 256,
       };
       discoverDbg('POST /api/discover-debug', payload);
@@ -1880,7 +1941,9 @@ function attachMenuActions(){
       if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
       if (discoverBar && st.progress){
         const cur = Number(st.progress.current||0); const tot = Number(st.progress.total||0);
-        discoverBar.style.width = tot ? `${Math.round((cur/tot)*100)}%` : '0%';
+        const pct = tot ? Math.round((cur/tot)*100) : 0;
+        discoverBar.style.width = `${pct}%`;
+        if (discoverPercent) discoverPercent.textContent = `${pct}%`;
       }
       if (st && (st.status === 'running' || st.status === 'starting' || st.status === 'cancelling')){
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
@@ -1904,13 +1967,26 @@ function connectDiscoveryStream(){
       try{
         discoverGotSSE = true;
         const obj = JSON.parse(ev.data);
+        const eid = Number(obj.id||0);
+        if (eid && eid <= discoverLastEventId) return;
+        if (eid) discoverLastEventId = eid;
         const st = obj.status || obj?.message || '';
         if (obj.cidrs != null && discoverSubnets) discoverSubnets.textContent = String(obj.cidrs);
+        else if (obj.progress && obj.progress.total != null && discoverSubnets) discoverSubnets.textContent = String(obj.progress.total);
         if (obj.progress && discoverBar){
           const cur = Number(obj.progress.current||0); const tot = Number(obj.progress.total||0);
-          discoverBar.style.width = tot ? `${Math.round((cur/tot)*100)}%` : '0%';
+          const pct = tot ? Math.round((cur/tot)*100) : 0;
+          discoverBar.style.width = `${pct}%`;
+          if (discoverPercent) discoverPercent.textContent = `${pct}%`;
         }
         if (discoverStatus) discoverStatus.textContent = obj.message || st || 'Running…';
+        try{
+          if (obj.message && String(obj.message).startsWith('Scanning ')){
+            discoverLive.unshift({ title: String(obj.message), meta: String(obj.scanning||'') });
+            discoverLive = discoverLive.slice(0, 20);
+          }
+        }catch(_){ }
+
         if (discoverScanning){
           const s = (obj.scanning || (obj.progress && obj.progress.cidr) || '')
           discoverScanning.textContent = s ? String(s) : '-';
@@ -1933,6 +2009,9 @@ function connectDiscoveryStream(){
       try{
         discoverGotSSE = true;
         const obj = JSON.parse(ev.data);
+        const eid = Number(obj.id||0);
+        if (eid && eid <= discoverLastEventId) return;
+        if (eid) discoverLastEventId = eid;
         const dev = obj.device;
         if (!dev) return;
         const ip = String(dev.ip||'').trim();
@@ -1944,6 +2023,11 @@ function connectDiscoveryStream(){
         } else {
           discoverDeviceMap.set(ip, dev);
         }
+
+        try{
+          discoverLive.unshift({ ip, vendor: String(dev.vendor||'').trim() || String(dev.host||'').trim() || '' });
+          discoverLive = discoverLive.slice(0, 20);
+        }catch(_){ }
         // Keep array for any legacy callers, but render uses the map.
         discoverDevices = Array.from(discoverDeviceMap.values());
         if (discoverFound) discoverFound.textContent = String(discoverDeviceMap.size);
@@ -2038,4 +2122,6 @@ function connectDiscoveryStream(){
   // ---- End network discovery ----
 
 
-})();
+})()  try{ toggleClearButtons(); }catch(_){ }
+
+;

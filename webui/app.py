@@ -2219,6 +2219,8 @@ def _discover_worker():
         prefer_iface = ''
     cancel_path = STATE_DIR / 'discovery_cancel'
 
+    stop_after = int(opts.get('stop_after') or 0)
+
     # reset output/events
     try:
         DISCOVERY_EVENTS_FILE.write_text('', encoding='utf-8')
@@ -2252,6 +2254,9 @@ def _discover_worker():
     _append_discovery_event({'id': event_id, 'type':'status','status':'running','message':'Discovery started','cidrs':len(cidrs)})
 
     for idx, cidr in enumerate(cidrs):
+        if stop_after and idx >= stop_after:
+            break
+
         if cancel_path.exists():
             meta.update({'status':'cancelled','finished':int(time.time()),'rc':1,'error':'Cancelled'})
             save_discovery_meta(meta)
@@ -2363,7 +2368,10 @@ def _discover_worker():
         _append_discovery_event({'id': event_id,'type':'status','status':'running','message':f"Scanned {idx+1}/{len(cidrs)}",'progress':{'current':idx+1,'total':len(cidrs),'cidr':cidr}})
 
     meta = load_discovery_meta() or {}
-    meta.update({'status':'done','finished':int(time.time()),'rc':0})
+    msg = 'Discovery finished'
+    if stop_after and len(cidrs) > stop_after:
+        msg = f'Stopped after {stop_after} subnets'
+    meta.update({'status':'done','finished':int(time.time()),'rc':0,'message':msg})
     save_discovery_meta(meta)
     event_id += 1
     _append_discovery_event({'id': event_id,'type':'status','status':'done','message':'Discovery finished','found':len(meta.get('found') or [])})
@@ -2388,6 +2396,7 @@ def api_discover_start():
         'iface': data.get('iface') or 'auto',
         'profile': data.get('profile') or 'safe',
         'cap': data.get('cap') or 2048,
+            'stop_after': int(data.get('stop_after') or 0),
     }
 
     try:
@@ -2584,6 +2593,13 @@ def api_discover_cancel():
             os.killpg(pgid, signal.SIGTERM)
         elif pid:
             os.kill(pid, signal.SIGTERM)
+        # If it doesn't stop quickly, escalate to SIGKILL (best effort).
+        time.sleep(0.6)
+        if pid and pid_is_running(pid):
+            if pgid:
+                os.killpg(pgid, signal.SIGKILL)
+            else:
+                os.kill(pid, signal.SIGKILL)
     except Exception:
         pass
 

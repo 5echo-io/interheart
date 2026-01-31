@@ -768,3 +768,17 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
   opacity: .55;
 }
 .btn-clear:hover{ opacity: .9; }
+
+
+/* Discovery: clear button visibility */
+.btn-clear.is-hidden{ opacity:0; pointer-events:none; }
+
+/* Discovery: live feed */
+.live-feed{ display:flex; flex-direction:column; gap:6px; max-height:160px; overflow:auto; }
+.live-item{ display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:6px 8px; border-radius:10px; background: rgba(255,255,255,0.04); }
+.live-item b{ font-weight:600; }
+.live-item .muted{ opacity:.7; }
+
+/* Discovery: selected device highlight */
+.scan-item.is-selected{ outline: 2px solid rgba(255,255,255,0.25); box-shadow: 0 0 0 4px rgba(255,255,255,0.06); }
+
