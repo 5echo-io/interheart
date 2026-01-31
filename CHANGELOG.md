@@ -6,6 +6,11 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.23.44 – 2026-01-31
+
+### Fixed
+- WebUI: Sorting now works even when the backend state hasn’t loaded yet (hydrates targets from the server-rendered table instead of rendering an empty list).
+
 ## v5.23.43 – 2026-01-31
 
 ### Fixed

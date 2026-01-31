@@ -201,6 +201,34 @@
   let sortKey = "ip";
   let sortDir = "asc"; // asc|desc
 
+  // If the backend state fetch hasn't populated lastTargets yet (or fails),
+  // we still want sorting to work using the server-rendered table.
+  function hydrateTargetsFromDOM(){
+    const rows = $$("#targetsTable tbody tr[data-name]");
+    return rows.map(row => {
+      const name = String(row.getAttribute("data-name") || "").trim();
+      const ip = String(row.getAttribute("data-ip") || "").trim();
+      const status = String(row.getAttribute("data-status") || "").trim();
+      const enabled = Number(row.getAttribute("data-enabled") || row.dataset.enabled || 0);
+      const last_ping_epoch = Number(row.getAttribute("data-last-ping") || row.dataset.lastPing || 0);
+      const last_response_epoch = Number(row.getAttribute("data-last-resp") || row.dataset.lastResp || 0);
+      const intervalInput = row.querySelector(".interval-input");
+      const interval = Number(intervalInput?.value || intervalInput?.getAttribute("data-interval") || 0);
+      return {
+        name,
+        ip,
+        status,
+        enabled,
+        interval,
+        last_ping_epoch,
+        last_response_epoch,
+        // keep sortTargets happy
+        last_ping_human: row.querySelector(".last-ping")?.textContent || "-",
+        last_response_human: row.querySelector(".last-resp")?.textContent || "-",
+      };
+    }).filter(t => t.name || t.ip);
+  }
+
   function ipKey(ip){
     try{
       const p = String(ip||"0.0.0.0").split(".").map(x => Number(x));
@@ -276,6 +304,13 @@
       tableEl.addEventListener("click", (e) => {
         const th = e.target?.closest?.("th.sortable");
         if (!th) return;
+
+        // If state hasn't loaded yet, sort the server-rendered rows instead
+        // of wiping the table by rendering an empty lastTargets array.
+        if (!Array.isArray(lastTargets) || lastTargets.length === 0){
+          lastTargets = hydrateTargetsFromDOM();
+        }
+
         const key = th.dataset.sort || "name";
         if (sortKey === key){
           sortDir = (sortDir === "asc") ? "desc" : "asc";
