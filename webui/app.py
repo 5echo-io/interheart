@@ -1406,6 +1406,7 @@ def _get_local_cidrs() -> list[str]:
         j = subprocess.check_output(["ip", "-j", "addr", "show"], text=True)
         data = json.loads(j)
         for itf in data:
+            ifname = str(itf.get("ifname") or itf.get("name") or "").strip().lower()
             for a in itf.get("addr_info", []) or []:
                 if a.get("family") != "inet":
                     continue
@@ -1416,6 +1417,12 @@ def _get_local_cidrs() -> list[str]:
                 # Skip loopback + link-local
                 if str(local).startswith("127.") or str(local).startswith("169.254."):
                     continue
+
+                # Avoid scanning overlay/VPN interfaces and non-private ranges by default.
+                # NetBird commonly uses 100.64.0.0/10; we don't want discovery to lock onto that.
+                if ifname and any(x in ifname for x in ("wt0", "netbird", "tailscale", "wg", "wireguard", "tun", "tap")):
+                    continue
+
                 # Some setups assign /32 to interfaces (point-to-point, overlays). A /32 scan is useless,
                 # so we broaden it to /24 for scanning purposes.
                 try:
@@ -1423,9 +1430,16 @@ def _get_local_cidrs() -> list[str]:
                 except Exception:
                     pref_i = prefix
                 if isinstance(pref_i, int) and pref_i >= 29:
-                    cidrs.append(str(ipaddress.ip_network(f"{local}/24", strict=False)))
+                    net = ipaddress.ip_network(f"{local}/24", strict=False)
                 else:
-                    cidrs.append(f"{local}/{prefix}")
+                    net = ipaddress.ip_network(f"{local}/{prefix}", strict=False)
+
+                # Only include private IPv4 networks (RFC1918). This prevents discovery from scanning
+                # CGNAT/VPN networks and public interfaces.
+                if not (net.version == 4 and net.is_private):
+                    continue
+
+                cidrs.append(str(net))
     except Exception:
         pass
 
@@ -1471,7 +1485,12 @@ def _get_default_gateway_ip() -> str:
         # default via 10.5.0.1 dev eth0 ...
         m = re.search(r"\bvia\s+(\d+\.\d+\.\d+\.\d+)", out)
         if m:
-            return m.group(1)
+            gw = m.group(1)
+            # If the default route is through an overlay/VPN (rare, but possible), ignore it.
+            # We want discovery to use local private networks.
+            if not _is_rfc1918(gw):
+                return ""
+            return gw
     except Exception:
         pass
     return ""

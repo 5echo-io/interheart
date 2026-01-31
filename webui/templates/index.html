@@ -210,7 +210,12 @@
           <div class="metric">
             <b>Basics</b>
             <div class="kv"><span>Name</span><code id="infoName">-</code></div>
-            <div class="kv"><span>IP</span><code id="infoIp">-</code></div>
+            <div class="kv"><span>IP</span>
+              <div class="copy-wrap" title="Click to copy">
+                <code id="infoIp" class="copyable" tabindex="0" role="button" aria-label="Copy IP address">-</code>
+                <span class="copy-ic" id="copyIpIcon" aria-hidden="true">⧉</span>
+              </div>
+            </div>
             <div class="kv"><span>Enabled</span><code id="infoEnabled">-</code></div>
             <div class="kv"><span>Interval</span><code id="infoInterval">-</code></div>
           </div>
@@ -225,7 +230,12 @@
 
           <div class="metric info-span2">
             <b>Endpoint</b>
-            <div class="kv endpoint-kv"><span>URL</span><div class="endpoint-wrap"><code id="infoEndpoint" class="endpoint-code">-</code><button class="btn btn-ghost btn-mini btn-icon copy-endpoint" id="btnCopyEndpoint" type="button" title="Copy endpoint URL" aria-label="Copy endpoint URL">⧉</button></div></div>
+            <div class="kv endpoint-kv"><span>URL</span>
+              <div class="copy-wrap endpoint-wrap" title="Click to copy">
+                <code id="infoEndpoint" class="endpoint-code copyable" tabindex="0" role="button" aria-label="Copy endpoint URL">-</code>
+                <span class="copy-ic" id="copyEndpointIcon" aria-hidden="true">⧉</span>
+              </div>
+            </div>
             </div>
         </div>
 

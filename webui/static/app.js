@@ -194,8 +194,9 @@
   // ---- Filter targets ----
   const filterInput = $("#filterInput");
   const table = $("#targetsTable");
-  // ---- Sorting state (default: IP asc) ----
-  let sortKey = "ip";
+  // ---- Sorting state (default: Ping asc) ----
+  // "Ping" here maps to the "Last ping" column.
+  let sortKey = "last_ping";
   let sortDir = "asc"; // asc|desc
 
   function ipKey(ip){
@@ -456,7 +457,8 @@ btnConfirmRemove?.addEventListener("click", async () => {
   const infoLastPing = $("#infoLastPing");
   const infoLastResp = $("#infoLastResp");
   const infoLatency = $("#infoLatency");
-  const btnCopyEndpoint = $("#btnCopyEndpoint");
+  const copyEndpointIcon = $("#copyEndpointIcon");
+  const copyIpIcon = $("#copyIpIcon");
 
   const u24 = $("#u24");
   const u7 = $("#u7");
@@ -468,24 +470,44 @@ btnConfirmRemove?.addEventListener("click", async () => {
   const u90t = $("#u90t");
 
   
-  btnCopyEndpoint?.addEventListener("click", async () => {
-    const url = (infoEndpoint && infoEndpoint.textContent) ? String(infoEndpoint.textContent).trim() : "";
-    if (!url || url === "-") return;
+  async function copyText(text, label){
+    const value = String(text || "").trim();
+    if (!value || value === "-") return;
     try{
-      await navigator.clipboard.writeText(url);
-      toast("Copied", "Endpoint URL copied");
+      await navigator.clipboard.writeText(value);
+      toast("Copied", `${label} copied`);
     }catch(e){
+      // fallback for older browsers
       const ta = document.createElement("textarea");
-      ta.value = url;
+      ta.value = value;
       ta.style.position = "fixed";
       ta.style.left = "-9999px";
       document.body.appendChild(ta);
       ta.select();
       document.execCommand("copy");
       document.body.removeChild(ta);
-      toast("Copied", "Endpoint URL copied");
+      toast("Copied", `${label} copied`);
     }
-  });
+  }
+
+  function bindCopyable(el, label){
+    if (!el) return;
+    if (el.dataset.boundCopy === "1") return;
+    el.dataset.boundCopy = "1";
+    el.addEventListener("click", () => copyText(el.textContent, label));
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " "){
+        e.preventDefault();
+        copyText(el.textContent, label);
+      }
+    });
+  }
+
+  bindCopyable(infoEndpoint, "Endpoint URL");
+  bindCopyable(infoIp, "IP address");
+  // Icons are just hints, but let them work too
+  copyEndpointIcon?.addEventListener("click", (e) => { e.stopPropagation(); copyText(infoEndpoint?.textContent, "Endpoint URL"); });
+  copyIpIcon?.addEventListener("click", (e) => { e.stopPropagation(); copyText(infoIp?.textContent, "IP address"); });
 
 btnCloseInfo?.addEventListener("click", () => hide(infoModal));
   infoModal?.addEventListener("click", (e) => { if (e.target === infoModal) hide(infoModal); });
@@ -1335,10 +1357,10 @@ btnRunDetails?.addEventListener("click", () => {
     btnRunNow.disabled = true;
     setRunInitial();
     show(runModal);
-    // Expected due count for progress (enabled targets)
+    // Expected due count for progress (enabled targets).
+    // NOTE: do not populate the "Checked" metric up-front; it should reflect actual work.
     try{
       runDueExpected = (lastTargets || []).filter(t => Number(t.enabled ?? 0) === 1 && String(t.status||"") !== "disabled").length;
-      mDue.textContent = String(runDueExpected || 0);
     }catch(e){ runDueExpected = 0; }
 
     try{

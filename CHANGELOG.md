@@ -6,6 +6,14 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.20.39 – 2026-01-31
+
+### Fixed
+- WebUI: Discovery **Start** no longer latches onto VPN/overlay networks (e.g. NetBird). Discovery now prefers **private (RFC1918)** subnets and skips common overlay interfaces by default.
+- WebUI: Run modal: **Checked** now starts at **0** and reflects actual work (no more pre-populated count on “Run now”).
+- WebUI: Sorting is now consistent: click column titles to sort, and default sort is **Last ping (asc)**.
+- WebUI: Information modal: click **Endpoint URL** or **IP** to copy; a subtle copy icon appears on hover (no extra button required).
+
 ## v5.20.35 – 2026-01-31
 
 ### Fixed
