@@ -9,6 +9,84 @@ STATE_DIR="/var/lib/interheart"
 DB="${STATE_DIR}/state.db"
 LOG_TAG="interheart"
 
+
+# Lightweight debug system
+# - Always writes a small snapshot to: /var/lib/interheart/debug_state.txt
+# - If INTERHEART_DEBUG=1, also appends verbose logs to: /var/lib/interheart/debug.log
+DEBUG_STATE_FILE="${STATE_DIR}/debug_state.txt"
+DEBUG_LOG_FILE="${STATE_DIR}/debug.log"
+DEBUG_MAX_BYTES=$((256*1024))
+
+_debug_ts() { date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date; }
+_debug_enabled() { [[ "${INTERHEART_DEBUG:-0}" == "1" || "${INTERHEART_DEBUG:-0}" == "true" ]]; }
+
+_debug_log() {
+  # Usage: _debug_log LEVEL message...
+  local lvl="${1:-INFO}"; shift || true
+  local msg="$*"
+  local line="[$(_debug_ts)] ${lvl} ${msg}"
+  if _debug_enabled; then
+    echo "${line}"
+    if [[ -f "${DEBUG_LOG_FILE}" ]]; then
+      local sz
+      sz=$(wc -c <"${DEBUG_LOG_FILE}" 2>/dev/null || echo 0)
+      if [[ "${sz}" =~ ^[0-9]+$ ]] && (( sz > DEBUG_MAX_BYTES )); then
+        tail -c $((DEBUG_MAX_BYTES/2)) "${DEBUG_LOG_FILE}" > "${DEBUG_LOG_FILE}.tmp" 2>/dev/null || true
+        mv -f "${DEBUG_LOG_FILE}.tmp" "${DEBUG_LOG_FILE}" 2>/dev/null || true
+      fi
+    fi
+    echo "${line}" >>"${DEBUG_LOG_FILE}" 2>/dev/null || true
+  fi
+}
+
+_write_debug_state() {
+  # Always update snapshot so we can fetch it from terminal.
+  local now version host
+  now="$(date -Is 2>/dev/null || date)"
+  version="$(cat /opt/interheart/VERSION 2>/dev/null || cat ./VERSION 2>/dev/null || echo -)"
+  host="$(hostname 2>/dev/null || echo -)"
+
+  local total enabled disabled up down unknown
+  total=$(sqlite3 -noheader -batch "${DB}" 'SELECT COUNT(1) FROM targets;' 2>/dev/null || echo 0)
+  enabled=$(sqlite3 -noheader -batch "${DB}" 'SELECT COUNT(1) FROM targets WHERE enabled=1;' 2>/dev/null || echo 0)
+  disabled=$(sqlite3 -noheader -batch "${DB}" 'SELECT COUNT(1) FROM targets WHERE enabled!=1;' 2>/dev/null || echo 0)
+
+  up=$(sqlite3 -noheader -batch "${DB}" "SELECT COUNT(1) FROM runtime WHERE status='up';" 2>/dev/null || echo 0)
+  down=$(sqlite3 -noheader -batch "${DB}" "SELECT COUNT(1) FROM runtime WHERE status='down';" 2>/dev/null || echo 0)
+  unknown=$(sqlite3 -noheader -batch "${DB}" "SELECT COUNT(1) FROM runtime WHERE status NOT IN ('up','down');" 2>/dev/null || echo 0)
+
+  local svc_runner svc_web svc_timer
+  if command -v systemctl >/dev/null 2>&1; then
+    svc_runner=$(systemctl is-active interheart.service 2>/dev/null || echo -)
+    svc_web=$(systemctl is-active interheart-webui.service 2>/dev/null || echo -)
+    svc_timer=$(systemctl is-active interheart.timer 2>/dev/null || echo -)
+  else
+    svc_runner=-; svc_web=-; svc_timer=-
+  fi
+
+  {
+    echo "interheart_debug_snapshot"
+    echo "time=${now}"
+    echo "version=${version}"
+    echo "host=${host}"
+    echo "targets_total=${total}"
+    echo "targets_enabled=${enabled}"
+    echo "targets_disabled=${disabled}"
+    echo "runtime_up=${up}"
+    echo "runtime_down=${down}"
+    echo "runtime_unknown=${unknown}"
+    echo "service_interheart.service=${svc_runner}"
+    echo "service_interheart-webui.service=${svc_web}"
+    echo "service_interheart.timer=${svc_timer}"
+    echo
+    echo "down_targets_top8"
+    sqlite3 -noheader -batch "${DB}" "SELECT t.name||'|'||t.ip||'|'||t.endpoint FROM targets t JOIN runtime r ON r.name=t.name WHERE r.status='down' ORDER BY t.name COLLATE NOCASE LIMIT 8;" 2>/dev/null | while IFS='|' read -r n ip ep; do
+      [[ -n "${n:-}" ]] || continue
+      echo "${n}|${ip}|$(mask_endpoint "${ep}")"
+    done
+  } >"${DEBUG_STATE_FILE}" 2>/dev/null || true
+}
+
 mkdir -p "${STATE_DIR}" >/dev/null 2>&1 || true
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -126,6 +204,7 @@ Usage:
   interheart set-target-interval <name> <interval_seconds>
   interheart test <name>
   interheart run-now [--targets name1,name2,...] [--force]
+  interheart debug [--follow] [--json]
 
 Notes:
   - Data stored in: ${DB}
@@ -609,6 +688,63 @@ cmd_run_now() {
 
   # Print summary line (WebUI parses this)
   echo "total=${total} due=${due} skipped=${skipped} ping_ok=${ping_ok} ping_fail=${ping_fail} sent=${sent} curl_fail=${curl_fail} disabled=${disabled} force=${force} duration_ms=${dur_ms}"
+  _write_debug_state
+}
+
+
+cmd_debug() {
+  ensure_exists
+  local follow=0
+  local as_json=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --follow)
+        follow=1
+        shift
+        ;;
+      --json)
+        as_json=1
+        shift
+        ;;
+      *)
+        die "ERROR: Unknown arg: $1"
+        ;;
+    esac
+  done
+
+  _write_debug_state
+
+  if [[ "$as_json" -eq 1 ]]; then
+    # very small JSON conversion for the snapshot (best-effort)
+    python3 - <<'PYS'
+import json
+out={}
+with open('/var/lib/interheart/debug_state.txt','r',encoding='utf-8',errors='ignore') as f:
+    for line in f:
+        line=line.strip()
+        if not line or line in ('interheart_debug_snapshot','down_targets_top8'):
+            continue
+        if '=' in line:
+            k,v=line.split('=',1)
+            out[k]=v
+        else:
+            # down targets lines
+            out.setdefault('down_targets',[]).append(line)
+print(json.dumps(out, indent=2, ensure_ascii=False))
+PYS
+  else
+    cat "${DEBUG_STATE_FILE}" 2>/dev/null || true
+  fi
+
+  if [[ "$follow" -eq 1 ]]; then
+    echo
+    echo "--- journalctl -u interheart.service -n 80 ---"
+    journalctl -u interheart.service -n 80 --no-pager -l 2>/dev/null || true
+    echo
+    echo "--- journalctl -u interheart-webui.service -n 80 ---"
+    journalctl -u interheart-webui.service -n 80 --no-pager -l 2>/dev/null || true
+  fi
 }
 
 main() {
@@ -664,6 +800,9 @@ main() {
       ;;
     run-now)
       cmd_run_now "$@"
+      ;;
+    debug)
+      cmd_debug "$@"
       ;;
     *)
       die "ERROR: Unknown command: ${cmd} (try: interheart --help)"

@@ -1489,8 +1489,7 @@ function attachMenuActions(){
   const discoverStopAfterToggle = $("#discoverStopAfterToggle");
   const discoverStopAfterCount = $("#discoverStopAfterCount");
   const discoverPercent = $("#discoverPercent");
-  const discoverLiveFeed = $("#discoverLiveFeed");
-  const discoverLiveHint = $("#discoverLiveHint");
+
   const discoverList = $("#discoverList");
   const discoverListEmpty = $("#discoverListEmpty");
   const discoverFound = $("#discoverFound");
@@ -1517,8 +1516,6 @@ function attachMenuActions(){
   let discoverRenderTimer = null;
   let discoverStartInFlight = false;
   let discoverGotSSE = false;
-
-  let discoverLive = []; // recent device/status items
   let discoverLastEventId = 0;
   let discoverUiTick = null;
   let discoverUiDirty = false;
@@ -1553,23 +1550,41 @@ function attachMenuActions(){
     discoverRenderTimer = setTimeout(() => {
       discoverRenderTimer = null;
       renderDiscoverList();
-      renderDiscoverLiveFeed();
+
     }, 250);
   }
 
-  function openDiscover(){
+  async function openDiscover(){
     if (!discoverModal) return;
-    // Load interface list on open (helps when VPN/overlay interfaces are present)
-    try{ loadDiscoverIfaces(); }catch(_){ }
+    // Load interface list on open
+    try{ await loadDiscoverIfaces(); }catch(_){ }
     show(discoverModal);
     // Default: show only new devices
     try{ if (discoverOnlyNew) discoverOnlyNew.checked = true; }catch(_){ }
-    // Sync UI with backend state immediately (handles "already running" cases)
+
+    // Sync UI with backend state, but do NOT attach/poll unless a scan is actually running.
+    // This prevents the modal from looking like 'Discovery is active' when it is not.
     try{
-      pollDiscoveryFallback();
-      connectDiscoveryStream();
-      if (!discoverFallbackPoll){
-        discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1200);
+      const st = await apiGet('/api/discover-status');
+      // Update counters even when idle
+      if (discoverSubnets && st && st.cidrs != null) discoverSubnets.textContent = String(st.cidrs);
+      if (discoverFound && st && st.found != null) discoverFound.textContent = String(st.found);
+      if (discoverStatus) discoverStatus.textContent = st.message || st.status || 'Idle';
+      if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
+
+      const running = st && (st.status === 'running' || st.status === 'starting' || st.status === 'cancelling');
+      if (running){
+        connectDiscoveryStream();
+        if (!discoverFallbackPoll){
+          discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1200);
+        }
+        // kick once
+        pollDiscoveryFallback();
+      }else{
+        // Ensure we are not polling/streaming when idle
+        try{ discoverES && discoverES.close && discoverES.close(); }catch(_){ }
+        discoverES = null;
+        if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
       }
     }catch(_){ }
   }
@@ -1724,29 +1739,6 @@ function attachMenuActions(){
     discoverListEmpty.style.display = shown ? 'none' : 'block';
     if (discoverCountHint) discoverCountHint.textContent = `${shown} shown`;
   }
-
-
-  function renderDiscoverLiveFeed(){
-    if (!discoverLiveFeed) return;
-    const items = Array.isArray(discoverLive) ? discoverLive.slice(0, 20) : [];
-    discoverLiveFeed.innerHTML = '';
-    if (!items.length){
-      discoverLiveFeed.innerHTML = '<div class="hint">No activity yet.</div>';
-      if (discoverLiveHint) discoverLiveHint.textContent = '-';
-      return;
-    }
-    items.forEach(it => {
-      const el = document.createElement('div');
-      el.className = 'live-item';
-      const left = it.ip ? `<b>${escapeHtml(it.ip)}</b>` : `<b>${escapeHtml(it.title||'')}</b>`;
-      const right = it.vendor ? `<span class="muted">${escapeHtml(it.vendor)}</span>` : `<span class="muted">${escapeHtml(it.meta||'')}</span>`;
-      el.innerHTML = `<div>${left}</div><div>${right}</div>`;
-      discoverLiveFeed.appendChild(el);
-    });
-    const top = items[0];
-    if (discoverLiveHint) discoverLiveHint.textContent = top.ip ? `${top.ip}${top.vendor ? ' • ' + top.vendor : ''}` : (top.title||'-');
-  }
-
   function toggleClearButtons(){
     document.querySelectorAll('.btn-clear[data-clear-for]').forEach(btn => {
       const id = btn.getAttribute('data-clear-for');
@@ -1982,8 +1974,6 @@ function connectDiscoveryStream(){
         if (discoverStatus) discoverStatus.textContent = obj.message || st || 'Running…';
         try{
           if (obj.message && String(obj.message).startsWith('Scanning ')){
-            discoverLive.unshift({ title: String(obj.message), meta: String(obj.scanning||'') });
-            discoverLive = discoverLive.slice(0, 20);
           }
         }catch(_){ }
 
@@ -2025,8 +2015,6 @@ function connectDiscoveryStream(){
         }
 
         try{
-          discoverLive.unshift({ ip, vendor: String(dev.vendor||'').trim() || String(dev.host||'').trim() || '' });
-          discoverLive = discoverLive.slice(0, 20);
         }catch(_){ }
         // Keep array for any legacy callers, but render uses the map.
         discoverDevices = Array.from(discoverDeviceMap.values());

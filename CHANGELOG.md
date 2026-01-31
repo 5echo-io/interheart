@@ -6,6 +6,19 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.43.0-beta.1 – 2026-02-01
+
+### Added
+- Backend: Lightweight debug snapshot system (always writes `/var/lib/interheart/debug_state.txt`, optional verbose logging with `INTERHEART_DEBUG=1`).
+- CLI: `interheart debug` command to dump snapshot (optionally `--follow` and `--json`).
+
+### Removed
+- WebUI: Discovery “Live feed” section.
+
+### Changed
+- WebUI: Opening Discovery no longer attaches to polling/streaming unless a scan is actually running (prevents “Discovery looks active” on load).
+
+
 ## v5.42.52 – 2026-02-01
 
 ### Added
