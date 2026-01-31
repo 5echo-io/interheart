@@ -7,6 +7,7 @@ import json
 import re
 import socket
 import datetime
+import logging
 from io import BytesIO
 from pathlib import Path
 
@@ -32,6 +33,11 @@ STATE_DIR = Path(os.environ.get("INTERHEART_STATE_DIR", "/var/lib/interheart"))
 DB_PATH = STATE_DIR / "state.db"
 RUN_META_FILE = STATE_DIR / "run_meta.json"
 RUN_OUT_FILE = STATE_DIR / "run_last_output.txt"
+
+# WebUI debug log (backend) – helpful when the UI appears empty on first load.
+WEBUI_DEBUG_FILE = STATE_DIR / "webui_debug.log"
+WEBUI_DEBUG_ENABLED = os.environ.get("INTERHEART_WEBUI_DEBUG", "1").strip() not in ("0", "false", "no")
+_LAST_DEBUG_TS = 0
 
 SCAN_META_FILE = STATE_DIR / "scan_meta.json"
 SCAN_OUT_FILE = STATE_DIR / "scan_last_output.txt"
@@ -72,6 +78,39 @@ def ensure_state_dir():
         pass
 
 ensure_state_dir()
+
+# Ensure Flask logger is usable under systemd (stdout/stderr -> journal)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+def _debug_log(msg: str, force: bool = False):
+    """Write a debug line to journal + a persistent file.
+
+    We only log when something looks off, or when explicitly forced (e.g. via /api/debug-state).
+    This avoids spamming the journal every 2 seconds (the UI polls /state).
+    """
+    global _LAST_DEBUG_TS
+    if not WEBUI_DEBUG_ENABLED:
+        return
+    now = int(time.time())
+    # throttle to max 1 line / 3 seconds unless forced
+    if not force and (now - _LAST_DEBUG_TS) < 3:
+        return
+    _LAST_DEBUG_TS = now
+
+    line = f"[webui] {msg}"
+    try:
+        APP.logger.info(line)
+    except Exception:
+        try:
+            print(line, flush=True)
+        except Exception:
+            pass
+    try:
+        ensure_state_dir()
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+        WEBUI_DEBUG_FILE.open("a", encoding="utf-8").write(f"{ts} {line}\n")
+    except Exception:
+        pass
 
 def die_json(msg: str, code: int = 500):
     return jsonify({"ok": False, "message": msg}), code
@@ -755,7 +794,62 @@ def index():
 @APP.get("/state")
 def state():
     ok, targets = merged_targets_safe()
+    # Detect the common "rows flash then disappear" symptom:
+    # - server-rendered table has rows
+    # - first /state poll returns 0 targets
+    if targets is not None and len(targets) == 0:
+        db_exists = DB_PATH.exists()
+        db_size = DB_PATH.stat().st_size if db_exists else 0
+        # Try a lightweight CLI check (non-fatal)
+        cli_rc, cli_out = run_cmd(["list"])
+        cli_cnt = len(parse_list_targets(cli_out)) if cli_rc == 0 else -1
+        _debug_log(
+            f"/state returned 0 targets (ok={ok}) | db_exists={db_exists} db_size={db_size} | cli_list_rc={cli_rc} cli_targets={cli_cnt} | cwd={os.getcwd()} cli={CLI}",
+            force=False,
+        )
     return jsonify({"ok": ok, "updated": int(time.time()), "targets": targets})
+
+
+@APP.get("/api/debug-state")
+def api_debug_state():
+    """Return extra backend diagnostics for troubleshooting empty tables.
+
+    This endpoint is not polled by the UI; it's intended for manual use:
+      curl -s http://<host>:8088/api/debug-state | jq
+    """
+    ok, targets = merged_targets_safe()
+    db_exists = DB_PATH.exists()
+    db_size = DB_PATH.stat().st_size if db_exists else 0
+    cache_cnt = len((_LAST_STATE_CACHE.get("targets") or []))
+
+    cli_list_rc, cli_list_out = run_cmd(["list"])
+    cli_targets = parse_list_targets(cli_list_out) if cli_list_rc == 0 else []
+    cli_cnt = len(cli_targets)
+
+    cli_status_rc, cli_status_out = run_cmd(["status"])
+    status_map = parse_status(cli_status_out) if cli_status_rc == 0 else {}
+
+    diag = {
+        "ok": ok,
+        "targets_count": len(targets or []),
+        "db": {"path": str(DB_PATH), "exists": db_exists, "size": db_size},
+        "cli": {
+            "path": str(CLI),
+            "list_rc": cli_list_rc,
+            "list_count": cli_cnt,
+            "status_rc": cli_status_rc,
+            "status_count": len(status_map),
+        },
+        "cache": {"count": cache_cnt, "updated": int(_LAST_STATE_CACHE.get("updated") or 0)},
+        "env": {"cwd": os.getcwd(), "uid": os.getuid() if hasattr(os, "getuid") else None},
+        "updated": int(time.time()),
+    }
+
+    _debug_log(
+        f"/api/debug-state: ok={ok} targets={len(targets or [])} db_exists={db_exists} db_size={db_size} cli_list_rc={cli_list_rc} cli_targets={cli_cnt} cache={cache_cnt}",
+        force=True,
+    )
+    return jsonify({"ok": True, "diag": diag, "targets": targets})
 
 @APP.get("/logs")
 def logs():

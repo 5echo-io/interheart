@@ -534,6 +534,11 @@
     </div>
   </div>
 
+  <script>
+    // Seed the UI with the server-rendered targets. This prevents the table
+    // from flashing empty before the first /state poll returns.
+    window.__INITIAL_TARGETS__ = {{ targets|tojson }};
+  </script>
   <script src="/static/app.js?v={{ ui_version }}"></script>
 </body>
 </html>

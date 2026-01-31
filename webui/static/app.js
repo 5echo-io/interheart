@@ -1523,8 +1523,20 @@ btnRunDetails?.addEventListener("click", () => {
   });
 
   // init
+  // Start with the server-rendered targets to avoid a flash of empty rows
+  // before the first /state poll completes.
+  try{
+    const seeded = window.__INITIAL_TARGETS__;
+    if (Array.isArray(seeded) && seeded.length){
+      lastTargets = seeded;
+      renderTargets(lastTargets);
+    } else {
+      // If nothing was seeded, do not wipe the DOM table here.
+      // We'll populate it as soon as /state returns.
+    }
+  }catch(e){}
+
   bindSortHeaders();
-  renderTargets(lastTargets);
   // Ensure Enable/Disable visibility + row datasets are synced immediately
   refreshState(true);
   setInterval(() => refreshState(false), 2000);

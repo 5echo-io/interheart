@@ -1,3 +1,10 @@
+## 4.10.17 - 2026-01-31
+
+- Fix: Prevent targets from flashing briefly then disappearing on first page load (seed WebUI with server-rendered targets instead of clearing table before the first /state poll).
+- Debug: Added backend diagnostics for the "empty table" issue.
+  - Logs anomalies to journal + `/var/lib/interheart/webui_debug.log`.
+  - New endpoint: `/api/debug-state` for quick CLI/DB sanity check.
+
 ## 4.10.16 - 2026-01-31
 
 - Fix: Prevent WebUI from wiping the targets table on first load when `state.db` exists but has an empty `targets` table (falls back to CLI if CLI has targets).
