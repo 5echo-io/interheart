@@ -6,6 +6,14 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.42.52 – 2026-02-01
+
+### Added
+- CLI: `interheart debug` (and `--follow`) for quick service + journal output to support troubleshooting from terminal.
+
+### Fixed
+- WebUI: Fixed a JavaScript syntax error that broke Actions menus, multi-select bulk actions, and the Logs viewer.
+
 ## v5.42.51 – 2026-01-31
 
 ### Added

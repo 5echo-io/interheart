@@ -2122,6 +2122,6 @@ function connectDiscoveryStream(){
   // ---- End network discovery ----
 
 
-})()  try{ toggleClearButtons(); }catch(_){ }
-
-;
+  // Ensure clear-buttons reflect current input state on load.
+  try{ toggleClearButtons(); }catch(_){ }
+})();

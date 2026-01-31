@@ -110,6 +110,49 @@ cmd_status() {
   done
 }
 
+cmd_debug() {
+  require_root
+  db_init
+
+  local mode="${1:-}"
+
+  echo "interheart debug"
+  echo "- version:  $(cat /opt/interheart/VERSION 2>/dev/null || cat ./VERSION 2>/dev/null || echo '-')"
+  echo "- hostname: $(hostname 2>/dev/null || true)"
+  echo "- time:     $(date -Is 2>/dev/null || true)"
+  echo
+
+  echo "== Services =="
+  for svc in interheart.timer interheart.service interheart-webui.service; do
+    if command -v systemctl >/dev/null 2>&1; then
+      local active="-"
+      active="$(systemctl is-active "$svc" 2>/dev/null || true)"
+      printf "%-26s %s\n" "$svc" "$active"
+    else
+      printf "%-26s %s\n" "$svc" "systemctl not found"
+    fi
+  done
+
+  echo
+  echo "== Targets (quick status) =="
+  cmd_status || true
+
+  echo
+  echo "== Last runner lines (interheart.service) =="
+  if [[ "$mode" == "follow" || "$mode" == "-f" || "$mode" == "--follow" ]]; then
+    journalctl -u interheart.service -n 50 -f --no-pager || true
+    return 0
+  fi
+  journalctl -u interheart.service -n 60 --no-pager || true
+
+  echo
+  echo "== Last WebUI lines (interheart-webui.service) =="
+  journalctl -u interheart-webui.service -n 60 --no-pager || true
+
+  echo
+  echo "Tip: 'sudo interheart debug --follow' to tail runner logs live."
+}
+
 cmd_help() {
   cat <<EOF
 interheart CLI
@@ -121,6 +164,7 @@ Commands:
   disable <name>
   list
   status
+  debug [--follow]
 EOF
 }
 
@@ -135,6 +179,7 @@ main() {
     disable)  cmd_disable "$@" ;;
     list)     cmd_list ;;
     status)   cmd_status ;;
+    debug)    cmd_debug "$@" ;;
     help|-h|--help) cmd_help ;;
     *)
       echo "Unknown command: $cmd" >&2
