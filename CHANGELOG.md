@@ -1,3 +1,9 @@
+## 4.10.15 - 2026-01-31
+
+- Fix: WebUI table now populates immediately on page load even before the first-ever run (fallback to CLI when state DB is missing).
+- Fix: “Run now” modal no longer gets stuck in a fake running state (reaps finished CLI process; treats zombie PID as finished).
+- UX: Run now live line no longer overwrites useful progress output with a generic “Running…”.
+
 ## 4.10.14 - 2026-01-31
 
 - Fix: WebUI `/state` now reads the **real** runtime table (`runtime`) instead of legacy `state` table, so targets render immediately without needing **Run now**.

@@ -121,6 +121,21 @@ def pid_is_running(pid: int) -> bool:
         return False
     try:
         os.kill(pid, 0)
+        # If it's a zombie (defunct) we should NOT treat it as running.
+        # This matters because the WebUI starts the CLI via Popen without
+        # always immediately reaping it, which can leave a zombie process
+        # behind. `kill(pid, 0)` will still succeed for zombies.
+        try:
+            stat = Path(f"/proc/{pid}/stat")
+            if stat.exists():
+                content = stat.read_text(encoding="utf-8", errors="replace")
+                # /proc/<pid>/stat: pid (comm) state ...
+                # state is the 3rd field. e.g. 'Z' for zombie.
+                parts = content.split()
+                if len(parts) >= 3 and parts[2] == "Z":
+                    return False
+        except Exception:
+            pass
         return True
     except Exception:
         return False
@@ -412,8 +427,11 @@ def db_read_targets(db_path: Path):
     Returns (ok, targets). ok=False on transient errors (locked/unavailable).
     """
     import sqlite3
+    # If the DB is missing (fresh install / not yet run), fall back to CLI.
+    # Returning an empty list here causes the UI to render an empty table
+    # until the first "Run now" creates/populates the DB.
     if not db_path.exists():
-        return True, []
+        return False, None
     try:
         con = sqlite3.connect(str(db_path), timeout=2.0)
         con.row_factory = sqlite3.Row
@@ -1099,6 +1117,23 @@ def api_run_status():
     pid = int(meta.get("pid") or 0)
     started = int(meta.get("started") or 0)
     finished = int(meta.get("finished") or 0)
+
+    # Reap finished child process (prevents zombie PID from looking "running" forever)
+    if pid:
+        try:
+            wp, status = os.waitpid(pid, os.WNOHANG)
+            if wp == pid and wp != 0:
+                # Child finished
+                meta["rc"] = int(os.WEXITSTATUS(status)) if os.WIFEXITED(status) else 1
+                meta["finished"] = int(time.time())
+                meta["pid"] = 0
+                save_run_meta(meta)
+                pid = 0
+        except ChildProcessError:
+            # Not our child (e.g. after restart). We'll fall back to /proc checks.
+            pass
+        except Exception:
+            pass
 
     if pid and pid_is_running(pid):
         return jsonify({"running": True, "finished": False, "pid": pid, "started": started})

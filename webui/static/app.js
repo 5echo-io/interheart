@@ -1250,7 +1250,6 @@ btnRunDetails?.addEventListener("click", () => {
 
     const st = await apiGet("/api/run-status");
     if (st && st.running){
-      runNowLine.textContent = "Running…";
       runTitleMeta.textContent = "running…";
       runLive.style.display = "inline-flex";
       runLiveText.textContent = "Running…";
