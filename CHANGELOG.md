@@ -6,7 +6,7 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
-## v5.1.19 – 2026-01-31
+## v5.1.20 – 2026-01-31
 
 ### Changed
 - WebUI: Rebuilt **Search network** from scratch with a real background worker (keeps scanning even if you close the modal).
@@ -51,6 +51,7 @@ This project follows Semantic Versioning (SemVer).
 - WebUI: Actions menu stability fixes (enable/disable visibility, alignment, and no hidden dropdowns when few rows exist).
 - WebUI: Sorting/header rendering regressions fixed (stable header row, working sort direction indicators).
 - WebUI: Network scan reliability improvements (better subnet discovery, better progress reporting, cancel/scan-again behavior).
+- WebUI: Included the missing scan worker entrypoint so “Search network” actually runs (scan_worker.py).
 - WebUI: Logs formatting fixes (timestamps cleaned, exports work reliably).
 - Permissions: Resolved issues writing run output / reading journal without interactive sudo prompts.
 

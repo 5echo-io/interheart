@@ -1763,8 +1763,11 @@ def api_scan_start():
     save_scan_meta(meta)
 
     try:
+        worker_path = BASE_DIR / "scan_worker.py"
+        if not worker_path.exists():
+            raise FileNotFoundError(f"scan worker missing: {worker_path}")
         p = subprocess.Popen(
-            ["python3", str(BASE_DIR / "scan_worker.py")],
+            ["python3", str(worker_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
