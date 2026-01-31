@@ -693,7 +693,7 @@ function statusClass(name, status, enabled, lastRttMs, lastRespEpoch){
   const hbFail = isEnabled && st === "down" && Number(lastRttMs||-1) >= 0 && Number(lastRespEpoch||0) > 0;
   const hasForced = forcedStarting.has(nm);
 
-  if (!isEnabled) return "status-unknown";
+  if (!isEnabled) return "status-disabled";
 
   // Right after enabling, the DB may still report last_status='disabled'
   // until the first run updates it. Treat that as STARTING to avoid
@@ -904,7 +904,7 @@ function attachMenuActions(){
                 const stEl = row.querySelector(".status-text");
                 const chip = row.querySelector(".status-chip");
                 if (stEl) stEl.textContent = "STARTING..";
-                if (chip){ chip.classList.remove("status-up","status-down","status-hb","status-unknown","status-starting"); chip.classList.add("status-starting"); }
+                if (chip){ chip.classList.remove("status-up","status-down","status-hb","status-unknown","status-starting","status-disabled"); chip.classList.add("status-starting"); }
                 // fire test in background (don't block UI)
                 apiPost("/api/test", fd).then(()=>refreshState(true)).catch(()=>{});
               }
@@ -1026,10 +1026,10 @@ function attachMenuActions(){
 
   const hbFail = enabled && st === "down" && lastRtt >= 0 && lastResp > 0;
 
-  chip.classList.remove("status-up","status-down","status-unknown","status-hb","status-starting");
+  chip.classList.remove("status-up","status-down","status-unknown","status-hb","status-starting","status-disabled");
 
   if (!enabled){
-    chip.classList.add("status-unknown");
+    chip.classList.add("status-disabled");
     text.textContent = "DISABLED";
   }else if (st === "up"){
     chip.classList.add("status-up");
