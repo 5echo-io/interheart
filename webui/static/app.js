@@ -198,8 +198,13 @@
   // IMPORTANT: Don't cache #targetsTable here.
   // The script can load before the table exists; caching would keep it null,
   // and sorting would silently fail.
+  // NOTE:
+  // We default the *rendered* list to IP asc, but we don't want the first
+  // user click on the IP header to immediately toggle to desc.
+  // So we track a "first IP click" and keep asc on that click.
   let sortKey = "ip";
   let sortDir = "asc"; // asc|desc
+  let ipFirstClickArmed = true;
 
   // If the backend state fetch hasn't populated lastTargets yet (or fails),
   // we still want sorting to work using the server-rendered table.
@@ -313,10 +318,18 @@
 
         const key = th.dataset.sort || "name";
         if (sortKey === key){
-          sortDir = (sortDir === "asc") ? "desc" : "asc";
+          // Special rule: IP should default to ascending on first click.
+          // Since we already default-sort by IP asc, the first click should NOT flip it.
+          if (key === 'ip' && sortDir === 'asc' && ipFirstClickArmed){
+            ipFirstClickArmed = false;
+          } else {
+            sortDir = (sortDir === "asc") ? "desc" : "asc";
+            if (key === 'ip') ipFirstClickArmed = false;
+          }
         } else {
           sortKey = key;
           sortDir = "asc";
+          if (key === 'ip') ipFirstClickArmed = false;
         }
         updateSortIndicators();
         renderTargets(lastTargets);
@@ -337,10 +350,17 @@
 
     const k = String(key || "name");
     if (sortKey === k){
-      sortDir = (sortDir === "asc") ? "desc" : "asc";
+      // Special rule: IP should default to ascending on first click.
+      if (k === 'ip' && sortDir === 'asc' && ipFirstClickArmed){
+        ipFirstClickArmed = false;
+      } else {
+        sortDir = (sortDir === "asc") ? "desc" : "asc";
+        if (k === 'ip') ipFirstClickArmed = false;
+      }
     } else {
       sortKey = k;
       sortDir = "asc";
+      if (k === 'ip') ipFirstClickArmed = false;
     }
     updateSortIndicators();
     renderTargets(lastTargets);
@@ -1442,6 +1462,10 @@ function attachMenuActions(){
   const btnDiscoverStart = $("#btnDiscoverStart");
   const btnDiscoverCancel = $("#btnDiscoverCancel");
   const btnDiscoverAgain = $("#btnDiscoverAgain");
+  const btnDiscoverDebug = $("#btnDiscoverDebug");
+  const discoverDebugCard = $("#discoverDebugCard");
+  const discoverDebugOut = $("#discoverDebugOut");
+  const btnDiscoverDebugClose = $("#btnDiscoverDebugClose");
   const discoverIface = $("#discoverIface");
   const discoverScope = $("#discoverScope");
   const discoverCustom = $("#discoverCustom");
@@ -1471,6 +1495,30 @@ function attachMenuActions(){
   let discoverDevices = [];
   let discoverSelected = null;
   let discoverRenderTimer = null;
+
+  // Lightweight debug logger for Discovery.
+  // Keeps last ~200 entries and renders them into the debug box.
+  let discoverDebugLines = [];
+  function discoverDbg(line, obj){
+    try{
+      const ts = new Date().toISOString().replace('T',' ').replace('Z','');
+      let s = `[${ts}] ${String(line||'')}`;
+      if (obj !== undefined){
+        try{ s += "\n" + JSON.stringify(obj, null, 2); }catch(_){ }
+      }
+      discoverDebugLines.push(s);
+      if (discoverDebugLines.length > 200) discoverDebugLines = discoverDebugLines.slice(-200);
+      if (discoverDebugOut) discoverDebugOut.textContent = discoverDebugLines.length ? discoverDebugLines.join("\n\n") : '(no debug output yet)';
+    }catch(_){ }
+  }
+
+  function openDiscoverDebug(){
+    if (discoverDebugCard) discoverDebugCard.style.display = 'block';
+  }
+
+  function closeDiscoverDebug(){
+    if (discoverDebugCard) discoverDebugCard.style.display = 'none';
+  }
 
   function scheduleDiscoverRender(){
     if (discoverRenderTimer) return;
@@ -1649,10 +1697,16 @@ function attachMenuActions(){
   }
 
   async function startDiscovery(){
-    resetDiscoverUI();
-    if (discoverStatus) discoverStatus.textContent = 'Starting…';
-    if (discoverScanning) discoverScanning.textContent = '-';
-    if (btnDiscoverStart) btnDiscoverStart.disabled = true;
+    try{
+      resetDiscoverUI();
+      discoverDbg('Start clicked', {
+        iface: discoverIface?.value || 'auto',
+        scope: discoverScope?.value || 'auto',
+        profile: discoverProfile?.value || 'safe'
+      });
+      if (discoverStatus) discoverStatus.textContent = 'Starting…';
+      if (discoverScanning) discoverScanning.textContent = '-';
+      if (btnDiscoverStart) btnDiscoverStart.disabled = true;
 
     const scope = (discoverScope?.value || 'auto');
     const custom = (discoverCustom?.value || '').trim();
@@ -1664,25 +1718,39 @@ function attachMenuActions(){
       cap: 4096,
     };
 
-    let r = null;
-    try{
-      r = await apiPostJson('/api/discover-start', payload);
-    }catch(e){
-      r = { ok:false, message: e?.message || 'Failed to fetch' };
-    }
+      let r = null;
+      try{
+        discoverDbg('POST /api/discover-start', payload);
+        r = await apiPostJson('/api/discover-start', payload);
+      }catch(e){
+        r = { ok:false, message: e?.message || 'Failed to fetch' };
+      }
+      discoverDbg('Start response', r);
 
-    if (!r || !r.ok){
-      if (discoverError){ discoverError.textContent = (r && r.message) ? r.message : 'Failed to start'; discoverError.style.display='block'; }
-      if (discoverStatus) discoverStatus.textContent = 'Error';
-      if (btnDiscoverStart) btnDiscoverStart.disabled = false;
-      return;
-    }
+      if (!r || !r.ok){
+        if (discoverError){ discoverError.textContent = (r && r.message) ? r.message : 'Failed to start'; discoverError.style.display='block'; }
+        if (discoverStatus) discoverStatus.textContent = 'Error';
+        if (btnDiscoverStart) btnDiscoverStart.disabled = false;
+        // auto open debug box so the user can copy logs
+        openDiscoverDebug();
+        return;
+      }
 
     if (discoverStatus) discoverStatus.textContent = 'Discovery started';
     if (btnDiscoverStart) btnDiscoverStart.style.display='none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
 
-    connectDiscoveryStream();
+      connectDiscoveryStream();
+    }catch(err){
+      // If anything throws before we update the UI, it can look like "Idle".
+      try{
+        discoverDbg('JS exception in startDiscovery', { message: String(err?.message || err), stack: String(err?.stack||'') });
+        if (discoverError){ discoverError.textContent = 'Discovery failed (JS error). Use Debug to collect details.'; discoverError.style.display='block'; }
+        if (discoverStatus) discoverStatus.textContent = 'Error';
+        if (btnDiscoverStart) btnDiscoverStart.disabled = false;
+        openDiscoverDebug();
+      }catch(_){ }
+    }
   }
 
   // Expose a stable global hook as a safety net.
@@ -1694,9 +1762,38 @@ function attachMenuActions(){
     if (discoverStatus) discoverStatus.textContent = 'Cancelling…';
   }
 
+  async function runDiscoveryDebug(){
+    try{
+      openDiscoverDebug();
+      discoverDebugLines = [];
+      discoverDbg('Running discovery diagnostics…');
+
+      const payload = {
+        scope: (discoverScope?.value || 'auto'),
+        custom: (discoverCustom?.value || '').trim(),
+        iface: discoverIface?.value || 'auto',
+        profile: discoverProfile?.value || 'safe',
+        cap: 256,
+      };
+      discoverDbg('POST /api/discover-debug', payload);
+      const r = await apiPostJson('/api/discover-debug', payload);
+      discoverDbg('Debug response', r);
+      if (!r || !r.ok){
+        toast('Discovery debug', (r && r.message) ? r.message : 'Failed');
+      }
+    }catch(err){
+      discoverDbg('JS exception in debug', { message: String(err?.message || err), stack: String(err?.stack||'') });
+    }
+  }
+
+  // Optional global hook for manual testing from the console.
+  window.__ihDiscoveryDebug = runDiscoveryDebug;
+
   btnDiscoverStart?.addEventListener('click', startDiscovery);
   btnDiscoverAgain?.addEventListener('click', startDiscovery);
   btnDiscoverCancel?.addEventListener('click', cancelDiscovery);
+  btnDiscoverDebug?.addEventListener('click', runDiscoveryDebug);
+  btnDiscoverDebugClose?.addEventListener('click', closeDiscoverDebug);
 
   
   let discoverFallbackPoll = null;

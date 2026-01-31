@@ -2426,7 +2426,130 @@ def api_discover_status():
         meta['finished'] = int(meta.get('finished') or int(time.time()))
         meta['error'] = meta.get('error') or 'Worker stopped unexpectedly'
         save_discovery_meta(meta)
-    return jsonify({'ok': True, 'meta': meta})
+    # The WebUI polls this endpoint as a fallback when SSE is blocked.
+    # Return both the raw meta and flattened fields (cidrs count, found count, etc.)
+    # so the frontend can render progress without special-casing.
+    cidrs = meta.get('cidrs') or []
+    found = meta.get('found') or []
+    prog = meta.get('progress') or {}
+    out = {
+        'ok': True,
+        'meta': meta,
+        'status': meta.get('status') or 'idle',
+        'message': meta.get('error') or meta.get('status') or 'idle',
+        'cidrs': len(cidrs),
+        'found': len(found),
+        'progress': prog if isinstance(prog, dict) else {},
+        'scanning': (prog.get('cidr') if isinstance(prog, dict) else '') or '',
+    }
+    return jsonify(out)
+
+
+@APP.post('/api/discover-debug')
+def api_discover_debug():
+    """Run lightweight diagnostics for discovery.
+
+    This helps troubleshoot environments where the UI shows 'Idle' due to SSE blocks,
+    worker failures, missing nmap, permission issues, or wrong interface selection.
+    """
+    data = request.get_json(silent=True) or {}
+    # Use provided opts if sent, otherwise use the last saved opts.
+    meta = load_discovery_meta() or {}
+    base_opts = meta.get('opts') or {}
+    opts = {
+        'scope': data.get('scope') or base_opts.get('scope') or 'auto',
+        'custom': data.get('custom') or base_opts.get('custom') or '',
+        'iface': data.get('iface') or base_opts.get('iface') or 'auto',
+        'profile': data.get('profile') or base_opts.get('profile') or 'safe',
+        'cap': int(data.get('cap') or 256),
+    }
+
+    diag: dict = {
+        'ok': True,
+        'opts': opts,
+        'nmap_path': shutil.which('nmap') or '',
+        'worker_pid': int(meta.get('pid') or 0),
+        'worker_running': False,
+        'status': meta.get('status') or 'idle',
+        'error': meta.get('error') or '',
+    }
+
+    try:
+        pid = int(meta.get('pid') or 0)
+        diag['worker_running'] = bool(pid and pid_is_running(pid))
+    except Exception:
+        diag['worker_running'] = False
+
+    # Build cidrs the same way the worker would
+    try:
+        cidrs = _discover_build_cidrs(opts)
+        diag['cidrs_count'] = len(cidrs)
+        diag['cidrs_preview'] = cidrs[:10]
+    except Exception as e:
+        diag['cidrs_count'] = 0
+        diag['cidrs_preview'] = []
+        diag['cidrs_error'] = str(e)
+
+    # Basic network info
+    try:
+        diag['default_gateway'] = _get_default_gateway_ip() or ''
+    except Exception:
+        diag['default_gateway'] = ''
+
+    try:
+        diag['iface_effective'] = ''
+        pref = str(opts.get('iface') or '').strip()
+        if pref.lower() not in ('', 'auto', 'default'):
+            diag['iface_effective'] = pref
+    except Exception:
+        pass
+
+    # Capture last discovery events (tail)
+    try:
+        if DISCOVERY_EVENTS_FILE.exists():
+            txt = DISCOVERY_EVENTS_FILE.read_text(encoding='utf-8', errors='ignore')
+            # keep last ~200 lines
+            lines = txt.splitlines()[-200:]
+            diag['events_tail'] = lines
+        else:
+            diag['events_tail'] = []
+    except Exception as e:
+        diag['events_tail'] = []
+        diag['events_error'] = str(e)
+
+    # Quick nmap smoke test (single host) if nmap exists
+    try:
+        if diag['nmap_path']:
+            target = diag.get('default_gateway') or ''
+            if not target:
+                # fall back to first cidr's network address
+                prev = (diag.get('cidrs_preview') or [])
+                if prev:
+                    try:
+                        net = ipaddress.ip_network(prev[0], strict=False)
+                        target = str(net.network_address)
+                    except Exception:
+                        target = ''
+            if target:
+                args = ['nmap','-sn','-n']
+                if diag.get('iface_effective'):
+                    args += ['-e', diag['iface_effective']]
+                args += ['--max-retries','1','--host-timeout','2s', target]
+                p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=12)
+                diag['nmap_test'] = {
+                    'args': args,
+                    'rc': int(p.returncode),
+                    'stdout': (p.stdout or '')[-4000:],
+                    'stderr': (p.stderr or '')[-4000:],
+                }
+            else:
+                diag['nmap_test'] = {'skipped': True, 'reason': 'No target found for smoke test'}
+        else:
+            diag['nmap_test'] = {'skipped': True, 'reason': 'nmap not installed'}
+    except Exception as e:
+        diag['nmap_test'] = {'ok': False, 'error': str(e)}
+
+    return jsonify(diag)
 
 
 @APP.post('/api/discover-cancel')

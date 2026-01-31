@@ -479,6 +479,7 @@
       <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Start</button>
       <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
       <button class="btn btn-ghost btn-mini" id="btnDiscoverAgain" type="button" style="display:none;" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Search again</button>
+      <button class="btn btn-ghost btn-mini" id="btnDiscoverDebug" type="button" title="Run discovery diagnostics">Debug</button>
       <label class="toggle" style="margin-left:auto;">
         <input type="checkbox" id="discoverOnlyNew" />
         <span>Show only new</span>
@@ -501,6 +502,15 @@
         <div class="hint" id="discoverStatus">Idle</div>
         <div class="hint" id="discoverScanning" style="margin-top:-6px; opacity:.75;">-</div>
         <div class="alert alert--error" id="discoverError" style="display:none;"></div>
+        <div class="card card--soft" id="discoverDebugCard" style="display:none; margin-top:10px;">
+          <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <b>Discovery debug</b>
+            <button class="btn btn-ghost btn-mini" id="btnDiscoverDebugClose" type="button">Close</button>
+          </div>
+          <div class="card-body">
+            <pre class="pre" id="discoverDebugOut" style="white-space:pre-wrap; word-break:break-word; max-height: 240px; overflow:auto; margin:0;">(no debug output yet)</pre>
+          </div>
+        </div>
       </div>
 
       <div class="field" style="margin-top:-2px;">

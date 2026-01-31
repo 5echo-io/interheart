@@ -6,6 +6,19 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.25.45 – 2026-01-31
+
+### Added
+- WebUI: Discovery **Debug** button that runs diagnostics (nmap presence, effective interface, CIDR preview, worker status, recent events, and a quick nmap smoke test) and prints copyable output.
+
+### Improved
+- WebUI: IP column sorting now defaults to **ascending** on the first IP click (no immediate flip to descending).
+
+### Fixed
+- WebUI: Discovery progress fallback polling now works correctly when SSE is blocked (the status endpoint returns the fields the UI expects).
+
+---
+
 ## v5.23.45 – 2026-01-31
 
 ### Fixed
