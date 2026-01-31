@@ -6,6 +6,11 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.23.45 – 2026-01-31
+
+### Fixed
+- WebUI: Table sorting now triggers reliably on header clicks by using a direct global sort handler (fallback for environments where delegated clicks don’t fire).
+
 ## v5.23.44 – 2026-01-31
 
 ### Fixed

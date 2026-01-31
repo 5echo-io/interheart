@@ -325,6 +325,27 @@
     updateSortIndicators();
   }
 
+  // Ultra-reliable sort trigger for header clicks.
+  // Some environments/extensions can interfere with delegated click handlers.
+  // The template also calls this directly via onclick on sortable headers.
+  window.__IH_SORT = function(key){
+    // If state hasn't loaded yet, sort the server-rendered rows instead
+    // of wiping the table by rendering an empty lastTargets array.
+    if (!Array.isArray(lastTargets) || lastTargets.length === 0){
+      lastTargets = hydrateTargetsFromDOM();
+    }
+
+    const k = String(key || "name");
+    if (sortKey === k){
+      sortDir = (sortDir === "asc") ? "desc" : "asc";
+    } else {
+      sortKey = k;
+      sortDir = "asc";
+    }
+    updateSortIndicators();
+    renderTargets(lastTargets);
+  };
+
   function applyTargetFilter(){
     renderTargets(lastTargets);
   }
