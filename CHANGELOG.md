@@ -6,6 +6,27 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.9.23 – 2026-01-31
+
+### Rebuilt
+- WebUI: **Network discovery** rebuilt again – now a **side panel** (no popup-stress) with **real-time** results via SSE.
+- Backend: Discovery runs as a **separate worker** using **nmap only**, to avoid UI lag and to keep scanning even if you close the panel.
+
+### Added
+- Device list filtering (name / IP / MAC / vendor) + **Show only new** toggle.
+- Clear chips in the list: **New**, **Already added**, **Added now**.
+- Better add-flow: click a device → prefilled name + IP, endpoint suggestions, **Add & keep open**.
+
+### Improved
+- Safer scanning defaults (profile: Safe/Normal/Fast) + automatic subnet chunking to /24 with a safety cap.
+- Smoother UX: progress bar, status line, and "Search again" appears only when a scan is finished.
+
+### Fixed
+- Network discovery no longer blocks the browser thread / causes lag during scan.
+- "Failed to fetch" is now surfaced as a readable error in the panel when the backend fails.
+
+---
+
 ## v5.3.21 – 2026-01-31
 
 ### Improved

@@ -40,6 +40,20 @@
       // avoid blowing up the UI when the server returns HTML on error
       data = { ok: res.ok, message: txt ? String(txt).slice(0,240) : (res.statusText || "Error") };
     }
+
+
+  async function apiPostJson(url, obj){
+    try{
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(obj || {}),
+      });
+      return await r.json();
+    }catch(e){
+      return {ok:false, message: 'Failed to fetch'};
+    }
+  }
     if (!res.ok && data && data.ok !== true){
       // Normalize common fetch failures
       data.ok = false;
@@ -1333,335 +1347,289 @@ btnRunDetails?.addEventListener("click", () => {
 
 
 
-  // ---- Network scan ----
-  const btnSearchNetwork = $("#btnSearchNetwork");
-  const scanModal = $("#scanModal");
-  const btnCloseScan = $("#btnCloseScan");
-  const scanOutput = $("#scanOutput");
-  const scanBar = $("#scanBar");
-  const scanStatusLine = $("#scanStatusLine");
-  const scanError = $("#scanError");
-  const scanSubnets = $("#scanSubnets");
-  const scanFoundCount = $("#scanFoundCount");
-  const scanNewCount = $("#scanNewCount");
-  const scanList = $("#scanList");
-  const scanListEmpty = $("#scanListEmpty");
-  const scanLive = $("#scanLive");
-  const scanTitleMeta = $("#scanTitleMeta");
-  const btnScanNow = $("#btnScanNow");
-  const btnAbortScan = $("#btnAbortScan");
-  const scanScope = $("#scanScope");
-  const scanSpeed = $("#scanSpeed");
-  const scanCustomWrap = $("#scanCustomWrap");
-  const scanCustom = $("#scanCustom");
+  
 
-  const scanAddModal = $("#scanAddModal");
-  const scanAddForm = $("#scanAddForm");
-  const scanAddName = $("#scanAddName");
-  const scanAddIp = $("#scanAddIp");
-  const scanAddEndpoint = $("#scanAddEndpoint");
-  const scanAddTitle = $("#scanAddTitle");
-  const btnScanAddCancel = $("#btnScanAddCancel");
+  // ---- Network discovery (side panel, nmap SSE) ----
+  const discoverBtn = $("#btnDiscover");
+  const discoverPanel = $("#discoverPanel");
+  const discoverBackdrop = $("#discoverBackdrop");
+  const btnCloseDiscover = $("#btnCloseDiscover");
+  const btnDiscoverStart = $("#btnDiscoverStart");
+  const btnDiscoverCancel = $("#btnDiscoverCancel");
+  const btnDiscoverAgain = $("#btnDiscoverAgain");
+  const discoverProfile = $("#discoverProfile");
+  const discoverOnlyNew = $("#discoverOnlyNew");
+  const discoverFilter = $("#discoverFilter");
+  const discoverList = $("#discoverList");
+  const discoverListEmpty = $("#discoverListEmpty");
+  const discoverFound = $("#discoverFound");
+  const discoverSubnets = $("#discoverSubnets");
+  const discoverBar = $("#discoverBar");
+  const discoverStatus = $("#discoverStatus");
+  const discoverError = $("#discoverError");
+  const discoverCountHint = $("#discoverCountHint");
 
-  bindSmartAssist(scanAddIp, scanAddName);
+  const discoverAddCard = $("#discoverAddCard");
+  const discoverAddForm = $("#discoverAddForm");
+  const discoverAddName = $("#discoverAddName");
+  const discoverAddIp = $("#discoverAddIp");
+  const discoverAddEndpoint = $("#discoverAddEndpoint");
+  const discoverAddHint = $("#discoverAddHint");
+  const btnDiscoverAddKeep = $("#btnDiscoverAddKeep");
+  const btnDiscoverAddCancel = $("#btnDiscoverAddCancel");
 
-  function updateScanScopeUI(){
-    const v = scanScope?.value || "local";
-    if (scanCustomWrap) scanCustomWrap.style.display = (v === "local+custom") ? "block" : "none";
+  let discoverES = null;
+  let discoverDevices = [];
+  let discoverSelected = null;
+
+  function openDiscover(){
+    if (!discoverPanel || !discoverBackdrop) return;
+    discoverPanel.classList.remove('is-hidden');
+    discoverBackdrop.classList.remove('is-hidden');
+    requestAnimationFrame(() => {
+      discoverPanel.classList.add('is-open');
+      discoverBackdrop.classList.add('is-open');
+    });
   }
-  scanScope?.addEventListener("change", updateScanScopeUI);
-  updateScanScopeUI();
-
-  let scanPoll = null;
-  let scanFound = [];
-  let scanSelected = null;
-  let scanAddedIps = new Set();
-
-  function suggestName(dev){
-    const host = (dev?.host || "").trim();
-    if (host) return host;
-    const vendor = (dev?.vendor || "").trim();
-    if (vendor) return `${vendor} ${dev.ip}`;
-    return String(dev?.ip || "");
+  function closeDiscover(){
+    if (!discoverPanel || !discoverBackdrop) return;
+    discoverPanel.classList.remove('is-open');
+    discoverBackdrop.classList.remove('is-open');
+    setTimeout(() => {
+      if (!discoverPanel.classList.contains('is-open')) discoverPanel.classList.add('is-hidden');
+      if (!discoverBackdrop.classList.contains('is-open')) discoverBackdrop.classList.add('is-hidden');
+    }, 190);
   }
 
-  function renderScanList(){
-    if (!scanList || !scanListEmpty) return;
-    scanList.innerHTML = "";
-    if (!scanFound.length){
-      scanListEmpty.style.display = "block";
-      return;
-    }
-    scanListEmpty.style.display = "none";
-    const existingIps = new Set((lastTargets||[]).map(t => String(t.ip||"")));
-    const existingMacs = new Set((lastTargets||[]).map(t => String(t.mac||"").toLowerCase()).filter(Boolean));
-    scanFound.forEach(dev => {
-      const host = dev.host || dev.ip;
-      const vendor = dev.vendor ? `<span class="muted">${escapeHtml(dev.vendor)}</span>` : "";
-      const dtype = dev.type ? `<span class="badge">${escapeHtml(dev.type)}</span>` : "";
-      const conf = (dev.confidence !== undefined && dev.confidence !== null) ? `<span class="conf">${dev.confidence}%</span>` : "";
+  discoverBtn?.addEventListener('click', openDiscover);
+  btnCloseDiscover?.addEventListener('click', closeDiscover);
+  discoverBackdrop?.addEventListener('click', closeDiscover);
 
-      const ip = String(dev.ip||"");
-      const mac = String(dev.mac||"").toLowerCase();
-      const isExisting = existingIps.has(ip) || (mac && existingMacs.has(mac));
-      const isAdded = scanAddedIps.has(ip);
-      const statusBadge = isAdded ? `<span class="badge badge-ok">Added</span>` : (isExisting ? `<span class="badge badge-muted">Already added</span>` : "");
-      const canAdd = !isExisting && !isAdded;
+  function suggestEndpoint(ip){
+    if (!ip) return '';
+    return `http://${ip}`;
+  }
 
-      const el = document.createElement("div");
-      el.className = "scan-item" + (canAdd ? "" : " is-disabled");
+  function computeDeviceLabel(dev){
+    const ip = dev.ip || '';
+    const host = dev.host || '';
+    const vendor = dev.vendor || '';
+    const mac = dev.mac || '';
+    const parts = [];
+    if (host) parts.push(host);
+    if (vendor) parts.push(vendor);
+    if (mac) parts.push(mac);
+    return { ip, host, vendor, mac, meta: parts.join(' • ') };
+  }
+
+  function matchesFilter(dev, q){
+    if (!q) return true;
+    q = q.toLowerCase();
+    const l = computeDeviceLabel(dev);
+    return (l.ip||'').toLowerCase().includes(q) || (l.host||'').toLowerCase().includes(q) || (l.vendor||'').toLowerCase().includes(q) || (l.mac||'').toLowerCase().includes(q);
+  }
+
+  function renderDiscoverList(){
+    if (!discoverList || !discoverListEmpty) return;
+    const q = (discoverFilter?.value || '').trim();
+    const onlyNew = !!discoverOnlyNew?.checked;
+
+    const existingIps = new Set((targets||[]).map(t => String(t.ip||'')).filter(Boolean));
+
+    discoverList.innerHTML = '';
+    let shown = 0;
+
+    discoverDevices.forEach(dev => {
+      const ip = String(dev.ip||'');
+      if (!ip) return;
+      const already = !!dev.already_added || existingIps.has(ip);
+      const addedNow = !!dev.added_now;
+      if (onlyNew && (already || addedNow)) return;
+      if (!matchesFilter(dev, q)) return;
+
+      shown += 1;
+      const el = document.createElement('div');
+      el.className = 'scan-item' + (addedNow ? ' is-added' : '') + (already ? ' is-disabled' : '');
+
+      const lbl = computeDeviceLabel(dev);
+      const chipTxt = addedNow ? 'Added now' : (already ? 'Already added' : 'New');
+      const chipCls = addedNow ? 'chip chip--muted' : (already ? 'chip' : 'chip chip--ok');
+
       el.innerHTML = `
-        <div class="meta">
-          <div class="meta-top"><b>${escapeHtml(host)}</b>${dtype}${conf}${statusBadge}</div>
-          <div class="meta-sub"><span>${escapeHtml(dev.ip)}</span>${dev.mac ? `<span class="muted">${escapeHtml(dev.mac)}</span>` : ""}${vendor}</div>
+        <div class="scan-item-left">
+          <b>${escapeHtml(lbl.host || ip)}</b>
+          <div class="hint">${escapeHtml(ip)}${lbl.meta ? ' • ' + escapeHtml(lbl.meta) : ''}</div>
         </div>
-        <button class="btn btn-primary btn-mini" type="button" ${canAdd ? "" : "disabled"}>${isAdded ? "Added" : (isExisting ? "Added" : "Add")}</button>
+        <div class="scan-item-right">
+          <span class="${chipCls}">${chipTxt}</span>
+        </div>
       `;
 
-      const openAdd = () => {
-        scanSelected = dev;
-        scanAddTitle.textContent = dev.ip;
-        scanAddName.value = suggestName(dev);
-        scanAddIp.value = dev.ip;
-        scanAddEndpoint.value = "";
-        show(scanAddModal);
-        scanAddEndpoint.focus();
-      };
-
-      el.addEventListener("click", (e) => {
-        // Only allow opening when it makes sense.
-        if (!canAdd) return;
-        // Ignore button bubbling (handled below)
-        if (e?.target?.closest && e.target.closest("button")) return;
-        openAdd();
+      el.addEventListener('click', () => {
+        if (already && !addedNow){
+          toast('Network discovery', 'Already added');
+          return;
+        }
+        discoverSelected = dev;
+        discoverAddCard.style.display = 'block';
+        discoverAddHint.textContent = ip;
+        discoverAddIp.value = ip;
+        discoverAddName.value = suggestName(dev);
+        discoverAddEndpoint.value = suggestEndpoint(ip);
+        discoverAddEndpoint.focus();
       });
 
-      el.querySelector("button").addEventListener("click", () => {
-        if (!canAdd) return;
-        openAdd();
-      });
-      scanList.appendChild(el);
+      discoverList.appendChild(el);
+    });
+
+    discoverListEmpty.style.display = shown ? 'none' : 'block';
+    if (discoverCountHint) discoverCountHint.textContent = `${shown} shown`;
+  }
+
+  discoverFilter?.addEventListener('input', () => renderDiscoverList());
+  discoverOnlyNew?.addEventListener('change', () => renderDiscoverList());
+
+  function resetDiscoverUI(){
+    discoverDevices = [];
+    discoverSelected = null;
+    if (discoverAddCard) discoverAddCard.style.display = 'none';
+    if (discoverError){ discoverError.style.display='none'; discoverError.textContent=''; }
+    if (discoverBar) discoverBar.style.width = '0%';
+    if (discoverStatus) discoverStatus.textContent = 'Idle';
+    if (discoverSubnets) discoverSubnets.textContent = '-';
+    if (discoverFound) discoverFound.textContent = '0';
+    if (btnDiscoverAgain) btnDiscoverAgain.style.display = 'none';
+    if (btnDiscoverCancel) btnDiscoverCancel.style.display = 'none';
+    if (btnDiscoverStart) btnDiscoverStart.style.display = 'inline-flex';
+    renderDiscoverList();
+  }
+
+  async function startDiscovery(){
+    resetDiscoverUI();
+    if (btnDiscoverStart) btnDiscoverStart.disabled = true;
+
+    const payload = {
+      scope: 'auto',
+      profile: discoverProfile?.value || 'safe',
+      cap: 4096,
+    };
+
+    const r = await apiPostJson('/api/discover-start', payload);
+    if (!r.ok){
+      if (discoverError){ discoverError.textContent = r.message || 'Failed to start'; discoverError.style.display='block'; }
+      if (btnDiscoverStart) btnDiscoverStart.disabled = false;
+      return;
+    }
+
+    if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+    if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
+
+    connectDiscoveryStream();
+  }
+
+  async function cancelDiscovery(){
+    await apiPostJson('/api/discover-cancel', {});
+    if (discoverStatus) discoverStatus.textContent = 'Cancelling…';
+  }
+
+  btnDiscoverStart?.addEventListener('click', startDiscovery);
+  btnDiscoverAgain?.addEventListener('click', startDiscovery);
+  btnDiscoverCancel?.addEventListener('click', cancelDiscovery);
+
+  function connectDiscoveryStream(){
+    if (discoverES){ try{ discoverES.close(); }catch(e){} }
+    discoverES = new EventSource('/api/discover-stream');
+
+    discoverES.addEventListener('status', (ev) => {
+      try{
+        const obj = JSON.parse(ev.data);
+        const st = obj.status || obj?.message || '';
+        if (obj.cidrs != null && discoverSubnets) discoverSubnets.textContent = String(obj.cidrs);
+        if (obj.progress && discoverBar){
+          const cur = Number(obj.progress.current||0); const tot = Number(obj.progress.total||0);
+          discoverBar.style.width = tot ? `${Math.round((cur/tot)*100)}%` : '0%';
+        }
+        if (discoverStatus) discoverStatus.textContent = obj.message || st || 'Running…';
+        if (obj.status === 'done' || obj.status === 'cancelled'){
+          if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+          if (btnDiscoverAgain) btnDiscoverAgain.style.display='inline-flex';
+          if (btnDiscoverStart){ btnDiscoverStart.style.display='none'; btnDiscoverStart.disabled=false; }
+        }
+      }catch(e){}
+    });
+
+    discoverES.addEventListener('device', (ev) => {
+      try{
+        const obj = JSON.parse(ev.data);
+        const dev = obj.device;
+        if (!dev) return;
+        discoverDevices.push(dev);
+        if (discoverFound) discoverFound.textContent = String(discoverDevices.length);
+        renderDiscoverList();
+      }catch(e){}
+    });
+
+    discoverES.addEventListener('error', (ev) => {
+      // EventSource error can be transient; show only if discovery isn't running
     });
   }
 
-  async function refreshScan(){
+  btnDiscoverAddCancel?.addEventListener('click', () => {
+    discoverSelected = null;
+    if (discoverAddCard) discoverAddCard.style.display='none';
+  });
+
+  function endpointLooksValid(u){
     try{
-      if (scanError){ scanError.style.display = "none"; scanError.textContent = ""; }
-      const out = await apiGet(`/api/scan-output?lines=260`);
-      const meta = out.meta || {};
-      scanTitleMeta.textContent = meta.cidrs?.length ? `(${meta.cidrs.length} subnets)` : "";
-      scanSubnets.textContent = meta.cidrs?.length ? String(meta.cidrs.length) : "-";
-      scanOutput.textContent = out.text || "";
-      scanOutput.scrollTop = scanOutput.scrollHeight;
-
-      // Simple progress estimate: subnets started vs total
-      const txt = String(out.text||"");
-      const started = (txt.match(/^scan:\s+/gm) || []).length;
-      const total = (meta.cidrs||[]).length || 0;
-      const pct = total ? Math.min(100, Math.round((started/total)*100)) : 0;
-      scanBar.style.width = `${pct}%`;
-      const currentIp = meta.current_ip ? String(meta.current_ip) : "";
-      const errTxt = (meta.error || "").trim();
-      scanStatusLine.textContent = total ? `Scanning ${Math.min(started+1,total)} / ${total}${currentIp ? " • " + currentIp : ""}` : (errTxt || "Scanning…");
-      if (errTxt && scanError){
-        scanError.textContent = errTxt;
-        scanError.style.display = "block";
-      }
-
-      const st = await apiGet(`/api/scan-status`);
-      if (st.running){
-        scanLive.style.display = "flex";
-        if (btnAbortScan) btnAbortScan.style.display = "inline-flex";
-        if (btnScanNow) btnScanNow.style.display = "none";
-        btnSearchNetwork?.classList.add("is-running");
-        return;
-      }
-      scanLive.style.display = "none";
-      if (btnAbortScan) btnAbortScan.style.display = "none";
-      if (btnScanNow) btnScanNow.style.display = "inline-flex";
-      if (btnScanNow) btnScanNow.textContent = st.finished ? "Search again" : "Start search";
-      btnSearchNetwork?.classList.remove("is-running");
-
-      // finished -> get results
-      const res = await apiGet(`/api/scan-result`);
-      scanFound = res.found || [];
-      scanFoundCount.textContent = String(scanFound.length);
-
-      const existingIps = new Set((lastTargets||[]).map(t => String(t.ip||"")));
-      const existingMacs = new Set((lastTargets||[]).map(t => String(t.mac||"").toLowerCase()).filter(Boolean));
-      const newCount = (scanFound||[]).filter(d => {
-        const ip = String(d?.ip||"");
-        const mac = String(d?.mac||"").toLowerCase();
-        return ip && !existingIps.has(ip) && !(mac && existingMacs.has(mac)) && !scanAddedIps.has(ip);
-      }).length;
-      scanNewCount.textContent = String(newCount);
-      renderScanList();
-
-      // Keep polling if modal is open; otherwise stop.
-      if (!scanModal?.classList.contains("show")){
-        if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
-      }
+      const url = new URL(u);
+      return url.protocol === 'http:' || url.protocol === 'https:';
     }catch(e){
-      scanStatusLine.textContent = e?.message || "Scan failed";
-      if (scanError){
-        scanError.textContent = e?.message || "Scan failed";
-        scanError.style.display = "block";
-      }
-      toast("Search network", e?.message || "Failed to fetch");
-      scanLive.style.display = "none";
-      if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
-    }
-  }
-
-  function resetScanUi(){
-    scanFound = [];
-    scanAddedIps = new Set();
-    scanBar.style.width = "0%";
-    scanFoundCount.textContent = "-";
-    scanNewCount.textContent = "-";
-    scanSubnets.textContent = "-";
-    scanStatusLine.textContent = "-";
-    if (scanError){ scanError.style.display = "none"; scanError.textContent = ""; }
-    scanListEmpty.style.display = "block";
-    scanList.innerHTML = "";
-  }
-
-  async function startScan(force=false){
-    const fd = new FormData();
-    fd.set("scope", scanScope?.value || "local");
-    fd.set("speed", scanSpeed?.value || "normal");
-    fd.set("custom", (scanCustom?.value || "").trim());
-    if (force) fd.set("force", "1");
-    const started = await apiPost("/api/scan-start", fd);
-    if (!started.ok){
-      toast("Search network", started.message || "Failed to start scan");
       return false;
     }
-    return true;
   }
 
-  btnSearchNetwork?.addEventListener("click", async () => {
-    show(scanModal);
-    // Show current status/results and keep polling while the modal is open.
-    if (scanPoll) clearInterval(scanPoll);
-    scanPoll = setInterval(refreshScan, 800);
-    await refreshScan();
-  });
-
-  btnAbortScan?.addEventListener("click", async () => {
-    try{
-      const r = await apiPost("/api/scan-cancel", new FormData());
-      toast(r.ok ? "Scan" : "Scan", r.ok ? "Cancelled" : (r.message || "Failed"));
-    }catch(e){ toast("Scan", "Failed"); }
-  });
-
-  btnScanNow?.addEventListener("click", async () => {
-    resetScanUi();
-    scanOutput.textContent = "Starting search…";
-    scanLive.style.display = "flex";
-    const cur = await apiGet(`/api/scan-status`);
-    const ok = await startScan(!!cur.finished);
-    if (!ok){
-      scanLive.style.display = "none";
+  async function submitDiscoverAdd(keepOpen){
+    if (!discoverAddForm) return;
+    const fd = new FormData(discoverAddForm);
+    const endpoint = String(fd.get('endpoint')||'').trim();
+    if (!endpointLooksValid(endpoint)){
+      toast('Add target', 'Endpoint URL must be http:// or https://');
+      discoverAddEndpoint?.focus();
       return;
     }
-    toast("Search network", "Search started");
-    if (scanPoll) clearInterval(scanPoll);
-    scanPoll = setInterval(refreshScan, 800);
-    await refreshScan();
-  });
-
-  // Closing the modal should not stop the scan. We'll stop polling to save cycles,
-  // but keep a "running" indicator on the button.
-  btnCloseScan?.addEventListener("click", () => {
-    hide(scanModal);
-    if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
-  });
-  btnScanAddCancel?.addEventListener("click", () => hide(scanAddModal));
-  scanAddForm?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try{
-      const fd = new FormData(scanAddForm);
-      const data = await apiPost("/api/add", fd);
-      if (!data.ok){
-        toast("Add target", data.message || "Failed");
-        return;
-      }
-      toast("Add target", "Added");
-      hide(scanAddModal);
-      if (scanSelected){
-        scanAddedIps.add(String(scanSelected.ip||""));
-        renderScanList();
-        scanSelected = null;
-      }
-      await refreshState(true);
-      // Update counters in the scan modal (if it is open)
-      if (scanModal?.classList.contains("show")) await refreshScan();
-    }catch(err){
-      toast("Add target", err?.message || "Failed");
+    const r = await apiPost('/api/add', fd);
+    if (!r.ok){
+      toast('Add target', r.message || 'Failed');
+      return;
     }
-  });
+    await refreshTargets();
+    if (discoverSelected){
+      discoverSelected.added_now = true;
+    }
+    renderDiscoverList();
+    toast('Add target', 'Added');
 
-  // init
-  // Start with the server-rendered targets to avoid a flash of empty rows
-  // before the first /state poll completes.
-  try{
-    const seeded = window.__INITIAL_TARGETS__;
-    if (Array.isArray(seeded) && seeded.length){
-      lastTargets = seeded;
-      renderTargets(lastTargets);
+    if (!keepOpen){
+      discoverSelected = null;
+      if (discoverAddCard) discoverAddCard.style.display='none';
     } else {
-      // If nothing was seeded, do not wipe the DOM table here.
-      // We'll populate it as soon as /state returns.
+      discoverAddEndpoint.value = suggestEndpoint(discoverAddIp.value);
+      discoverAddEndpoint.focus();
     }
-  }catch(e){}
+  }
 
-  bindSortHeaders();
-  // Ensure Enable/Disable visibility + row datasets are synced immediately
-  refreshState(true);
-  setInterval(() => refreshState(false), 2000);
-
-  // Keyboard UX: Esc closes sidepanel/modals, Enter toggles sidepanel on focused/selected row
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape"){
-      // Close Information modal first
-      if (infoModal && infoModal.classList.contains("show")){
-        hide(infoModal);
-        e.preventDefault();
-        return;
-      }
-      // Close the top-most open modal
-      const openModal = Array.from(document.querySelectorAll(".modal.show")).pop();
-      if (openModal){
-        hide(openModal);
-        e.preventDefault();
-        return;
-      }
-      // Finally close menus
-      closeAllMenus();
-      return;
-    }
-
-    if (e.key === "Enter"){
-      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
-      if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
-
-      const openModal = Array.from(document.querySelectorAll(".modal.show")).filter(m => m && m.id !== "infoModal").pop();
-      if (openModal) return;
-
-      const row = document.querySelector("tr.is-focused") || document.querySelector("tr.is-selected");
-      if (!row) return;
-      const name = row.getAttribute("data-name");
-      if (!name) return;
-
-      if (infoModal && infoModal.classList.contains("show") && infoTitle && infoTitle.textContent === name){
-        hide(infoModal);
-      } else {
-        openInfo(name);
-      }
-
-      e.preventDefault();
-    }
+  discoverAddForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await submitDiscoverAdd(false);
   });
+  btnDiscoverAddKeep?.addEventListener('click', async () => {
+    await submitDiscoverAdd(true);
+  });
+
+  // kick initial render if panel exists
+  resetDiscoverUI();
+
+  // ---- End network discovery ----
+
 
 })();

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from flask import Flask, request, jsonify, render_template, Response, send_file
 import os
+import sys
 import subprocess
 import time
 import json
@@ -48,6 +49,10 @@ _LAST_DEBUG_TS = 0
 SCAN_META_FILE = STATE_DIR / "scan_meta.json"
 SCAN_OUT_FILE = STATE_DIR / "scan_last_output.txt"
 
+# New network discovery (nmap-only, realtime)
+DISCOVERY_META_FILE = STATE_DIR / "discovery_meta.json"
+DISCOVERY_EVENTS_FILE = STATE_DIR / "discovery_events.jsonl"
+
 SUMMARY_RE = re.compile(
     r"total=(\d+)\s+due=(\d+)\s+skipped=(\d+)\s+ping_ok=(\d+)\s+ping_fail=(\d+)\s+sent=(\d+)\s+curl_fail=(\d+)"
 )
@@ -73,7 +78,7 @@ def ensure_state_dir():
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         # ensure meta/output exists
-        for p in (RUN_META_FILE, RUN_OUT_FILE, SCAN_META_FILE, SCAN_OUT_FILE):
+        for p in (RUN_META_FILE, RUN_OUT_FILE, SCAN_META_FILE, SCAN_OUT_FILE, DISCOVERY_META_FILE, DISCOVERY_EVENTS_FILE):
             if not p.exists():
                 p.write_text("", encoding="utf-8")
                 try:
@@ -218,6 +223,39 @@ def save_run_meta(meta: dict):
             pass
     except Exception:
         pass
+
+def load_discovery_meta() -> dict:
+    try:
+        if DISCOVERY_META_FILE.exists():
+            raw = DISCOVERY_META_FILE.read_text(encoding="utf-8").strip()
+            if raw:
+                return json.loads(raw)
+    except Exception:
+        pass
+    return {}
+
+
+def save_discovery_meta(meta: dict):
+    ensure_state_dir()
+    try:
+        DISCOVERY_META_FILE.write_text(json.dumps(meta), encoding="utf-8")
+        try:
+            os.chmod(str(DISCOVERY_META_FILE), 0o644)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _append_discovery_event(obj: dict):
+    """Append a JSONL event for SSE streaming."""
+    ensure_state_dir()
+    try:
+        with open(DISCOVERY_EVENTS_FILE, "a", encoding="utf-8", errors="replace") as f:
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 
 def load_scan_meta() -> dict:
     try:
@@ -1958,5 +1996,339 @@ def api_scan_result():
     meta = load_scan_meta()
     found = meta.get("found") or []
     return jsonify({"ok": True, "found": found, "meta": meta})
+
+# ---- API: network discovery (nmap-only, realtime) ----
+
+def _discover_build_cidrs(opts: dict) -> list[str]:
+    """Build CIDRs to scan.
+
+    We try hard to scan the same networks the box can already reach (including VLANs).
+    """
+    scope = (opts.get('scope') or 'auto').lower()
+    cidrs: list[str] = []
+    if scope in ('auto','all','local'):
+        cidrs += _get_local_cidrs()
+        cidrs += _cidrs_from_existing_targets()
+    elif scope in ('targets',):
+        cidrs += _cidrs_from_existing_targets()
+    elif scope in ('custom',):
+        raw = str(opts.get('custom') or '').strip()
+        for part in raw.split(','):
+            part = part.strip()
+            if part:
+                cidrs.append(part)
+
+    # de-dup
+    seen=set(); uniq=[]
+    for c in cidrs:
+        if c in seen: continue
+        seen.add(c); uniq.append(c)
+
+    # normalize + split huge nets to /24 chunks (safe by default)
+    out: list[str] = []
+    for c in uniq:
+        try:
+            net = ipaddress.ip_network(c, strict=False)
+        except Exception:
+            continue
+        if net.version != 4:
+            continue
+        # Avoid /8 or massive ranges by chunking to /24.
+        if net.prefixlen < 24:
+            # chunk to /24
+            for sub in net.subnets(new_prefix=24):
+                out.append(str(sub))
+        else:
+            out.append(str(net))
+
+    # hard safety cap (can still be large, but avoids accidental /8 expanding forever)
+    cap = int(opts.get('cap') or 2048)
+    out = out[:max(1, min(10000, cap))]
+    return out
+
+
+def _nmap_args_for_profile(profile: str) -> list[str]:
+    p = (profile or 'safe').lower()
+    if p == 'fast':
+        return ['-T4','--max-retries','1','--host-timeout','2s']
+    if p == 'normal':
+        return ['-T3','--max-retries','1','--host-timeout','2s']
+    # safe
+    return ['-T2','--max-retries','1','--host-timeout','3s','--scan-delay','5ms']
+
+
+def _discover_worker():
+    meta = load_discovery_meta() or {}
+    opts = meta.get('opts') or {}
+    cancel_path = STATE_DIR / 'discovery_cancel'
+
+    # reset output/events
+    try:
+        DISCOVERY_EVENTS_FILE.write_text('', encoding='utf-8')
+        os.chmod(str(DISCOVERY_EVENTS_FILE), 0o644)
+    except Exception:
+        pass
+
+    cidrs = _discover_build_cidrs(opts)
+    meta.update({
+        'status':'running',
+        'started': int(time.time()),
+        'finished': 0,
+        'rc': 0,
+        'error': '',
+        'cidrs': cidrs,
+        'found': [],
+        'profile': (opts.get('profile') or 'safe'),
+    })
+    save_discovery_meta(meta)
+
+    if not shutil.which('nmap'):
+        meta.update({'status':'error','finished':int(time.time()),'rc':1,'error':'nmap is not installed'})
+        save_discovery_meta(meta)
+        _append_discovery_event({'type':'error','message':'nmap is not installed'})
+        return
+
+    existing_ips = set(_get_target_ips())
+    found_ips = set()
+
+    event_id = 1
+    _append_discovery_event({'id': event_id, 'type':'status','status':'running','message':'Discovery started','cidrs':len(cidrs)})
+
+    for idx, cidr in enumerate(cidrs):
+        if cancel_path.exists():
+            meta.update({'status':'cancelled','finished':int(time.time()),'rc':1,'error':'Cancelled'})
+            save_discovery_meta(meta)
+            event_id += 1
+            _append_discovery_event({'id': event_id,'type':'status','status':'cancelled','message':'Cancelled'})
+            try:
+                cancel_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return
+
+        args = ['nmap','-sn','-n'] + _nmap_args_for_profile(meta.get('profile')) + [cidr]
+        # stream normal output
+        try:
+            p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        except Exception as e:
+            meta.update({'status':'error','finished':int(time.time()),'rc':1,'error':str(e)})
+            save_discovery_meta(meta)
+            event_id += 1
+            _append_discovery_event({'id': event_id,'type':'error','message':str(e)})
+            return
+
+        cur = {'ip':'','host':'','mac':'','vendor':'','type':''}
+        def flush_current():
+            nonlocal event_id
+            ip = (cur.get('ip') or '').strip()
+            if not ip:
+                return
+            if ip in found_ips:
+                return
+            found_ips.add(ip)
+            dev = dict(cur)
+            dev['already_added'] = ip in existing_ips
+            # store
+            meta = load_discovery_meta() or {}
+            found = meta.get('found') or []
+            found.append(dev)
+            meta['found'] = found
+            meta['progress'] = {'current': idx+1, 'total': len(cidrs), 'cidr': cidr}
+            save_discovery_meta(meta)
+            event_id += 1
+            _append_discovery_event({'id': event_id,'type':'device','device':dev})
+
+        for line in p.stdout:
+            if cancel_path.exists():
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
+                break
+            line = (line or '').rstrip('\n')
+            if not line:
+                continue
+            # status event occasionally (throttle by subnet boundaries only)
+            if line.startswith('Nmap scan report for '):
+                # flush previous
+                flush_current()
+                cur = {'ip':'','host':'','mac':'','vendor':'','type':''}
+                rest = line.replace('Nmap scan report for ','').strip()
+                # rest can be IP or "name (ip)"; with -n it's usually IP
+                if '(' in rest and rest.endswith(')'):
+                    # name (ip)
+                    name, ip = rest.rsplit('(',1)
+                    cur['host'] = name.strip()
+                    cur['ip'] = ip.strip(') ').strip()
+                else:
+                    cur['ip'] = rest
+            elif 'MAC Address:' in line:
+                # MAC Address: AA:BB:CC:DD:EE:FF (Vendor)
+                try:
+                    seg = line.split('MAC Address:',1)[1].strip()
+                    mac = seg.split()[0].strip().lower()
+                    cur['mac'] = mac
+                    if '(' in seg and seg.endswith(')'):
+                        cur['vendor'] = seg.split('(',1)[1].strip(') ').strip()
+                except Exception:
+                    pass
+            elif line.startswith('Host is up'):
+                # nothing
+                pass
+        try:
+            p.wait(timeout=2)
+        except Exception:
+            pass
+        # flush last host in this cidr
+        flush_current()
+
+        # progress status per cidr
+        event_id += 1
+        _append_discovery_event({'id': event_id,'type':'status','status':'running','message':f"Scanned {idx+1}/{len(cidrs)}",'progress':{'current':idx+1,'total':len(cidrs),'cidr':cidr}})
+
+    meta = load_discovery_meta() or {}
+    meta.update({'status':'done','finished':int(time.time()),'rc':0})
+    save_discovery_meta(meta)
+    event_id += 1
+    _append_discovery_event({'id': event_id,'type':'status','status':'done','message':'Discovery finished','found':len(meta.get('found') or [])})
+
+
+@APP.post('/api/discover-start')
+def api_discover_start():
+    data = request.get_json(silent=True) or {}
+    # reset cancel flag
+    try:
+        (STATE_DIR / 'discovery_cancel').unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    meta = load_discovery_meta() or {}
+    if meta.get('status') == 'running' and pid_is_running(int(meta.get('pid') or 0)):
+        return jsonify({'ok': False, 'message':'Discovery already running'})
+
+    opts = {
+        'scope': data.get('scope') or 'auto',
+        'custom': data.get('custom') or '',
+        'profile': data.get('profile') or 'safe',
+        'cap': data.get('cap') or 2048,
+    }
+    meta = {'opts': opts, 'status':'starting', 'started':int(time.time()), 'finished':0, 'found':[], 'rc':0, 'error':''}
+    save_discovery_meta(meta)
+
+    # start background worker
+    try:
+        worker_path = BASE_DIR / 'discovery_worker.py'
+        if not worker_path.exists():
+            raise FileNotFoundError(f"discovery worker missing: {worker_path}")
+        p = subprocess.Popen([sys.executable, str(worker_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        meta = load_discovery_meta() or {}
+        meta['pid'] = int(p.pid)
+        meta['status'] = 'running'
+        save_discovery_meta(meta)
+        return jsonify({'ok': True, 'message':'Discovery started'})
+    except Exception as e:
+        meta = load_discovery_meta() or {}
+        meta.update({'status':'error','rc':1,'finished':int(time.time()),'error':str(e)})
+        save_discovery_meta(meta)
+        return jsonify({'ok': False, 'message': f"Failed to start discovery: {str(e)}"})
+
+
+@APP.get('/api/discover-status')
+def api_discover_status():
+    meta = load_discovery_meta() or {}
+    pid = int(meta.get('pid') or 0)
+    if meta.get('status') == 'running' and pid and not pid_is_running(pid):
+        # if process died, mark as error
+        meta['status'] = 'error'
+        meta['rc'] = int(meta.get('rc') or 1)
+        meta['finished'] = int(meta.get('finished') or int(time.time()))
+        meta['error'] = meta.get('error') or 'Worker stopped unexpectedly'
+        save_discovery_meta(meta)
+    return jsonify({'ok': True, 'meta': meta})
+
+
+@APP.post('/api/discover-cancel')
+def api_discover_cancel():
+    try:
+        (STATE_DIR / 'discovery_cancel').write_text('1', encoding='utf-8')
+    except Exception:
+        pass
+    meta = load_discovery_meta() or {}
+    meta['status'] = 'cancelling'
+    save_discovery_meta(meta)
+    return jsonify({'ok': True, 'message':'Cancelling'})
+
+
+def _sse_format(event: str, data: str, event_id: int | None = None) -> str:
+    out = ''
+    if event_id is not None:
+        out += f"id: {event_id}\n"
+    if event:
+        out += f"event: {event}\n"
+    for ln in (data or '').splitlines() or ['']:
+        out += f"data: {ln}\n"
+    out += '\n'
+    return out
+
+
+@APP.get('/api/discover-stream')
+def api_discover_stream():
+    """Server-Sent Events stream from discovery_events.jsonl."""
+    try:
+        last_id = int(request.headers.get('Last-Event-ID') or request.args.get('last_id') or 0)
+    except Exception:
+        last_id = 0
+
+    def gen():
+        ensure_state_dir()
+        path = DISCOVERY_EVENTS_FILE
+        # ensure file exists
+        if not path.exists():
+            try:
+                path.write_text('', encoding='utf-8')
+            except Exception:
+                pass
+        pos = 0
+        # If there is existing content and client didn't pass last_id, start from beginning.
+        while True:
+            try:
+                with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                    f.seek(pos)
+                    while True:
+                        ln = f.readline()
+                        if not ln:
+                            pos = f.tell()
+                            break
+                        ln = ln.strip()
+                        if not ln:
+                            continue
+                        try:
+                            import json as _json
+                            obj = _json.loads(ln)
+                            eid = int(obj.get('id') or 0)
+                            if eid and eid <= last_id:
+                                continue
+                            ev = obj.get('type') or 'message'
+                            yield _sse_format(ev, _json.dumps(obj, ensure_ascii=False), eid if eid else None)
+                        except Exception:
+                            continue
+                # heartbeat
+                yield ': ping\n\n'
+                import time as _t
+                _t.sleep(0.6)
+            except GeneratorExit:
+                return
+            except Exception:
+                import time as _t
+                _t.sleep(0.8)
+
+    return Response(gen(), mimetype='text/event-stream')
+
+
+@APP.get('/api/discover-result')
+def api_discover_result():
+    meta = load_discovery_meta() or {}
+    return jsonify({'ok': True, 'meta': meta, 'found': meta.get('found') or []})
+
 if __name__ == "__main__":
     APP.run(host=BIND_HOST, port=BIND_PORT, threaded=True)
