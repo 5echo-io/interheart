@@ -6,6 +6,16 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.17.31 – 2026-01-31
+
+### Fixed
+- WebUI: Actions dropdown icons are back to the original **minimal inline SVG** style (no emoji icons).
+- WebUI: Network discovery **Start** now actually starts the worker process (missing `webui/discovery_worker.py` prevented discovery from running).
+
+### Improved
+- WebUI: Status column is now **fixed width** (matches the widest status label) for a cleaner table.
+- WebUI: Status snapshots (last 3 dots) are **right-aligned**, while status text stays left-aligned.
+
 ## v5.16.30 – 2026-01-31
 
 ### Fixed

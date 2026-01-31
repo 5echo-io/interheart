@@ -781,15 +781,14 @@ function statusLabel(name, status, enabled, lastRttMs, lastRespEpoch){
   return st.toUpperCase();
 }
 
-function renderSnapshots(snaps){
-    const arr = Array.isArray(snaps) ? snaps : [];
-    const out = arr.slice(0,3).map(s => {
-      const cls = (s && s.state) ? String(s.state) : "unknown";
-      const title = (s && s.label) ? String(s.label) : cls;
-      return `<span class="snap-dot ${cls}" title="${title}"></span>`;
-    }).join("");
-    return `<span class="snapshots">${out}</span>`;
-  }
+function renderSnapshotsInner(snaps){
+  const arr = Array.isArray(snaps) ? snaps : [];
+  return arr.slice(0,3).map(s => {
+    const cls = (s && s.state) ? String(s.state) : "unknown";
+    const title = (s && s.label) ? String(s.label) : cls;
+    return `<span class="snap-dot ${cls}" title="${title}"></span>`;
+  }).join("");
+}
 
 
   function setActionVisibility(row, enabled){
@@ -802,12 +801,13 @@ function renderSnapshots(snaps){
   function buildRow(t){
     const enabled = Number(t.enabled ?? 0) === 1;
     const ic = {
-      info: `ℹ`,
-      edit: `✎`,
-      enable: `✓`,
-      disable: `⛔`,
-      test: `⚡`,
-      remove: `🗑`,
+      // Minimal inline SVG icons (same style as the rest of the UI)
+      info: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`,
+      edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`,
+      enable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
+      disable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>`,
+      test: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>`,
+      remove: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`
     };
     return `<tr data-name="${t.name}" data-ip="${t.ip}" data-status="${t.status}" data-enabled="${enabled?1:0}"
               data-last-ping="${t.last_ping_epoch||0}" data-last-resp="${t.last_response_epoch||0}" data-last-rtt="${t.last_rtt_ms ?? -1}">
@@ -824,7 +824,10 @@ function renderSnapshots(snaps){
             <td>
               <span class="chip status-chip ${statusClass(t.name, t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}">
                 <span class="dot"></span>
-                <span class="status-text">${statusLabel(t.name, t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}</span>${renderSnapshots(t.snapshots)}
+                <span class="status-flex">
+                  <span class="status-text">${statusLabel(t.name, t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}</span>
+                  <span class="snapshots">${renderSnapshotsInner(t.snapshots)}</span>
+                </span>
               </span>
             </td>
             <td>

@@ -115,6 +115,12 @@ th{color:var(--muted);font-weight:850;text-align:left}
   min-width: 156px;
   justify-content:flex-start;
 }
+
+/* Status chip: keep all rows aligned (use width of the longest label) */
+.status-chip{ min-width: 210px; }
+.status-flex{ display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; }
+.status-flex .status-text{ text-align:left; }
+.status-flex .snapshots{ margin-left:0; justify-content:flex-end; }
 .chip--ok{ border-color: rgba(53,211,159,.28); background: rgba(53,211,159,.10); color: rgba(255,255,255,.85); min-width: unset; }
 .chip--muted{ border-color: rgba(156,163,175,.22); background: rgba(156,163,175,.08); color: rgba(255,255,255,.70); min-width: unset; }
 
