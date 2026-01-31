@@ -119,7 +119,31 @@ th{color:var(--muted);font-weight:850;text-align:left}
 .chip--muted{ border-color: rgba(156,163,175,.22); background: rgba(156,163,175,.08); color: rgba(255,255,255,.70); min-width: unset; }
 
 .toggle{ display:inline-flex; align-items:center; gap:8px; font-size:12px; color: rgba(255,255,255,.72); user-select:none; }
-.toggle input{ width:14px; height:14px; }
+.toggle input{
+  -webkit-appearance:none;
+  appearance:none;
+  width:34px;
+  height:20px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06);
+  position:relative;
+  cursor:pointer;
+  outline:none;
+}
+.toggle input::after{
+  content:"";
+  position:absolute;
+  top:2px;
+  left:2px;
+  width:16px;
+  height:16px;
+  border-radius:999px;
+  background: rgba(255,255,255,.65);
+  transition: transform .15s ease, background .15s ease;
+}
+.toggle input:checked{ background: rgba(76,165,255,.22); border-color: rgba(76,165,255,.35); }
+.toggle input:checked::after{ transform: translateX(14px); background: rgba(255,255,255,.85); }
 
 .scan-item .chips-mini{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 .scan-item .mini{ padding:4px 8px; font-size:11px; border-radius:999px; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); color: rgba(255,255,255,.70); }
@@ -637,7 +661,7 @@ select.input option{ background: rgba(10,16,28,1); color: var(--text); }
   right:18px;
   top:86px;
   bottom:18px;
-  width:380px;
+  width:520px;
   max-width: calc(100vw - 36px);
   border:1px solid rgba(255,255,255,.10);
   background: rgba(10,16,28,.96);
@@ -676,7 +700,7 @@ select.input option{ background: rgba(10,16,28,1); color: var(--text); }
 }
 tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 @media (max-width: 1100px){
-  .sidepanel{ right:12px; top:86px; width: min(420px, calc(100vw - 24px)); }
+  .sidepanel{ right:12px; top:86px; width: min(520px, calc(100vw - 24px)); }
 }
 .details-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .run-details{ margin-top:10px; }

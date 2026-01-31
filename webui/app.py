@@ -1464,6 +1464,122 @@ def _get_local_cidrs() -> list[str]:
     return uniq
 
 
+def _get_default_gateway_ip() -> str:
+    """Return default gateway IP if available (IPv4)."""
+    try:
+        out = subprocess.check_output(["ip","route","show","default"], text=True, stderr=subprocess.DEVNULL)
+        # default via 10.5.0.1 dev eth0 ...
+        m = re.search(r"\bvia\s+(\d+\.\d+\.\d+\.\d+)", out)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return ""
+
+
+def _is_rfc1918(ip: str) -> bool:
+    try:
+        a = ipaddress.ip_address(ip)
+        return a.version == 4 and a.is_private
+    except Exception:
+        return False
+
+
+def _gateway_first_cidrs(gw: str, series: str = 'auto') -> list[str]:
+    """Build a safe, ordered list of CIDRs.
+
+    This is intentionally /24-chunked (later in _discover_build_cidrs we normalize anyway).
+    The order follows the user's request:
+    - start from the gateway's "family" first (e.g. 10.5.x.x /16 in /24 steps)
+    - then continue with the remaining RFC1918 ranges.
+
+    NOTE: scanning *all* of 10/8 is enormous; the global cap will truncate.
+    """
+    series = (series or 'auto').lower()
+    gw = gw or ""
+    out: list[str] = []
+
+    def add_10_ordered(pref_second: int | None):
+        seconds = list(range(0,256))
+        if pref_second is not None and 0 <= pref_second <= 255:
+            seconds = [pref_second] + [s for s in seconds if s != pref_second]
+        for s in seconds:
+            # 10.s.0.0/16 (will be chunked to /24)
+            out.append(f"10.{s}.0.0/16")
+
+    def add_172_ordered(pref_second: int | None):
+        seconds = list(range(16,32))
+        if pref_second is not None and pref_second in seconds:
+            seconds = [pref_second] + [s for s in seconds if s != pref_second]
+        for s in seconds:
+            out.append(f"172.{s}.0.0/16")
+
+    def add_192():
+        out.append("192.168.0.0/16")
+
+    if series in ('auto',):
+        # gateway's /16 first (if private)
+        if _is_rfc1918(gw):
+            parts = [int(x) for x in gw.split('.')]
+            if parts[0] == 10:
+                out.append(f"10.{parts[1]}.0.0/16")
+            elif parts[0] == 172 and 16 <= parts[1] <= 31:
+                out.append(f"172.{parts[1]}.0.0/16")
+            elif parts[0] == 192 and parts[1] == 168:
+                out.append("192.168.0.0/16")
+        return out
+
+    # explicit series
+    if series == '10':
+        pref = None
+        if _is_rfc1918(gw) and gw.startswith('10.'):
+            try: pref = int(gw.split('.')[1])
+            except Exception: pref = None
+        add_10_ordered(pref)
+        return out
+    if series == '172':
+        pref = None
+        if _is_rfc1918(gw) and gw.startswith('172.'):
+            try: pref = int(gw.split('.')[1])
+            except Exception: pref = None
+        add_172_ordered(pref)
+        return out
+    if series == '192':
+        add_192()
+        return out
+    if series == 'all':
+        pref10 = None
+        if _is_rfc1918(gw) and gw.startswith('10.'):
+            try: pref10 = int(gw.split('.')[1])
+            except Exception: pref10 = None
+        add_10_ordered(pref10)
+        pref172 = None
+        if _is_rfc1918(gw) and gw.startswith('172.'):
+            try: pref172 = int(gw.split('.')[1])
+            except Exception: pref172 = None
+        add_172_ordered(pref172)
+        add_192()
+        return out
+
+    return out
+
+
+def _cidr_to_host_range(cidr: str) -> str:
+    """Human readable host range for UI, e.g. 10.5.0.0/24 -> 10.5.0.1-254."""
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+        if net.version != 4:
+            return ""
+        # hosts() can be huge; compute first/last without iterating
+        if net.num_addresses <= 2:
+            return str(net.network_address)
+        first = int(net.network_address) + 1
+        last = int(net.broadcast_address) - 1
+        return f"{ipaddress.ip_address(first)}-{ipaddress.ip_address(last)}"
+    except Exception:
+        return ""
+
+
 def _cidrs_from_existing_targets() -> list[str]:
     """Derive candidate subnets from existing targets.
 
@@ -2006,17 +2122,30 @@ def _discover_build_cidrs(opts: dict) -> list[str]:
     """
     scope = (opts.get('scope') or 'auto').lower()
     cidrs: list[str] = []
-    if scope in ('auto','all','local'):
-        cidrs += _get_local_cidrs()
-        cidrs += _cidrs_from_existing_targets()
-    elif scope in ('targets',):
-        cidrs += _cidrs_from_existing_targets()
-    elif scope in ('custom',):
+
+    # Scope values supported by the WebUI:
+    # auto = gateway-first + reachable routed nets
+    # 10/172/192 = RFC1918 series
+    # all = all RFC1918 series (slow)
+    # custom = user provided CIDRs
+    if scope in ('custom',):
         raw = str(opts.get('custom') or '').strip()
         for part in raw.split(','):
             part = part.strip()
             if part:
                 cidrs.append(part)
+    else:
+        # Gateway-first ordering (best UX: starts where the box most likely lives)
+        gw = _get_default_gateway_ip()
+        if scope in ('auto',) and gw:
+            cidrs += _gateway_first_cidrs(gw, series='auto')
+
+        if scope in ('10','172','192','all'):
+            cidrs += _gateway_first_cidrs(gw, series=scope)
+        elif scope in ('auto','local','all'):
+            # Reachable routed nets + targets (covers VLAN routes)
+            cidrs += _get_local_cidrs()
+            cidrs += _cidrs_from_existing_targets()
 
     # de-dup
     seen=set(); uniq=[]
@@ -2105,6 +2234,21 @@ def _discover_worker():
             except Exception:
                 pass
             return
+
+        # Emit a live "what are we scanning" hint (used by the WebUI)
+        try:
+            rng = _cidr_to_host_range(cidr)
+        except Exception:
+            rng = ""
+        event_id += 1
+        _append_discovery_event({
+            'id': event_id,
+            'type':'status',
+            'status':'running',
+            'message': f"Scanning {cidr}",
+            'scanning': f"{cidr}{(' • ' + rng) if rng else ''}",
+            'progress': {'current': idx+1, 'total': len(cidrs), 'cidr': cidr}
+        })
 
         args = ['nmap','-sn','-n'] + _nmap_args_for_profile(meta.get('profile')) + [cidr]
         # stream normal output

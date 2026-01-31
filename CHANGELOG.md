@@ -6,6 +6,22 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.16.24 – 2026-01-31
+
+### Fixed
+- WebUI: **Network discovery Start button** now works (a JS scoping bug prevented the request from firing).
+
+### Improved
+- WebUI: **Network discovery** panel is **wider** for easier use.
+- WebUI: **Show only new** toggle is now a proper **dark-mode switch**.
+- WebUI: Added **Scope** selector: Auto (gateway first) / RFC1918 10.* / 172.16-31.* / 192.168.* / All / Custom CIDR.
+- WebUI: Added a second status line showing **what is being scanned right now** (CIDR + host range).
+- WebUI: Discovery results rendering is **debounced** to avoid UI lag when many devices are found.
+
+### Changed
+- Backend: Discovery scan plan now starts **gateway-first** and can follow RFC1918 ordering when a scope is selected.
+- Backend: Discovery SSE stream now emits a dedicated **“scanning …”** status per subnet for true real-time feedback.
+
 ## v5.9.23 – 2026-01-31
 
 ### Rebuilt

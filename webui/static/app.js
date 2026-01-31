@@ -40,26 +40,36 @@
       // avoid blowing up the UI when the server returns HTML on error
       data = { ok: res.ok, message: txt ? String(txt).slice(0,240) : (res.statusText || "Error") };
     }
-
-
-  async function apiPostJson(url, obj){
-    try{
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(obj || {}),
-      });
-      return await r.json();
-    }catch(e){
-      return {ok:false, message: 'Failed to fetch'};
-    }
-  }
     if (!res.ok && data && data.ok !== true){
       // Normalize common fetch failures
       data.ok = false;
       data.message = data.message || res.statusText || "Request failed";
     }
     return data;
+  }
+
+  async function apiPostJson(url, obj){
+    const payload = obj || {};
+    try{
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload),
+      });
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (ct.includes('application/json')){
+        const data = await res.json();
+        if (!res.ok && data && data.ok !== true){
+          data.ok = false;
+          data.message = data.message || res.statusText || 'Request failed';
+        }
+        return data;
+      }
+      const txt = await res.text();
+      return { ok: res.ok, message: txt ? String(txt).slice(0,240) : (res.statusText || 'Error') };
+    }catch(e){
+      return { ok:false, message: e?.message || 'Failed to fetch' };
+    }
   }
   async function apiGet(url){
     const res = await fetch(url, {cache:"no-store"});
@@ -1357,6 +1367,8 @@ btnRunDetails?.addEventListener("click", () => {
   const btnDiscoverStart = $("#btnDiscoverStart");
   const btnDiscoverCancel = $("#btnDiscoverCancel");
   const btnDiscoverAgain = $("#btnDiscoverAgain");
+  const discoverScope = $("#discoverScope");
+  const discoverCustom = $("#discoverCustom");
   const discoverProfile = $("#discoverProfile");
   const discoverOnlyNew = $("#discoverOnlyNew");
   const discoverFilter = $("#discoverFilter");
@@ -1366,6 +1378,7 @@ btnRunDetails?.addEventListener("click", () => {
   const discoverSubnets = $("#discoverSubnets");
   const discoverBar = $("#discoverBar");
   const discoverStatus = $("#discoverStatus");
+  const discoverScanning = $("#discoverScanning");
   const discoverError = $("#discoverError");
   const discoverCountHint = $("#discoverCountHint");
 
@@ -1381,6 +1394,15 @@ btnRunDetails?.addEventListener("click", () => {
   let discoverES = null;
   let discoverDevices = [];
   let discoverSelected = null;
+  let discoverRenderTimer = null;
+
+  function scheduleDiscoverRender(){
+    if (discoverRenderTimer) return;
+    discoverRenderTimer = setTimeout(() => {
+      discoverRenderTimer = null;
+      renderDiscoverList();
+    }, 120);
+  }
 
   function openDiscover(){
     if (!discoverPanel || !discoverBackdrop) return;
@@ -1404,6 +1426,18 @@ btnRunDetails?.addEventListener("click", () => {
   discoverBtn?.addEventListener('click', openDiscover);
   btnCloseDiscover?.addEventListener('click', closeDiscover);
   discoverBackdrop?.addEventListener('click', closeDiscover);
+
+  function updateDiscoverScopeUI(){
+    const v = String(discoverScope?.value || 'auto');
+    if (discoverCustom){
+      discoverCustom.style.display = (v === 'custom') ? 'inline-flex' : 'none';
+    }
+  }
+
+  discoverScope?.addEventListener('change', updateDiscoverScopeUI);
+  updateDiscoverScopeUI();
+  discoverScope?.addEventListener('change', updateDiscoverScopeUI);
+  updateDiscoverScopeUI();
 
   function suggestEndpoint(ip){
     if (!ip) return '';
@@ -1488,6 +1522,10 @@ btnRunDetails?.addEventListener("click", () => {
 
   discoverFilter?.addEventListener('input', () => renderDiscoverList());
   discoverOnlyNew?.addEventListener('change', () => renderDiscoverList());
+  discoverScope?.addEventListener('change', () => {
+    const v = discoverScope.value || 'auto';
+    if (discoverCustom) discoverCustom.style.display = (v === 'custom') ? 'inline-flex' : 'none';
+  });
 
   function resetDiscoverUI(){
     discoverDevices = [];
@@ -1496,6 +1534,7 @@ btnRunDetails?.addEventListener("click", () => {
     if (discoverError){ discoverError.style.display='none'; discoverError.textContent=''; }
     if (discoverBar) discoverBar.style.width = '0%';
     if (discoverStatus) discoverStatus.textContent = 'Idle';
+    if (discoverScanning) discoverScanning.textContent = '-';
     if (discoverSubnets) discoverSubnets.textContent = '-';
     if (discoverFound) discoverFound.textContent = '0';
     if (btnDiscoverAgain) btnDiscoverAgain.style.display = 'none';
@@ -1508,8 +1547,11 @@ btnRunDetails?.addEventListener("click", () => {
     resetDiscoverUI();
     if (btnDiscoverStart) btnDiscoverStart.disabled = true;
 
+    const scope = (discoverScope?.value || 'auto');
+    const custom = (discoverCustom?.value || '').trim();
     const payload = {
-      scope: 'auto',
+      scope,
+      custom,
       profile: discoverProfile?.value || 'safe',
       cap: 4096,
     };
@@ -1550,6 +1592,10 @@ btnRunDetails?.addEventListener("click", () => {
           discoverBar.style.width = tot ? `${Math.round((cur/tot)*100)}%` : '0%';
         }
         if (discoverStatus) discoverStatus.textContent = obj.message || st || 'Running…';
+        if (discoverScanning){
+          const s = (obj.scanning || (obj.progress && obj.progress.cidr) || '')
+          discoverScanning.textContent = s ? String(s) : '-';
+        }
         if (obj.status === 'done' || obj.status === 'cancelled'){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
           if (btnDiscoverAgain) btnDiscoverAgain.style.display='inline-flex';
@@ -1565,7 +1611,7 @@ btnRunDetails?.addEventListener("click", () => {
         if (!dev) return;
         discoverDevices.push(dev);
         if (discoverFound) discoverFound.textContent = String(discoverDevices.length);
-        renderDiscoverList();
+        scheduleDiscoverRender();
       }catch(e){}
     });
 
