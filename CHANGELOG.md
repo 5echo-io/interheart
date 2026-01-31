@@ -6,6 +6,13 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.25.46 – 2026-01-31
+
+### Fixed
+- WebUI: Discovery start no longer crashes due to an undefined "targets" variable (uses lastTargets).
+
+---
+
 ## v5.25.45 – 2026-01-31
 
 ### Added

@@ -1621,7 +1621,8 @@ function attachMenuActions(){
     const q = (discoverFilter?.value || '').trim();
     const onlyNew = !!discoverOnlyNew?.checked;
 
-    const existingIps = new Set((targets||[]).map(t => String(t.ip||'')).filter(Boolean));
+    // Use lastTargets (kept in sync with /state) to avoid ReferenceError in Discovery.
+    const existingIps = new Set((lastTargets||[]).map(t => String(t.ip||'')).filter(Boolean));
 
     discoverList.innerHTML = '';
     let shown = 0;
