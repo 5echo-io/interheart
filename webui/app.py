@@ -8,6 +8,11 @@ import re
 import socket
 import datetime
 import logging
+import signal
+import shutil
+import ipaddress
+import threading
+import concurrent.futures
 from io import BytesIO
 from pathlib import Path
 
@@ -1394,6 +1399,338 @@ def _get_local_cidrs() -> list[str]:
         seen.add(c)
         uniq.append(c)
     return uniq
+
+
+def _scan_log(line: str):
+    """Append a line to scan output file."""
+    ensure_state_dir()
+    try:
+        with open(SCAN_OUT_FILE, "a", encoding="utf-8", errors="replace") as f:
+            f.write((line or "").rstrip("\n") + "\n")
+    except Exception:
+        pass
+
+
+def _mac_vendor_from_nmap_prefixes(mac: str) -> str:
+    """Best-effort vendor from nmap-mac-prefixes (if present)."""
+    if not mac:
+        return ""
+    try:
+        prefix = re.sub(r"[^0-9A-Fa-f]", "", mac).upper()[:6]
+        if len(prefix) != 6:
+            return ""
+        candidates = [
+            Path("/usr/share/nmap/nmap-mac-prefixes"),
+            Path("/usr/local/share/nmap/nmap-mac-prefixes"),
+        ]
+        for p in candidates:
+            if not p.exists():
+                continue
+            # The file is large. Scan linearly but stop early when possible.
+            with p.open("r", encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    if ln.startswith(prefix):
+                        return ln.split(None, 1)[1].strip() if " " in ln else ""
+        return ""
+    except Exception:
+        return ""
+
+
+def _read_ip_neigh() -> dict:
+    """Return {ip: mac} from neighbor/ARP table."""
+    out: dict[str, str] = {}
+    try:
+        raw = subprocess.check_output(["ip", "neigh", "show"], text=True)
+        for ln in raw.splitlines():
+            # Example: 10.5.10.21 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE
+            m = re.search(r"^(\d+\.\d+\.\d+\.\d+).*\blladdr\s+([0-9a-f:]{17})\b", ln, re.I)
+            if m:
+                out[m.group(1)] = m.group(2).lower()
+    except Exception:
+        pass
+    return out
+
+
+def _resolve_name(ip: str, timeout_s: float = 0.35) -> str:
+    """Reverse-DNS with a short timeout."""
+    if not ip:
+        return ""
+    name: str = ""
+
+    def _do():
+        nonlocal name
+        try:
+            name = socket.gethostbyaddr(ip)[0]
+        except Exception:
+            name = ""
+
+    t = threading.Thread(target=_do, daemon=True)
+    t.start()
+    t.join(timeout=timeout_s)
+    return name
+
+
+def _scan_with_nmap(cidrs: list[str], speed: str, cancel_flag: threading.Event) -> list[dict]:
+    """Preferred scan implementation if nmap is available."""
+    found: list[dict] = []
+    if not shutil.which("nmap"):
+        return found
+
+    timing = {"slow": "-T2", "normal": "-T4", "fast": "-T5"}.get((speed or "normal").lower(), "-T4")
+
+    for cidr in cidrs:
+        if cancel_flag.is_set():
+            break
+        _scan_log(f"scan: {cidr}")
+        try:
+            # -sn = ping scan, -n = no DNS (we do reverse DNS ourselves)
+            cmd = [
+                "nmap",
+                "-sn",
+                "-n",
+                timing,
+                "--max-retries",
+                "1",
+                "--host-timeout",
+                "1200ms",
+                "-oX",
+                "-",
+                cidr,
+            ]
+            xml = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError as e:
+            _scan_log(f"warn: nmap failed on {cidr}: {str(e)}")
+            continue
+        except Exception as e:
+            _scan_log(f"warn: nmap error on {cidr}: {str(e)}")
+            continue
+
+        # Minimal XML parse (no external deps)
+        # Extract <host> blocks, pull IPv4 addr, mac addr, and optional hostname.
+        for host_block in re.findall(r"<host[\s\S]*?</host>", xml):
+            if cancel_flag.is_set():
+                break
+            ipm = re.search(r"<address\s+addr=\"(\d+\.\d+\.\d+\.\d+)\"\s+addrtype=\"ipv4\"", host_block)
+            if not ipm:
+                continue
+            ip = ipm.group(1)
+            mac = ""
+            vendor = ""
+            mm = re.search(r"<address\s+addr=\"([0-9A-Fa-f:]{17})\"\s+addrtype=\"mac\"(?:\s+vendor=\"([^\"]*)\")?", host_block)
+            if mm:
+                mac = (mm.group(1) or "").lower()
+                vendor = (mm.group(2) or "").strip()
+            hn = ""
+            hnm = re.search(r"<hostname\s+name=\"([^\"]+)\"", host_block)
+            if hnm:
+                hn = hnm.group(1).strip()
+            found.append({
+                "ip": ip,
+                "mac": mac,
+                "vendor": vendor,
+                "host": hn,
+                "type": "",
+            })
+    return found
+
+
+def _scan_with_ping(cidrs: list[str], speed: str, cancel_flag: threading.Event) -> list[dict]:
+    """Fallback scan: ping sweep + ARP/neigh lookup."""
+    found_ips: set[str] = set()
+    speed_l = (speed or "normal").lower()
+    # Ping tuning
+    timeout_s = {"slow": 1.2, "normal": 0.8, "fast": 0.45}.get(speed_l, 0.8)
+    max_workers = {"slow": 80, "normal": 160, "fast": 260}.get(speed_l, 160)
+    max_hosts_per_cidr = 4096
+
+    def ping_one(ip: str) -> bool:
+        if cancel_flag.is_set():
+            return False
+        try:
+            # BusyBox vs iputils differences: keep it conservative.
+            cmd = ["ping", "-c", "1", "-W", str(int(max(1, round(timeout_s)))), ip]
+            r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    for cidr in cidrs:
+        if cancel_flag.is_set():
+            break
+        _scan_log(f"scan: {cidr}")
+        try:
+            net = ipaddress.ip_network(cidr, strict=False)
+        except Exception:
+            _scan_log(f"warn: invalid cidr: {cidr}")
+            continue
+
+        # Avoid insane sweeps
+        host_count = max(0, int(net.num_addresses) - 2)
+        if host_count > max_hosts_per_cidr:
+            _scan_log(f"warn: skipping {cidr} ({host_count} hosts) – too large")
+            continue
+
+        hosts = [str(h) for h in net.hosts()]
+        # Ping sweep
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futs = {ex.submit(ping_one, ip): ip for ip in hosts}
+            for fut in concurrent.futures.as_completed(futs):
+                if cancel_flag.is_set():
+                    break
+                ip = futs[fut]
+                try:
+                    ok = bool(fut.result())
+                except Exception:
+                    ok = False
+                if ok:
+                    found_ips.add(ip)
+        # Give neigh table a moment to settle
+        time.sleep(0.2)
+
+    neigh = _read_ip_neigh()
+    out: list[dict] = []
+    for ip in sorted(found_ips, key=lambda s: tuple(int(x) for x in s.split("."))):
+        if cancel_flag.is_set():
+            break
+        mac = neigh.get(ip, "")
+        vendor = _mac_vendor_from_nmap_prefixes(mac)
+        out.append({
+            "ip": ip,
+            "mac": mac,
+            "vendor": vendor,
+            "host": "",
+            "type": "",
+        })
+    return out
+
+
+def _normalize_scan_devices(devs: list[dict]) -> list[dict]:
+    """De-dup by IP, enrich with reverse-DNS name where missing."""
+    by_ip: dict[str, dict] = {}
+    for d in devs or []:
+        ip = str((d or {}).get("ip") or "").strip()
+        if not ip:
+            continue
+        cur = by_ip.get(ip) or {}
+        cur.update({k: v for k, v in (d or {}).items() if v})
+        cur["ip"] = ip
+        by_ip[ip] = cur
+
+    out: list[dict] = []
+    for ip in sorted(by_ip.keys(), key=lambda s: tuple(int(x) for x in s.split("."))):
+        d = by_ip[ip]
+        if not d.get("host"):
+            d["host"] = _resolve_name(ip) or ""
+        # Ensure keys exist for UI
+        d.setdefault("mac", "")
+        d.setdefault("vendor", "")
+        d.setdefault("type", "")
+        out.append(d)
+    return out
+
+
+def _build_scan_cidrs(opts: dict) -> list[str]:
+    scope = (opts or {}).get("scope") or "local"
+    custom = (opts or {}).get("custom") or ""
+    scope = scope.strip().lower()
+    cidrs: list[str] = []
+    if scope in ("custom", "local+custom"):
+        if scope == "local+custom":
+            cidrs.extend(_get_local_cidrs())
+        for part in re.split(r"[\s,;]+", custom.strip()):
+            if not part:
+                continue
+            try:
+                cidrs.append(str(ipaddress.ip_network(part, strict=False)))
+            except Exception:
+                continue
+    else:
+        cidrs = _get_local_cidrs()
+
+    # de-dup
+    seen = set()
+    uniq = []
+    for c in cidrs:
+        if c in seen:
+            continue
+        seen.add(c)
+        uniq.append(c)
+    return uniq
+
+
+def _scan_worker():
+    """Background worker invoked by scan_worker.py.
+
+    Writes:
+      - scan_last_output.txt (human readable)
+      - scan_meta.json (status + found devices)
+    """
+    ensure_state_dir()
+    meta = load_scan_meta() or {}
+    opts = meta.get("opts") or {}
+
+    cancel_flag = threading.Event()
+
+    def _on_term(_sig, _frame):
+        cancel_flag.set()
+
+    try:
+        signal.signal(signal.SIGTERM, _on_term)
+        signal.signal(signal.SIGINT, _on_term)
+    except Exception:
+        pass
+
+    # Reset output
+    try:
+        SCAN_OUT_FILE.write_text("", encoding="utf-8")
+    except Exception:
+        pass
+
+    cidrs = _build_scan_cidrs(opts)
+    meta.update({
+        "pid": int(os.getpid()),
+        "started": int(meta.get("started") or time.time()),
+        "finished": 0,
+        "rc": None,
+        "error": "",
+        "cidrs": cidrs,
+        "found": [],
+        "current_ip": "",
+    })
+    save_scan_meta(meta)
+
+    _scan_log("Network scan started")
+    if not cidrs:
+        _scan_log("warn: no subnets found to scan")
+        meta.update({"finished": int(time.time()), "rc": 0, "found": []})
+        save_scan_meta(meta)
+        return
+
+    speed = (opts.get("speed") or "normal").strip().lower()
+
+    # Prefer nmap when available
+    devices: list[dict] = []
+    if shutil.which("nmap"):
+        _scan_log("info: using nmap")
+        devices = _scan_with_nmap(cidrs, speed, cancel_flag)
+    else:
+        _scan_log("info: nmap not found; using ping sweep")
+        devices = _scan_with_ping(cidrs, speed, cancel_flag)
+
+    if cancel_flag.is_set():
+        meta.update({"finished": int(time.time()), "rc": 1, "error": "Cancelled"})
+        save_scan_meta(meta)
+        _scan_log("Scan cancelled")
+        return
+
+    devices = _normalize_scan_devices(devices)
+    meta["found"] = devices
+    meta.update({"finished": int(time.time()), "rc": 0, "error": "", "current_ip": ""})
+    save_scan_meta(meta)
+    _scan_log(f"Scan finished: found {len(devices)} device(s)")
+
+
+@APP.post("/api/scan-start")
 def api_scan_start():
     ensure_state_dir()
     meta = load_scan_meta()

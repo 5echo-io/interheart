@@ -1345,39 +1345,71 @@ btnRunDetails?.addEventListener("click", () => {
 
   let scanPoll = null;
   let scanFound = [];
-  let scanNew = [];
   let scanSelected = null;
+  let scanAddedIps = new Set();
+
+  function suggestName(dev){
+    const host = (dev?.host || "").trim();
+    if (host) return host;
+    const vendor = (dev?.vendor || "").trim();
+    if (vendor) return `${vendor} ${dev.ip}`;
+    return String(dev?.ip || "");
+  }
 
   function renderScanList(){
     if (!scanList || !scanListEmpty) return;
     scanList.innerHTML = "";
-    if (!scanNew.length){
+    if (!scanFound.length){
       scanListEmpty.style.display = "block";
       return;
     }
     scanListEmpty.style.display = "none";
-    scanNew.forEach(dev => {
+    const existingIps = new Set((lastTargets||[]).map(t => String(t.ip||"")));
+    const existingMacs = new Set((lastTargets||[]).map(t => String(t.mac||"").toLowerCase()).filter(Boolean));
+    scanFound.forEach(dev => {
       const host = dev.host || dev.ip;
       const vendor = dev.vendor ? `<span class="muted">${escapeHtml(dev.vendor)}</span>` : "";
       const dtype = dev.type ? `<span class="badge">${escapeHtml(dev.type)}</span>` : "";
       const conf = (dev.confidence !== undefined && dev.confidence !== null) ? `<span class="conf">${dev.confidence}%</span>` : "";
+
+      const ip = String(dev.ip||"");
+      const mac = String(dev.mac||"").toLowerCase();
+      const isExisting = existingIps.has(ip) || (mac && existingMacs.has(mac));
+      const isAdded = scanAddedIps.has(ip);
+      const statusBadge = isAdded ? `<span class="badge badge-ok">Added</span>` : (isExisting ? `<span class="badge badge-muted">Already added</span>` : "");
+      const canAdd = !isExisting && !isAdded;
+
       const el = document.createElement("div");
-      el.className = "scan-item";
+      el.className = "scan-item" + (canAdd ? "" : " is-disabled");
       el.innerHTML = `
         <div class="meta">
-          <div class="meta-top"><b>${escapeHtml(host)}</b>${dtype}${conf}</div>
-          <div class="meta-sub"><span>${escapeHtml(dev.ip)}</span>${vendor}</div>
+          <div class="meta-top"><b>${escapeHtml(host)}</b>${dtype}${conf}${statusBadge}</div>
+          <div class="meta-sub"><span>${escapeHtml(dev.ip)}</span>${dev.mac ? `<span class="muted">${escapeHtml(dev.mac)}</span>` : ""}${vendor}</div>
         </div>
-        <button class="btn btn-primary btn-mini" type="button">Add</button>
+        <button class="btn btn-primary btn-mini" type="button" ${canAdd ? "" : "disabled"}>${isAdded ? "Added" : (isExisting ? "Added" : "Add")}</button>
       `;
-      el.querySelector("button").addEventListener("click", () => {
+
+      const openAdd = () => {
         scanSelected = dev;
         scanAddTitle.textContent = dev.ip;
-        scanAddName.value = dev.host || dev.ip;
+        scanAddName.value = suggestName(dev);
         scanAddIp.value = dev.ip;
         scanAddEndpoint.value = "";
         show(scanAddModal);
         scanAddEndpoint.focus();
+      };
+
+      el.addEventListener("click", (e) => {
+        // Only allow opening when it makes sense.
+        if (!canAdd) return;
+        // Ignore button bubbling (handled below)
+        if (e?.target?.closest && e.target.closest("button")) return;
+        openAdd();
+      });
+
+      el.querySelector("button").addEventListener("click", () => {
+        if (!canAdd) return;
+        openAdd();
       });
       scanList.appendChild(el);
     });
@@ -1421,8 +1453,13 @@ btnRunDetails?.addEventListener("click", () => {
       scanFoundCount.textContent = String(scanFound.length);
 
       const existingIps = new Set((lastTargets||[]).map(t => String(t.ip||"")));
-      scanNew = scanFound.filter(d => !existingIps.has(String(d.ip||"")));
-      scanNewCount.textContent = String(scanNew.length);
+      const existingMacs = new Set((lastTargets||[]).map(t => String(t.mac||"").toLowerCase()).filter(Boolean));
+      const newCount = (scanFound||[]).filter(d => {
+        const ip = String(d?.ip||"");
+        const mac = String(d?.mac||"").toLowerCase();
+        return ip && !existingIps.has(ip) && !(mac && existingMacs.has(mac)) && !scanAddedIps.has(ip);
+      }).length;
+      scanNewCount.textContent = String(newCount);
       renderScanList();
 
       // Keep polling if modal is open; otherwise stop.
@@ -1437,6 +1474,8 @@ btnRunDetails?.addEventListener("click", () => {
   }
 
   function resetScanUi(){
+    scanFound = [];
+    scanAddedIps = new Set();
     scanBar.style.width = "0%";
     scanFoundCount.textContent = "-";
     scanNewCount.textContent = "-";
@@ -1509,14 +1548,14 @@ btnRunDetails?.addEventListener("click", () => {
       }
       toast("Add target", "Added");
       hide(scanAddModal);
-      // remove from new list
       if (scanSelected){
-        scanNew = scanNew.filter(d => d.ip !== scanSelected.ip);
+        scanAddedIps.add(String(scanSelected.ip||""));
         renderScanList();
-        scanNewCount.textContent = String(scanNew.length);
         scanSelected = null;
       }
       await refreshState(true);
+      // Update counters in the scan modal (if it is open)
+      if (scanModal?.classList.contains("show")) await refreshScan();
     }catch(err){
       toast("Add target", err?.message || "Failed");
     }

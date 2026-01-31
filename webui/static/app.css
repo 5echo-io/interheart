@@ -32,6 +32,8 @@ body{ margin:0; font-family:var(--sans); color:var(--text); background: var(--bg
   border:1px solid var(--line);
   color:var(--muted);
 }
+.badge-ok{ border-color: rgba(53,211,159,.35); color: rgba(53,211,159,.95); }
+.badge-muted{ opacity: .85; }
 .subtitle{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:10px}
 .subtitle a{color:rgba(255,255,255,.85);text-decoration:none;border-bottom:1px solid rgba(255,255,255,.18)}
 .subtitle a:hover{border-bottom-color:rgba(255,255,255,.32)}
@@ -365,6 +367,8 @@ tr.flash-down{ animation: rowFail 1s ease; }
   border-radius: 14px;
   background: rgba(255,255,255,.03);
 }
+.scan-item.is-disabled{ opacity: .65; }
+.scan-item.is-disabled button{ cursor:not-allowed; }
 .scan-item .meta{
   display:flex;
   flex-direction:column;
