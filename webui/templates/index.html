@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/static/app.css?v={{ ui_version }}">
 </head>
 
-<body>
+<body data-poll-seconds="{{ poll_seconds }}">
   <div class="toasts" id="toasts"></div>
 
   <!-- Logs modal -->
@@ -364,9 +364,9 @@
             </td>
             <td><code>{{ t.ip }}</code></td>
             <td>
-              <span class="chip status-chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
+              <span class="chip status-chip {% if t.enabled == 0 %}status-disabled{% elif t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
                 <span class="dot"></span>
-                <span class="status-text">{{ t.status }}</span>
+                <span class="status-text">{% if t.enabled == 0 %}DISABLED{% elif t.status == 'up' %}OK{% elif t.status == 'down' %}NOT RESPONDING{% else %}{{ t.status|upper }}{% endif %}</span>
               </span>
             </td>
             <td>

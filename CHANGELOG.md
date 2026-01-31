@@ -6,6 +6,20 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.16.30 – 2026-01-31
+
+### Fixed
+- WebUI: **First load** now binds all table handlers (actions menu, multi-select, interval edit) immediately – no more “works only after Run now”.
+- WebUI: Status text is consistent on first load (**OK / NOT RESPONDING / DISABLED**) instead of raw **UP/DOWN**.
+- WebUI: Actions menu now reliably works on first load (and stays working after live refresh).
+- WebUI: Restored the **minimalist icons** (no SVG swap after refresh).
+- WebUI: Network discovery **Start** now always fires and shows clear feedback on **start / error / running**.
+- WebUI: Discovery now falls back to **/api/discover-status polling** if SSE is blocked by a proxy, so progress still updates.
+
+### Improved
+- WebUI: Discovery panel is a bit wider, and the “Show only new” toggle is darker in idle state.
+- WebUI: Added automatic **live polling** of /state at the configured refresh interval.
+
 ## v5.16.24 – 2026-01-31
 
 ### Fixed

@@ -802,12 +802,12 @@ function renderSnapshots(snaps){
   function buildRow(t){
     const enabled = Number(t.enabled ?? 0) === 1;
     const ic = {
-      info: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`,
-      edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`,
-      enable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
-      disable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>`,
-      test: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>`,
-      remove: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`
+      info: `ℹ`,
+      edit: `✎`,
+      enable: `✓`,
+      disable: `⛔`,
+      test: `⚡`,
+      remove: `🗑`,
     };
     return `<tr data-name="${t.name}" data-ip="${t.ip}" data-status="${t.status}" data-enabled="${enabled?1:0}"
               data-last-ping="${t.last_ping_epoch||0}" data-last-resp="${t.last_response_epoch||0}" data-last-rtt="${t.last_rtt_ms ?? -1}">
@@ -1112,6 +1112,10 @@ function attachMenuActions(){
       return true;
     }
     return false;
+  }
+
+  async function refreshTargets(){
+    return await refreshState(true);
   }
 
   async function refreshState(force=false){
@@ -1545,6 +1549,8 @@ btnRunDetails?.addEventListener("click", () => {
 
   async function startDiscovery(){
     resetDiscoverUI();
+    if (discoverStatus) discoverStatus.textContent = 'Starting…';
+    if (discoverScanning) discoverScanning.textContent = '-';
     if (btnDiscoverStart) btnDiscoverStart.disabled = true;
 
     const scope = (discoverScope?.value || 'auto');
@@ -1556,13 +1562,21 @@ btnRunDetails?.addEventListener("click", () => {
       cap: 4096,
     };
 
-    const r = await apiPostJson('/api/discover-start', payload);
-    if (!r.ok){
-      if (discoverError){ discoverError.textContent = r.message || 'Failed to start'; discoverError.style.display='block'; }
+    let r = null;
+    try{
+      r = await apiPostJson('/api/discover-start', payload);
+    }catch(e){
+      r = { ok:false, message: e?.message || 'Failed to fetch' };
+    }
+
+    if (!r || !r.ok){
+      if (discoverError){ discoverError.textContent = (r && r.message) ? r.message : 'Failed to start'; discoverError.style.display='block'; }
+      if (discoverStatus) discoverStatus.textContent = 'Error';
       if (btnDiscoverStart) btnDiscoverStart.disabled = false;
       return;
     }
 
+    if (discoverStatus) discoverStatus.textContent = 'Discovery started';
     if (btnDiscoverStart) btnDiscoverStart.style.display='none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
 
@@ -1578,7 +1592,28 @@ btnRunDetails?.addEventListener("click", () => {
   btnDiscoverAgain?.addEventListener('click', startDiscovery);
   btnDiscoverCancel?.addEventListener('click', cancelDiscovery);
 
-  function connectDiscoveryStream(){
+  
+  let discoverFallbackPoll = null;
+  async function pollDiscoveryFallback(){
+    try{
+      const st = await apiGet('/api/discover-status');
+      if (discoverSubnets && st && st.cidrs != null) discoverSubnets.textContent = String(st.cidrs);
+      if (discoverFound && st && st.found != null) discoverFound.textContent = String(st.found);
+      if (discoverStatus) discoverStatus.textContent = st.message || st.status || 'Running…';
+      if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
+      if (discoverBar && st.progress){
+        const cur = Number(st.progress.current||0); const tot = Number(st.progress.total||0);
+        discoverBar.style.width = tot ? `${Math.round((cur/tot)*100)}%` : '0%';
+      }
+      if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
+        if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
+        if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+        if (btnDiscoverAgain) btnDiscoverAgain.style.display='inline-flex';
+        if (btnDiscoverStart){ btnDiscoverStart.style.display='none'; btnDiscoverStart.disabled=false; }
+      }
+    }catch(e){ /* ignore */ }
+  }
+function connectDiscoveryStream(){
     if (discoverES){ try{ discoverES.close(); }catch(e){} }
     discoverES = new EventSource('/api/discover-stream');
 
@@ -1616,7 +1651,11 @@ btnRunDetails?.addEventListener("click", () => {
     });
 
     discoverES.addEventListener('error', (ev) => {
-      // EventSource error can be transient; show only if discovery isn't running
+      // Some proxies block SSE. Fall back to polling status so the user still sees progress.
+      if (!discoverFallbackPoll){
+        discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1000);
+        pollDiscoveryFallback();
+      }
     });
   }
 
@@ -1672,6 +1711,26 @@ btnRunDetails?.addEventListener("click", () => {
     await submitDiscoverAdd(true);
   });
 
+
+
+  // ---- INIT_BOOTSTRAP ----
+  (async () => {
+    try{
+      // Ensure the table UI is fully interactive on first load (no need to click Run now).
+      await refreshState(true);
+    }catch(e){
+      // If the first state fetch fails, still bind handlers for the server-rendered rows.
+      try{ attachIntervalHandlers(); attachMenuActions(); attachBulkHandlers(); attachRowClickHandlers(); }catch(_){}
+    }
+
+    // periodic refresh
+    let pollS = 2;
+    try{
+      const v = Number(document.body?.dataset?.pollSeconds || 2);
+      if (Number.isFinite(v) && v > 0) pollS = v;
+    }catch(e){}
+    setInterval(() => { refreshState(false).catch(()=>{}); }, pollS*1000);
+  })();
   // kick initial render if panel exists
   resetDiscoverUI();
 
