@@ -20,6 +20,8 @@ This project follows Semantic Versioning (SemVer).
 ### Notes
 - This release intentionally **requires `nmap`** for scanning. If missing, the UI will tell you exactly what to install.
 
+---
+
 ## v5.1.20 – 2026-01-31
 
 ### Changed
@@ -35,7 +37,9 @@ This project follows Semantic Versioning (SemVer).
 - If `nmap` is installed, Interheart uses it automatically for faster and more accurate discovery.
 - MAC addresses are typically only available for devices on the same L2 subnet (across routed VLANs they may show as blank, depending on network setup).
 
-## v5.0.18 – 2026-01-31
+---
+
+## v5.0.18-stable – 2026-01-31
 
 > This release consolidates all changes from **v4.6.0 → v5.0.18** into a single, consistent changelog entry.
 
@@ -69,3 +73,48 @@ This project follows Semantic Versioning (SemVer).
 - WebUI: Logs formatting fixes (timestamps cleaned, exports work reliably).
 - Permissions: Resolved issues writing run output / reading journal without interactive sudo prompts.
 
+---
+
+## v4.6.0-stable – 2026-01-29
+
+> This release consolidates all changes from **v1.0.0 → v4.6.0** into a single, consistent changelog entry.
+
+### Added
+- `interheart run-now` command to force immediate checks of all targets  
+  (ignores per-target intervals).
+- Runtime progress output written to `/var/lib/interheart/runtime.json` for real-time WebUI updates.
+- Run summary modal with clear metrics and progress bar.
+- Visual row feedback in the table (active row highlight and success/fail blink).
+- Custom confirmation modal for **Remove target**  
+  (replaces browser `confirm()`).
+- UI polish pass: softer “glass” feel, smoother hover states, and improved dropdown animations.
+- **Run now** modal always shows a clear **Running…** state and a visual summary  
+  (even when runtime data is unavailable).
+
+### Changed
+- WebUI systemd service now runs as `root` (local usage) to:
+  - read `journalctl`
+  - write runtime and output files
+  - eliminate the need for internal `sudo`
+- WebUI no longer uses `sudo` internally for `interheart` or `journalctl` calls.
+- **Run now** in WebUI always calls `interheart run-now` for consistent behavior.
+- **Run now** execution is now **non-blocking**:
+  - runs in the background
+  - WebUI polls runtime and result endpoints for live status
+- Run summary modal now shows meaningful metrics even when no targets were due.
+- Add Target modal layout updated:
+  - **Add target** and **Cancel** buttons swapped
+  - Name / IP / Interval on one line, Endpoint below
+- Logs modal:
+  - Reads logs using `journalctl -o cat` for clean Interheart output without syslog prefixes
+  - Improved header layout and consistent icon rendering
+
+### Fixed
+- WebUI **Run now** previously failed with `permission denied` when writing  
+  `/var/lib/interheart/run_last_output.txt` – now resolved.
+- Logs modal previously failed due to sudo password prompt  
+  (`sudo: a terminal is required`) – eliminated.
+- **Run now** progress previously appeared static until completion because the request was blocking – progress now updates live.
+- Logs modal **Copy** button icon was missing in some builds – now uses a guaranteed inline SVG.
+- Run summary modal previously showed `0/0` and felt inactive when no targets were due – corrected.
+- **Run now** modal previously appeared “inactive” with no visible updates – now reliably updates during and after execution.
