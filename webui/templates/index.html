@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/static/app.css?v={{ ui_version }}">
 </head>
 
-<body data-poll-seconds="{{ poll_seconds }}">
+<body>
   <div class="toasts" id="toasts"></div>
 
   <!-- Logs modal -->
@@ -95,7 +95,16 @@
           </div>
         </div>
 
-<!-- Details removed: live details feed was unreliable and confusing. -->
+<div class="metric">
+  <div class="details-row">
+    <b>Details</b>
+    <button class="btn btn-ghost btn-mini" id="btnRunDetails" type="button">Show details</button>
+  </div>
+  <div class="run-details" id="runFeedWrap" style="display:none;">
+    <div class="logbox logbox--compact" id="runFeed">(no output yet)</div>
+    <div class="hint" style="margin-top:8px;">Tip: Use Logs for full history.</div>
+  </div>
+</div>
 
       </div>
 
@@ -201,12 +210,7 @@
           <div class="metric">
             <b>Basics</b>
             <div class="kv"><span>Name</span><code id="infoName">-</code></div>
-            <div class="kv"><span>IP</span>
-              <div class="copy-wrap" title="Click to copy">
-                <code id="infoIp" class="copyable" tabindex="0" role="button" aria-label="Copy IP address">-</code>
-                <span class="copy-ic" id="copyIpIcon" aria-hidden="true">⧉</span>
-              </div>
-            </div>
+            <div class="kv"><span>IP</span><code id="infoIp">-</code></div>
             <div class="kv"><span>Enabled</span><code id="infoEnabled">-</code></div>
             <div class="kv"><span>Interval</span><code id="infoInterval">-</code></div>
           </div>
@@ -221,12 +225,7 @@
 
           <div class="metric info-span2">
             <b>Endpoint</b>
-            <div class="kv endpoint-kv"><span>URL</span>
-              <div class="copy-wrap endpoint-wrap" title="Click to copy">
-                <code id="infoEndpoint" class="endpoint-code copyable" tabindex="0" role="button" aria-label="Copy endpoint URL">-</code>
-                <span class="copy-ic" id="copyEndpointIcon" aria-hidden="true">⧉</span>
-              </div>
-            </div>
+            <div class="kv endpoint-kv"><span>URL</span><div class="endpoint-wrap"><code id="infoEndpoint" class="endpoint-code">-</code><button class="btn btn-ghost btn-mini btn-icon copy-endpoint" id="btnCopyEndpoint" type="button" title="Copy endpoint URL" aria-label="Copy endpoint URL">⧉</button></div></div>
             </div>
         </div>
 
@@ -313,7 +312,7 @@
       <div class="right-actions">
         <input id="filterInput" class="input input--sm" placeholder="Filter targets… (name / ip / status)">
         <button class="btn btn-ghost btn-mini" id="openAdd" type="button">Add target</button>
-        <button class="btn btn-ghost btn-mini" id="btnDiscover" type="button">Discover</button>
+        <button class="btn btn-ghost btn-mini" id="btnSearchNetwork" type="button">Search network</button>
         <button class="btn btn-primary btn-mini" id="btnRunNow" type="button">Run now</button>
       </div>
     </div>
@@ -365,18 +364,9 @@
             </td>
             <td><code>{{ t.ip }}</code></td>
             <td>
-              <span class="chip status-chip {% if t.enabled == 0 %}status-disabled{% elif t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
+              <span class="chip status-chip {% if t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
                 <span class="dot"></span>
-                <span class="status-flex">
-                  <span class="status-text">{% if t.enabled == 0 %}DISABLED{% elif t.status == 'up' %}OK{% elif t.status == 'down' %}NOT RESPONDING{% else %}{{ t.status|upper }}{% endif %}</span>
-                  <span class="snapshots" aria-hidden="true">
-                    {%- if t.snapshots -%}
-                      {%- for s in t.snapshots[:3] -%}
-                        <span class="snap-dot {{ s.state|default('unknown') }}" title="{{ s.label|default(s.state|default('unknown')) }}"></span>
-                      {%- endfor -%}
-                    {%- endif -%}
-                  </span>
-                </span>
+                <span class="status-text">{{ t.status }}</span>
               </span>
             </td>
             <td>
@@ -391,44 +381,14 @@
               <div class="menu">
                 <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">⋯</button>
                 <div class="menu-dd" role="menu">
-                  <button class="menu-item" data-action="info" type="button">
-                    <span class="mi-ic" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                    </span>
-                    <span>Information</span>
-                  </button>
-                  <button class="menu-item" data-action="test" type="button">
-                    <span class="mi-ic" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                    </span>
-                    <span>Test</span>
-                  </button>
-                  <button class="menu-item" data-action="edit" type="button">
-                    <span class="mi-ic" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-                    </span>
-                    <span>Edit</span>
-                  </button>
+                  <button class="menu-item" data-action="info" type="button"><span class="mi-ic" aria-hidden="true">ℹ</span><span>Information</span></button>
+                  <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">✎</span><span>Edit</span></button>
                   <div class="menu-sep"></div>
-                  <button class="menu-item" data-action="enable" type="button">
-                    <span class="mi-ic" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                    </span>
-                    <span>Enable</span>
-                  </button>
-                  <button class="menu-item" data-action="disable" type="button">
-                    <span class="mi-ic" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>
-                    </span>
-                    <span>Disable</span>
-                  </button>
+                  <button class="menu-item" data-action="enable" type="button"><span class="mi-ic" aria-hidden="true">✓</span><span>Enable</span></button>
+                  <button class="menu-item" data-action="disable" type="button"><span class="mi-ic" aria-hidden="true">⛔</span><span>Disable</span></button>
                   <div class="menu-sep"></div>
-                  <button class="menu-item danger" data-action="remove" type="button">
-                    <span class="mi-ic" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-                    </span>
-                    <span>Delete</span>
-                  </button>
+                  <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">⚡</span><span>Test</span></button>
+                  <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">🗑</span><span>Delete</span></button>
                 </div>
               </div>
             </td>
@@ -446,126 +406,135 @@
   </div>
 
 
-  
-
-  <div class="sidepanel-backdrop is-hidden" id="discoverBackdrop"></div>
-  <div class="sidepanel is-hidden" id="discoverPanel" aria-label="Network discovery">
-    <div class="sidepanel-head">
-      <div class="sidepanel-title">
-        <b>Network discovery</b>
-        <span id="discoverMeta">nmap • safe scan</span>
-      </div>
-      <button class="btn btn-ghost btn-mini" id="btnCloseDiscover" type="button">Close</button>
-    </div>
-
-    <div class="sidepanel-actions">
-      <select class="input input--sm" id="discoverIface" aria-label="Interface">
-        <option value="auto" selected>Interface: Auto</option>
-      </select>
-      <select class="input input--sm" id="discoverScope" aria-label="Scope">
-        <option value="auto" selected>Auto (gateway first)</option>
-        <option value="10">RFC1918: 10.x.x.x</option>
-        <option value="172">RFC1918: 172.16-31.x.x</option>
-        <option value="192">RFC1918: 192.168.x.x</option>
-        <option value="all">RFC1918: All (slow)</option>
-        <option value="custom">Custom CIDR</option>
-      </select>
-      <select class="input input--sm" id="discoverProfile" aria-label="Profile">
-        <option value="safe" selected>Safe</option>
-        <option value="normal">Normal</option>
-        <option value="fast">Fast</option>
-      </select>
-      <input class="input input--sm" id="discoverCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24" style="display:none; min-width: 240px;" />
-      <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Start</button>
-      <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
-      <button class="btn btn-ghost btn-mini" id="btnDiscoverAgain" type="button" style="display:none;" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Search again</button>
-      <label class="toggle" style="margin-left:auto;">
-        <input type="checkbox" id="discoverOnlyNew" />
-        <span>Show only new</span>
-      </label>
-    </div>
-
-    <div class="sidepanel-body">
-      <div class="card card--soft">
-        <div class="row">
-          <div class="kpi">
-            <div class="kpi-label">Subnets</div>
-            <div class="kpi-value" id="discoverSubnets">-</div>
+  <!-- Network scan modal -->
+  <div class="modal" id="scanModal" aria-hidden="true">
+    <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-label="Search network">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Search network</b>
+          <span id="scanTitleMeta">-</span>
+        </div>
+        <div class="modal-actions">
+          <div class="run-live" id="scanLive" style="display:none;">
+            <span class="pulse"></span>
+            <span id="scanLiveText">Scanning…</span>
           </div>
-          <div class="kpi">
-            <div class="kpi-label">Found</div>
-            <div class="kpi-value" id="discoverFound">0</div>
+          <button class="btn btn-ghost btn-mini" id="btnCloseScan" type="button">Close</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="scan-controls">
+          <div class="field">
+            <label>Scan scope</label>
+            <select class="input" id="scanScope">
+              <option value="local" selected>Local subnets (recommended)</option>
+              <option value="local+custom">Local + custom CIDR</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Speed</label>
+            <select class="input" id="scanSpeed">
+              <option value="safe">Safe</option>
+              <option value="normal" selected>Normal</option>
+              <option value="fast">Fast</option>
+            </select>
+          </div>
+          <div class="field" id="scanCustomWrap" style="display:none;">
+            <label>Custom CIDR (comma separated)</label>
+            <input class="input" id="scanCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24">
           </div>
         </div>
-        <div class="progress"><div class="progress-bar" id="discoverBar" style="width:0%"></div></div>
-        <div class="hint" id="discoverStatus">Idle</div>
-        <div class="hint" id="discoverScanning" style="margin-top:-6px; opacity:.75;">-</div>
-        <div class="alert alert--error" id="discoverError" style="display:none;"></div>
-      </div>
 
-      <div class="field" style="margin-top:-2px;">
-        <input id="discoverFilter" class="input" placeholder="Filter devices… (name / ip / mac / vendor)">
-      </div>
-
-      <div class="chips" id="discoverLegend">
-        <span class="chip chip--ok">New</span>
-        <span class="chip">Already added</span>
-        <span class="chip chip--muted">Added now</span>
-      </div>
-
-      <div class="card">
-        <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-          <b>Devices</b>
-          <span class="hint" id="discoverCountHint">0 shown</span>
+        <div class="scan-actions">
+          <button class="btn btn-primary btn-mini" id="btnScanNow" type="button">Scan now</button>
+          <button class="btn btn-ghost btn-mini" id="btnAbortScan" type="button" style="display:none;">Abort</button>
         </div>
-        <div class="card-body">
-          <div class="scan-list" id="discoverListEmpty">No devices yet. Hit Start.</div>
-          <div class="scan-list" id="discoverList"></div>
-        </div>
-      </div>
 
-      <div class="card" id="discoverAddCard" style="display:none;">
-        <div class="card-head">
-          <b>Add target</b>
-          <span class="hint" id="discoverAddHint">-</span>
-        </div>
-        <div class="card-body">
-          <form id="discoverAddForm">
-            <div class="grid3">
-              <div class="field">
-                <label>Name</label>
-                <input class="input" name="name" id="discoverAddName" required>
-              </div>
-              <div class="field">
-                <label>IP address</label>
-                <input class="input" name="ip" id="discoverAddIp" required readonly>
-              </div>
-              <div class="field">
-                <label>Interval (sec)</label>
-                <input class="input" name="interval" id="discoverAddInterval" type="number" min="10" max="86400" step="1" value="60" required>
-              </div>
+        <div class="card card--soft" style="margin-bottom:12px;">
+          <div class="row">
+            <div class="kpi">
+              <div class="kpi-label">Subnets</div>
+              <div class="kpi-value" id="scanSubnets">-</div>
             </div>
-
-            <div class="field" style="margin-top:12px;">
-              <label>Endpoint URL</label>
-              <input class="input" name="endpoint" id="discoverAddEndpoint" placeholder="https://…" required>
-              <div class="hint" id="discoverEndpointHint" style="margin-top:6px;">Tip: use http(s)://IP:port/path</div>
+            <div class="kpi">
+              <div class="kpi-label">Found</div>
+              <div class="kpi-value" id="scanFoundCount">-</div>
             </div>
-
-            <div class="modal-foot-actions" style="margin-top:12px;">
-              <button class="btn btn-primary" type="submit" id="btnDiscoverAdd">Add target</button>
-              <button class="btn btn-ghost" type="button" id="btnDiscoverAddKeep">Add & keep open</button>
-              <button class="btn btn-ghost" type="button" id="btnDiscoverAddCancel">Cancel</button>
+            <div class="kpi">
+              <div class="kpi-label">New</div>
+              <div class="kpi-value" id="scanNewCount">-</div>
             </div>
-          </form>
+          </div>
+          <div class="progress"><div class="progress-bar" id="scanBar" style="width:0%"></div></div>
+          <div class="hint" id="scanStatusLine">-</div>
+        </div>
+
+        <div class="logbox logbox--compact" id="scanOutput">Press “Scan now” to start…</div>
+
+        <div class="card" style="margin-top:14px;">
+          <div class="card-head">
+            <b>New devices</b>
+            <span class="hint">Click a device to add it as a target</span>
+          </div>
+          <div class="card-body">
+            <div class="scan-list" id="scanListEmpty">No new devices yet.</div>
+            <div class="scan-list" id="scanList"></div>
+          </div>
         </div>
       </div>
-
-      <div class="logbox logbox--compact" id="discoverLog" style="display:none;"></div>
-
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
     </div>
   </div>
-<script>
+
+  <!-- Add from scan modal -->
+  <div class="modal" id="scanAddModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Add target</b>
+          <span id="scanAddTitle">-</span>
+        </div>
+        <div class="modal-actions"></div>
+      </div>
+      <div class="modal-body">
+        <form id="scanAddForm">
+          <div class="grid3">
+            <div class="field">
+              <label>Name</label>
+              <input class="input" name="name" id="scanAddName" required>
+            </div>
+            <div class="field">
+              <label>IP address</label>
+              <input class="input" name="ip" id="scanAddIp" required>
+            </div>
+            <div class="field">
+              <label>Interval (sec)</label>
+              <input class="input" name="interval" id="scanAddInterval" type="number" min="10" max="86400" step="1" value="60" required>
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:12px;">
+            <label>Endpoint URL</label>
+            <input class="input" name="endpoint" id="scanAddEndpoint" placeholder="https://…" required>
+          </div>
+
+          <div class="modal-foot-actions">
+            <button class="btn btn-primary" type="submit" id="btnScanAddSubmit">Add target</button>
+            <button class="btn btn-ghost" type="button" id="btnScanAddCancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
     // Seed the UI with the server-rendered targets. This prevents the table
     // from flashing empty before the first /state poll returns.
     window.__INITIAL_TARGETS__ = {{ targets|tojson }};

@@ -31,63 +31,11 @@
   // ---- API helpers ----
   async function apiPost(url, fd){
     const res = await fetch(url, {method:"POST", body: fd});
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    let data = null;
-    if (ct.includes("application/json")){
-      data = await res.json();
-    } else {
-      const txt = await res.text();
-      // avoid blowing up the UI when the server returns HTML on error
-      data = { ok: res.ok, message: txt ? String(txt).slice(0,240) : (res.statusText || "Error") };
-    }
-    if (!res.ok && data && data.ok !== true){
-      // Normalize common fetch failures
-      data.ok = false;
-      data.message = data.message || res.statusText || "Request failed";
-    }
-    return data;
-  }
-
-  async function apiPostJson(url, obj){
-    const payload = obj || {};
-    try{
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(payload),
-      });
-      const ct = (res.headers.get('content-type') || '').toLowerCase();
-      if (ct.includes('application/json')){
-        const data = await res.json();
-        if (!res.ok && data && data.ok !== true){
-          data.ok = false;
-          data.message = data.message || res.statusText || 'Request failed';
-        }
-        return data;
-      }
-      const txt = await res.text();
-      return { ok: res.ok, message: txt ? String(txt).slice(0,240) : (res.statusText || 'Error') };
-    }catch(e){
-      return { ok:false, message: e?.message || 'Failed to fetch' };
-    }
+    return await res.json();
   }
   async function apiGet(url){
     const res = await fetch(url, {cache:"no-store"});
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (ct.includes("application/json")){
-      const data = await res.json();
-      if (!res.ok){
-        // Bubble up a readable error (this avoids "Failed to fetch" with no context)
-        throw new Error(data?.message || res.statusText || "Request failed");
-      }
-      return data;
-    }
-    const txt = await res.text();
-    if (!res.ok){
-      throw new Error(res.statusText || "Request failed");
-    }
-    // Non-JSON but OK (rare) -> return wrapper
-    return { ok: true, text: txt };
+    return await res.json();
   }
 
   // ---- Logs modal ----
@@ -193,11 +141,8 @@
 
   // ---- Filter targets ----
   const filterInput = $("#filterInput");
-
+  const table = $("#targetsTable");
   // ---- Sorting state (default: IP asc) ----
-  // IMPORTANT: Don't cache #targetsTable here.
-  // The script can load before the table exists; caching would keep it null,
-  // and sorting would silently fail.
   let sortKey = "ip";
   let sortDir = "asc"; // asc|desc
 
@@ -251,9 +196,7 @@
   }
 
   function updateSortIndicators(){
-    const tableEl = $("#targetsTable");
-    if (!tableEl) return;
-    $$("th.sortable", tableEl).forEach(th => {
+    $$("th.sortable", table).forEach(th => {
       const key = th.dataset.sort || "";
       const ind = th.querySelector(".sort-ind");
       th.classList.toggle("is-sorted", key === sortKey);
@@ -267,26 +210,21 @@
   }
 
   function bindSortHeaders(){
-    const tableEl = $("#targetsTable");
-    if (!tableEl) return;
-    // Use event delegation so sorting keeps working even if headers are
-    // re-rendered or inner spans are clicked.
-    if (tableEl.dataset.sortBound !== "1"){
-      tableEl.dataset.sortBound = "1";
-      tableEl.addEventListener("click", (e) => {
-        const th = e.target?.closest?.("th.sortable");
-        if (!th) return;
+    $$("th.sortable", table).forEach(th => {
+      if (th.dataset.bound === "1") return;
+      th.dataset.bound = "1";
+      th.addEventListener("click", () => {
         const key = th.dataset.sort || "name";
         if (sortKey === key){
           sortDir = (sortDir === "asc") ? "desc" : "asc";
         } else {
           sortKey = key;
-          sortDir = "asc";
+          sortDir = (key === "name" || key === "status") ? "asc" : "asc";
         }
         updateSortIndicators();
         renderTargets(lastTargets);
       });
-    }
+    });
     updateSortIndicators();
   }
 
@@ -466,8 +404,7 @@ btnConfirmRemove?.addEventListener("click", async () => {
   const infoLastPing = $("#infoLastPing");
   const infoLastResp = $("#infoLastResp");
   const infoLatency = $("#infoLatency");
-  const copyEndpointIcon = $("#copyEndpointIcon");
-  const copyIpIcon = $("#copyIpIcon");
+  const btnCopyEndpoint = $("#btnCopyEndpoint");
 
   const u24 = $("#u24");
   const u7 = $("#u7");
@@ -479,44 +416,24 @@ btnConfirmRemove?.addEventListener("click", async () => {
   const u90t = $("#u90t");
 
   
-  async function copyText(text, label){
-    const value = String(text || "").trim();
-    if (!value || value === "-") return;
+  btnCopyEndpoint?.addEventListener("click", async () => {
+    const url = (infoEndpoint && infoEndpoint.textContent) ? String(infoEndpoint.textContent).trim() : "";
+    if (!url || url === "-") return;
     try{
-      await navigator.clipboard.writeText(value);
-      toast("Copied", `${label} copied`);
+      await navigator.clipboard.writeText(url);
+      toast("Copied", "Endpoint URL copied");
     }catch(e){
-      // fallback for older browsers
       const ta = document.createElement("textarea");
-      ta.value = value;
+      ta.value = url;
       ta.style.position = "fixed";
       ta.style.left = "-9999px";
       document.body.appendChild(ta);
       ta.select();
       document.execCommand("copy");
       document.body.removeChild(ta);
-      toast("Copied", `${label} copied`);
+      toast("Copied", "Endpoint URL copied");
     }
-  }
-
-  function bindCopyable(el, label){
-    if (!el) return;
-    if (el.dataset.boundCopy === "1") return;
-    el.dataset.boundCopy = "1";
-    el.addEventListener("click", () => copyText(el.textContent, label));
-    el.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " "){
-        e.preventDefault();
-        copyText(el.textContent, label);
-      }
-    });
-  }
-
-  bindCopyable(infoEndpoint, "Endpoint URL");
-  bindCopyable(infoIp, "IP address");
-  // Icons are just hints, but let them work too
-  copyEndpointIcon?.addEventListener("click", (e) => { e.stopPropagation(); copyText(infoEndpoint?.textContent, "Endpoint URL"); });
-  copyIpIcon?.addEventListener("click", (e) => { e.stopPropagation(); copyText(infoIp?.textContent, "IP address"); });
+  });
 
 btnCloseInfo?.addEventListener("click", () => hide(infoModal));
   infoModal?.addEventListener("click", (e) => { if (e.target === infoModal) hide(infoModal); });
@@ -812,14 +729,15 @@ function statusLabel(name, status, enabled, lastRttMs, lastRespEpoch){
   return st.toUpperCase();
 }
 
-function renderSnapshotsInner(snaps){
-  const arr = Array.isArray(snaps) ? snaps : [];
-  return arr.slice(0,3).map(s => {
-    const cls = (s && s.state) ? String(s.state) : "unknown";
-    const title = (s && s.label) ? String(s.label) : cls;
-    return `<span class="snap-dot ${cls}" title="${title}"></span>`;
-  }).join("");
-}
+function renderSnapshots(snaps){
+    const arr = Array.isArray(snaps) ? snaps : [];
+    const out = arr.slice(0,3).map(s => {
+      const cls = (s && s.state) ? String(s.state) : "unknown";
+      const title = (s && s.label) ? String(s.label) : cls;
+      return `<span class="snap-dot ${cls}" title="${title}"></span>`;
+    }).join("");
+    return `<span class="snapshots">${out}</span>`;
+  }
 
 
   function setActionVisibility(row, enabled){
@@ -832,7 +750,6 @@ function renderSnapshotsInner(snaps){
   function buildRow(t){
     const enabled = Number(t.enabled ?? 0) === 1;
     const ic = {
-      // Minimal inline SVG icons (same style as the rest of the UI)
       info: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`,
       edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`,
       enable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
@@ -855,10 +772,7 @@ function renderSnapshotsInner(snaps){
             <td>
               <span class="chip status-chip ${statusClass(t.name, t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}">
                 <span class="dot"></span>
-                <span class="status-flex">
-                  <span class="status-text">${statusLabel(t.name, t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}</span>
-                  <span class="snapshots">${renderSnapshotsInner(t.snapshots)}</span>
-                </span>
+                <span class="status-text">${statusLabel(t.name, t.status, t.enabled, t.last_rtt_ms, t.last_response_epoch)}</span>${renderSnapshots(t.snapshots)}
               </span>
             </td>
             <td>
@@ -874,12 +788,12 @@ function renderSnapshotsInner(snaps){
                 <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">⋯</button>
                 <div class="menu-dd" role="menu">
                   <button class="menu-item" data-action="info" type="button"><span class="mi-ic" aria-hidden="true">${ic.info}</span><span>Information</span></button>
-                  <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">${ic.test}</span><span>Test</span></button>
                   <button class="menu-item" data-action="edit" type="button"><span class="mi-ic" aria-hidden="true">${ic.edit}</span><span>Edit</span></button>
                   <div class="menu-sep"></div>
                   <button class="menu-item" data-action="enable" type="button" style="display:${enabled ? 'none' : 'flex'}"><span class="mi-ic" aria-hidden="true">${ic.enable}</span><span>Enable</span></button>
                   <button class="menu-item" data-action="disable" type="button" style="display:${enabled ? 'flex' : 'none'}"><span class="mi-ic" aria-hidden="true">${ic.disable}</span><span>Disable</span></button>
                   <div class="menu-sep"></div>
+                  <button class="menu-item" data-action="test" type="button"><span class="mi-ic" aria-hidden="true">${ic.test}</span><span>Test</span></button>
                   <button class="menu-item danger" data-action="remove" type="button"><span class="mi-ic" aria-hidden="true">${ic.remove}</span><span>Delete</span></button>
                 </div>
               </div>
@@ -1148,10 +1062,6 @@ function attachMenuActions(){
     return false;
   }
 
-  async function refreshTargets(){
-    return await refreshState(true);
-  }
-
   async function refreshState(force=false){
     try{
       const data = await apiGet("/state");
@@ -1252,7 +1162,10 @@ function attachMenuActions(){
   const runBar = $("#runBar");
   const runNowLine = $("#runNowLine");
   const runDoneLine = $("#runDoneLine");
-  // Details feed removed (it was unreliable and confusing)
+  const runFeedWrap = $("#runFeedWrap");
+  const runFeed = $("#runFeed");
+  const btnRunDetails = $("#btnRunDetails");
+  let runShowDetails = false;
 
   let runPoll = null;
   let runDueExpected = 0;
@@ -1263,6 +1176,9 @@ function attachMenuActions(){
   }
 
   function setRunInitial(){
+    runShowDetails = false;
+    if (runFeedWrap) runFeedWrap.style.display = "none";
+    if (btnRunDetails) btnRunDetails.textContent = "Show details";
     runTitleMeta.textContent = "running…";
     runLive.style.display = "inline-flex";
     runLiveText.textContent = "Running…";
@@ -1279,6 +1195,12 @@ function attachMenuActions(){
     setBar(0, 0);
   }
 
+btnRunDetails?.addEventListener("click", () => {
+  runShowDetails = !runShowDetails;
+  if (runFeedWrap) runFeedWrap.style.display = runShowDetails ? "block" : "none";
+  if (btnRunDetails) btnRunDetails.textContent = runShowDetails ? "Hide details" : "Show details";
+});
+
 
   async function pollRun(){
     // Use output tail only for progress counting (no live output UI)
@@ -1293,14 +1215,21 @@ function attachMenuActions(){
       }
     }catch(e){ /* ignore */ }
 
-    // Update the top "what's happening" line from the output tail
-    try{
+    // Live feed (last lines)
+    if (runFeed && runFeedWrap){
       const lines = (outText || "").split("\n").filter(Boolean);
-      const tail = lines.slice(-1);
-      if (tail.length && runNowLine){
-        runNowLine.textContent = tail[0];
+      const tail = lines.slice(-12);
+      if (tail.length){
+        if (runShowDetails){
+          runFeedWrap.style.display = "block";
+          runFeed.innerHTML = tail.map(l => `<div class=\"log-line\">${escapeHtml(l)}</div>`).join("");
+        }
+        runNowLine.textContent = tail[tail.length-1];
       }
-    }catch(_){ /* ignore */ }
+      if (!runShowDetails){
+        runFeedWrap.style.display = "none";
+      }
+    }
 
     // Progress: count completed targets (server-side)
     const done = Number(outResp?.done ?? 0);
@@ -1347,10 +1276,10 @@ function attachMenuActions(){
     btnRunNow.disabled = true;
     setRunInitial();
     show(runModal);
-    // Expected due count for progress (enabled targets).
-    // NOTE: do not populate the "Checked" metric up-front; it should reflect actual work.
+    // Expected due count for progress (enabled targets)
     try{
       runDueExpected = (lastTargets || []).filter(t => Number(t.enabled ?? 0) === 1 && String(t.status||"") !== "disabled").length;
+      mDue.textContent = String(runDueExpected || 0);
     }catch(e){ runDueExpected = 0; }
 
     try{
@@ -1376,415 +1305,283 @@ function attachMenuActions(){
 
 
 
-  
+  // ---- Network scan ----
+  const btnSearchNetwork = $("#btnSearchNetwork");
+  const scanModal = $("#scanModal");
+  const btnCloseScan = $("#btnCloseScan");
+  const scanOutput = $("#scanOutput");
+  const scanBar = $("#scanBar");
+  const scanStatusLine = $("#scanStatusLine");
+  const scanSubnets = $("#scanSubnets");
+  const scanFoundCount = $("#scanFoundCount");
+  const scanNewCount = $("#scanNewCount");
+  const scanList = $("#scanList");
+  const scanListEmpty = $("#scanListEmpty");
+  const scanLive = $("#scanLive");
+  const scanTitleMeta = $("#scanTitleMeta");
+  const btnScanNow = $("#btnScanNow");
+  const btnAbortScan = $("#btnAbortScan");
+  const scanScope = $("#scanScope");
+  const scanSpeed = $("#scanSpeed");
+  const scanCustomWrap = $("#scanCustomWrap");
+  const scanCustom = $("#scanCustom");
 
-  // ---- Network discovery (side panel, nmap SSE) ----
-  const discoverBtn = $("#btnDiscover");
-  const discoverPanel = $("#discoverPanel");
-  const discoverBackdrop = $("#discoverBackdrop");
-  const btnCloseDiscover = $("#btnCloseDiscover");
-  const btnDiscoverStart = $("#btnDiscoverStart");
-  const btnDiscoverCancel = $("#btnDiscoverCancel");
-  const btnDiscoverAgain = $("#btnDiscoverAgain");
-  const discoverIface = $("#discoverIface");
-  const discoverScope = $("#discoverScope");
-  const discoverCustom = $("#discoverCustom");
-  const discoverProfile = $("#discoverProfile");
-  const discoverOnlyNew = $("#discoverOnlyNew");
-  const discoverFilter = $("#discoverFilter");
-  const discoverList = $("#discoverList");
-  const discoverListEmpty = $("#discoverListEmpty");
-  const discoverFound = $("#discoverFound");
-  const discoverSubnets = $("#discoverSubnets");
-  const discoverBar = $("#discoverBar");
-  const discoverStatus = $("#discoverStatus");
-  const discoverScanning = $("#discoverScanning");
-  const discoverError = $("#discoverError");
-  const discoverCountHint = $("#discoverCountHint");
+  const scanAddModal = $("#scanAddModal");
+  const scanAddForm = $("#scanAddForm");
+  const scanAddName = $("#scanAddName");
+  const scanAddIp = $("#scanAddIp");
+  const scanAddEndpoint = $("#scanAddEndpoint");
+  const scanAddTitle = $("#scanAddTitle");
+  const btnScanAddCancel = $("#btnScanAddCancel");
 
-  const discoverAddCard = $("#discoverAddCard");
-  const discoverAddForm = $("#discoverAddForm");
-  const discoverAddName = $("#discoverAddName");
-  const discoverAddIp = $("#discoverAddIp");
-  const discoverAddEndpoint = $("#discoverAddEndpoint");
-  const discoverAddHint = $("#discoverAddHint");
-  const btnDiscoverAddKeep = $("#btnDiscoverAddKeep");
-  const btnDiscoverAddCancel = $("#btnDiscoverAddCancel");
+  bindSmartAssist(scanAddIp, scanAddName);
 
-  let discoverES = null;
-  let discoverDevices = [];
-  let discoverSelected = null;
-  let discoverRenderTimer = null;
-
-  function scheduleDiscoverRender(){
-    if (discoverRenderTimer) return;
-    discoverRenderTimer = setTimeout(() => {
-      discoverRenderTimer = null;
-      renderDiscoverList();
-    }, 120);
+  function updateScanScopeUI(){
+    const v = scanScope?.value || "local";
+    if (scanCustomWrap) scanCustomWrap.style.display = (v === "local+custom") ? "block" : "none";
   }
+  scanScope?.addEventListener("change", updateScanScopeUI);
+  updateScanScopeUI();
 
-  function openDiscover(){
-    if (!discoverPanel || !discoverBackdrop) return;
-    // Load interface list on open (helps when VPN/overlay interfaces are present)
-    try{ loadDiscoverIfaces(); }catch(_){ }
-    discoverPanel.classList.remove('is-hidden');
-    discoverBackdrop.classList.remove('is-hidden');
-    requestAnimationFrame(() => {
-      discoverPanel.classList.add('is-open');
-      discoverBackdrop.classList.add('is-open');
-    });
-  }
+  let scanPoll = null;
+  let scanFound = [];
+  let scanNew = [];
+  let scanSelected = null;
 
-  async function loadDiscoverIfaces(){
-    if (!discoverIface) return;
-    let res = null;
-    try{
-      res = await apiGet('/api/netifs');
-    }catch(e){
-      res = null;
-    }
-
-    const keep = String(discoverIface.value || 'auto');
-    const items = Array.isArray(res?.interfaces) ? res.interfaces : [];
-    const opts = [];
-    opts.push({ value: 'auto', label: 'Interface: Auto' });
-    items.forEach(it => {
-      const name = String(it.name || '').trim();
-      if (!name) return;
-      const meta = String(it.meta || '').trim();
-      const label = meta ? `${name} • ${meta}` : name;
-      opts.push({ value: name, label });
-    });
-
-    discoverIface.innerHTML = opts.map(o => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join('');
-    // restore selection if possible
-    const exists = opts.some(o => o.value === keep);
-    discoverIface.value = exists ? keep : 'auto';
-  }
-  function closeDiscover(){
-    if (!discoverPanel || !discoverBackdrop) return;
-    discoverPanel.classList.remove('is-open');
-    discoverBackdrop.classList.remove('is-open');
-    setTimeout(() => {
-      if (!discoverPanel.classList.contains('is-open')) discoverPanel.classList.add('is-hidden');
-      if (!discoverBackdrop.classList.contains('is-open')) discoverBackdrop.classList.add('is-hidden');
-    }, 190);
-  }
-
-  discoverBtn?.addEventListener('click', openDiscover);
-  btnCloseDiscover?.addEventListener('click', closeDiscover);
-  discoverBackdrop?.addEventListener('click', closeDiscover);
-
-  function updateDiscoverScopeUI(){
-    const v = String(discoverScope?.value || 'auto');
-    if (discoverCustom){
-      discoverCustom.style.display = (v === 'custom') ? 'inline-flex' : 'none';
-    }
-  }
-
-  discoverScope?.addEventListener('change', updateDiscoverScopeUI);
-  updateDiscoverScopeUI();
-  discoverScope?.addEventListener('change', updateDiscoverScopeUI);
-  updateDiscoverScopeUI();
-
-  function suggestEndpoint(ip){
-    if (!ip) return '';
-    return `http://${ip}`;
-  }
-
-  function computeDeviceLabel(dev){
-    const ip = dev.ip || '';
-    const host = dev.host || '';
-    const vendor = dev.vendor || '';
-    const mac = dev.mac || '';
-    const parts = [];
-    if (host) parts.push(host);
-    if (vendor) parts.push(vendor);
-    if (mac) parts.push(mac);
-    return { ip, host, vendor, mac, meta: parts.join(' • ') };
-  }
-
-  function matchesFilter(dev, q){
-    if (!q) return true;
-    q = q.toLowerCase();
-    const l = computeDeviceLabel(dev);
-    return (l.ip||'').toLowerCase().includes(q) || (l.host||'').toLowerCase().includes(q) || (l.vendor||'').toLowerCase().includes(q) || (l.mac||'').toLowerCase().includes(q);
-  }
-
-  function renderDiscoverList(){
-    if (!discoverList || !discoverListEmpty) return;
-    const q = (discoverFilter?.value || '').trim();
-    const onlyNew = !!discoverOnlyNew?.checked;
-
-    const existingIps = new Set((targets||[]).map(t => String(t.ip||'')).filter(Boolean));
-
-    discoverList.innerHTML = '';
-    let shown = 0;
-
-    discoverDevices.forEach(dev => {
-      const ip = String(dev.ip||'');
-      if (!ip) return;
-      const already = !!dev.already_added || existingIps.has(ip);
-      const addedNow = !!dev.added_now;
-      if (onlyNew && (already || addedNow)) return;
-      if (!matchesFilter(dev, q)) return;
-
-      shown += 1;
-      const el = document.createElement('div');
-      el.className = 'scan-item' + (addedNow ? ' is-added' : '') + (already ? ' is-disabled' : '');
-
-      const lbl = computeDeviceLabel(dev);
-      const chipTxt = addedNow ? 'Added now' : (already ? 'Already added' : 'New');
-      const chipCls = addedNow ? 'chip chip--muted' : (already ? 'chip' : 'chip chip--ok');
-
-      el.innerHTML = `
-        <div class="scan-item-left">
-          <b>${escapeHtml(lbl.host || ip)}</b>
-          <div class="hint">${escapeHtml(ip)}${lbl.meta ? ' • ' + escapeHtml(lbl.meta) : ''}</div>
-        </div>
-        <div class="scan-item-right">
-          <span class="${chipCls}">${chipTxt}</span>
-        </div>
-      `;
-
-      el.addEventListener('click', () => {
-        if (already && !addedNow){
-          toast('Network discovery', 'Already added');
-          return;
-        }
-        discoverSelected = dev;
-        discoverAddCard.style.display = 'block';
-        discoverAddHint.textContent = ip;
-        discoverAddIp.value = ip;
-        discoverAddName.value = suggestName(dev);
-        discoverAddEndpoint.value = suggestEndpoint(ip);
-        discoverAddEndpoint.focus();
-      });
-
-      discoverList.appendChild(el);
-    });
-
-    discoverListEmpty.style.display = shown ? 'none' : 'block';
-    if (discoverCountHint) discoverCountHint.textContent = `${shown} shown`;
-  }
-
-  discoverFilter?.addEventListener('input', () => renderDiscoverList());
-  discoverOnlyNew?.addEventListener('change', () => renderDiscoverList());
-  discoverScope?.addEventListener('change', () => {
-    const v = discoverScope.value || 'auto';
-    if (discoverCustom) discoverCustom.style.display = (v === 'custom') ? 'inline-flex' : 'none';
-  });
-
-  function resetDiscoverUI(){
-    discoverDevices = [];
-    discoverSelected = null;
-    if (discoverAddCard) discoverAddCard.style.display = 'none';
-    if (discoverError){ discoverError.style.display='none'; discoverError.textContent=''; }
-    if (discoverBar) discoverBar.style.width = '0%';
-    if (discoverStatus) discoverStatus.textContent = 'Idle';
-    if (discoverScanning) discoverScanning.textContent = '-';
-    if (discoverSubnets) discoverSubnets.textContent = '-';
-    if (discoverFound) discoverFound.textContent = '0';
-    if (btnDiscoverAgain) btnDiscoverAgain.style.display = 'none';
-    if (btnDiscoverCancel) btnDiscoverCancel.style.display = 'none';
-    if (btnDiscoverStart) btnDiscoverStart.style.display = 'inline-flex';
-    renderDiscoverList();
-  }
-
-  async function startDiscovery(){
-    resetDiscoverUI();
-    if (discoverStatus) discoverStatus.textContent = 'Starting…';
-    if (discoverScanning) discoverScanning.textContent = '-';
-    if (btnDiscoverStart) btnDiscoverStart.disabled = true;
-
-    const scope = (discoverScope?.value || 'auto');
-    const custom = (discoverCustom?.value || '').trim();
-    const payload = {
-      scope,
-      custom,
-      iface: discoverIface?.value || 'auto',
-      profile: discoverProfile?.value || 'safe',
-      cap: 4096,
-    };
-
-    let r = null;
-    try{
-      r = await apiPostJson('/api/discover-start', payload);
-    }catch(e){
-      r = { ok:false, message: e?.message || 'Failed to fetch' };
-    }
-
-    if (!r || !r.ok){
-      if (discoverError){ discoverError.textContent = (r && r.message) ? r.message : 'Failed to start'; discoverError.style.display='block'; }
-      if (discoverStatus) discoverStatus.textContent = 'Error';
-      if (btnDiscoverStart) btnDiscoverStart.disabled = false;
+  function renderScanList(){
+    if (!scanList || !scanListEmpty) return;
+    scanList.innerHTML = "";
+    if (!scanNew.length){
+      scanListEmpty.style.display = "block";
       return;
     }
-
-    if (discoverStatus) discoverStatus.textContent = 'Discovery started';
-    if (btnDiscoverStart) btnDiscoverStart.style.display='none';
-    if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
-
-    connectDiscoveryStream();
+    scanListEmpty.style.display = "none";
+    scanNew.forEach(dev => {
+      const host = dev.host || dev.ip;
+      const vendor = dev.vendor ? `<span class="muted">${escapeHtml(dev.vendor)}</span>` : "";
+      const dtype = dev.type ? `<span class="badge">${escapeHtml(dev.type)}</span>` : "";
+      const conf = (dev.confidence !== undefined && dev.confidence !== null) ? `<span class="conf">${dev.confidence}%</span>` : "";
+      const el = document.createElement("div");
+      el.className = "scan-item";
+      el.innerHTML = `
+        <div class="meta">
+          <div class="meta-top"><b>${escapeHtml(host)}</b>${dtype}${conf}</div>
+          <div class="meta-sub"><span>${escapeHtml(dev.ip)}</span>${vendor}</div>
+        </div>
+        <button class="btn btn-primary btn-mini" type="button">Add</button>
+      `;
+      el.querySelector("button").addEventListener("click", () => {
+        scanSelected = dev;
+        scanAddTitle.textContent = dev.ip;
+        scanAddName.value = dev.host || dev.ip;
+        scanAddIp.value = dev.ip;
+        scanAddEndpoint.value = "";
+        show(scanAddModal);
+        scanAddEndpoint.focus();
+      });
+      scanList.appendChild(el);
+    });
   }
 
-  // Expose a stable global hook as a safety net.
-  // This avoids situations where a browser/extension interferes with event binding.
-  window.__ihStartDiscovery = startDiscovery;
-
-  async function cancelDiscovery(){
-    await apiPostJson('/api/discover-cancel', {});
-    if (discoverStatus) discoverStatus.textContent = 'Cancelling…';
-  }
-
-  btnDiscoverStart?.addEventListener('click', startDiscovery);
-  btnDiscoverAgain?.addEventListener('click', startDiscovery);
-  btnDiscoverCancel?.addEventListener('click', cancelDiscovery);
-
-  
-  let discoverFallbackPoll = null;
-  async function pollDiscoveryFallback(){
+  async function refreshScan(){
     try{
-      const st = await apiGet('/api/discover-status');
-      if (discoverSubnets && st && st.cidrs != null) discoverSubnets.textContent = String(st.cidrs);
-      if (discoverFound && st && st.found != null) discoverFound.textContent = String(st.found);
-      if (discoverStatus) discoverStatus.textContent = st.message || st.status || 'Running…';
-      if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
-      if (discoverBar && st.progress){
-        const cur = Number(st.progress.current||0); const tot = Number(st.progress.total||0);
-        discoverBar.style.width = tot ? `${Math.round((cur/tot)*100)}%` : '0%';
+      const out = await apiGet(`/api/scan-output?lines=260`);
+      const meta = out.meta || {};
+      scanTitleMeta.textContent = meta.cidrs?.length ? `(${meta.cidrs.length} subnets)` : "";
+      scanSubnets.textContent = meta.cidrs?.length ? String(meta.cidrs.length) : "-";
+      scanOutput.textContent = out.text || "";
+      scanOutput.scrollTop = scanOutput.scrollHeight;
+
+      // Simple progress estimate: subnets started vs total
+      const txt = String(out.text||"");
+      const started = (txt.match(/^scan:\s+/gm) || []).length;
+      const total = (meta.cidrs||[]).length || 0;
+      const pct = total ? Math.min(100, Math.round((started/total)*100)) : 0;
+      scanBar.style.width = `${pct}%`;
+      const currentIp = meta.current_ip ? String(meta.current_ip) : "";
+      scanStatusLine.textContent = total ? `Scanning ${Math.min(started+1,total)} / ${total}${currentIp ? " • " + currentIp : ""}` : (meta.error || "Scanning…");
+
+      const st = await apiGet(`/api/scan-status`);
+      if (st.running){
+        scanLive.style.display = "flex";
+        if (btnAbortScan) btnAbortScan.style.display = "inline-flex";
+        if (btnScanNow) btnScanNow.style.display = "none";
+        btnSearchNetwork?.classList.add("is-running");
+        return;
       }
-      if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
-        if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
-        if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-        if (btnDiscoverAgain) btnDiscoverAgain.style.display='inline-flex';
-        if (btnDiscoverStart){ btnDiscoverStart.style.display='none'; btnDiscoverStart.disabled=false; }
+      scanLive.style.display = "none";
+      if (btnAbortScan) btnAbortScan.style.display = "none";
+      if (btnScanNow) btnScanNow.style.display = "inline-flex";
+      if (btnScanNow) btnScanNow.textContent = st.finished ? "Scan again" : "Scan now";
+      btnSearchNetwork?.classList.remove("is-running");
+
+      // finished -> get results
+      const res = await apiGet(`/api/scan-result`);
+      scanFound = res.found || [];
+      scanFoundCount.textContent = String(scanFound.length);
+
+      const existingIps = new Set((lastTargets||[]).map(t => String(t.ip||"")));
+      scanNew = scanFound.filter(d => !existingIps.has(String(d.ip||"")));
+      scanNewCount.textContent = String(scanNew.length);
+      renderScanList();
+
+      // Keep polling if modal is open; otherwise stop.
+      if (!scanModal?.classList.contains("show")){
+        if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
       }
-    }catch(e){ /* ignore */ }
-  }
-function connectDiscoveryStream(){
-    if (discoverES){ try{ discoverES.close(); }catch(e){} }
-    discoverES = new EventSource('/api/discover-stream');
-
-    discoverES.addEventListener('status', (ev) => {
-      try{
-        const obj = JSON.parse(ev.data);
-        const st = obj.status || obj?.message || '';
-        if (obj.cidrs != null && discoverSubnets) discoverSubnets.textContent = String(obj.cidrs);
-        if (obj.progress && discoverBar){
-          const cur = Number(obj.progress.current||0); const tot = Number(obj.progress.total||0);
-          discoverBar.style.width = tot ? `${Math.round((cur/tot)*100)}%` : '0%';
-        }
-        if (discoverStatus) discoverStatus.textContent = obj.message || st || 'Running…';
-        if (discoverScanning){
-          const s = (obj.scanning || (obj.progress && obj.progress.cidr) || '')
-          discoverScanning.textContent = s ? String(s) : '-';
-        }
-        if (obj.status === 'done' || obj.status === 'cancelled'){
-          if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-          if (btnDiscoverAgain) btnDiscoverAgain.style.display='inline-flex';
-          if (btnDiscoverStart){ btnDiscoverStart.style.display='none'; btnDiscoverStart.disabled=false; }
-        }
-      }catch(e){}
-    });
-
-    discoverES.addEventListener('device', (ev) => {
-      try{
-        const obj = JSON.parse(ev.data);
-        const dev = obj.device;
-        if (!dev) return;
-        discoverDevices.push(dev);
-        if (discoverFound) discoverFound.textContent = String(discoverDevices.length);
-        scheduleDiscoverRender();
-      }catch(e){}
-    });
-
-    discoverES.addEventListener('error', (ev) => {
-      // Some proxies block SSE. Fall back to polling status so the user still sees progress.
-      if (!discoverFallbackPoll){
-        discoverFallbackPoll = setInterval(pollDiscoveryFallback, 1000);
-        pollDiscoveryFallback();
-      }
-    });
-  }
-
-  btnDiscoverAddCancel?.addEventListener('click', () => {
-    discoverSelected = null;
-    if (discoverAddCard) discoverAddCard.style.display='none';
-  });
-
-  function endpointLooksValid(u){
-    try{
-      const url = new URL(u);
-      return url.protocol === 'http:' || url.protocol === 'https:';
     }catch(e){
+      scanStatusLine.textContent = e?.message || "Scan failed";
+      scanLive.style.display = "none";
+      if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
+    }
+  }
+
+  function resetScanUi(){
+    scanBar.style.width = "0%";
+    scanFoundCount.textContent = "-";
+    scanNewCount.textContent = "-";
+    scanSubnets.textContent = "-";
+    scanStatusLine.textContent = "-";
+    scanListEmpty.style.display = "block";
+    scanList.innerHTML = "";
+  }
+
+  async function startScan(force=false){
+    const fd = new FormData();
+    fd.set("scope", scanScope?.value || "local");
+    fd.set("speed", scanSpeed?.value || "normal");
+    fd.set("custom", (scanCustom?.value || "").trim());
+    if (force) fd.set("force", "1");
+    const started = await apiPost("/api/scan-start", fd);
+    if (!started.ok){
+      toast("Search network", started.message || "Failed to start scan");
       return false;
     }
+    return true;
   }
 
-  async function submitDiscoverAdd(keepOpen){
-    if (!discoverAddForm) return;
-    const fd = new FormData(discoverAddForm);
-    const endpoint = String(fd.get('endpoint')||'').trim();
-    if (!endpointLooksValid(endpoint)){
-      toast('Add target', 'Endpoint URL must be http:// or https://');
-      discoverAddEndpoint?.focus();
+  btnSearchNetwork?.addEventListener("click", async () => {
+    show(scanModal);
+    // Show current status/results and keep polling while the modal is open.
+    if (scanPoll) clearInterval(scanPoll);
+    scanPoll = setInterval(refreshScan, 800);
+    await refreshScan();
+  });
+
+  btnAbortScan?.addEventListener("click", async () => {
+    try{
+      const r = await apiPost("/api/scan-cancel", new FormData());
+      toast(r.ok ? "Scan" : "Scan", r.ok ? "Cancelled" : (r.message || "Failed"));
+    }catch(e){ toast("Scan", "Failed"); }
+  });
+
+  btnScanNow?.addEventListener("click", async () => {
+    resetScanUi();
+    scanOutput.textContent = "Starting scan…";
+    scanLive.style.display = "flex";
+    const cur = await apiGet(`/api/scan-status`);
+    const ok = await startScan(!!cur.finished);
+    if (!ok){
+      scanLive.style.display = "none";
       return;
     }
-    const r = await apiPost('/api/add', fd);
-    if (!r.ok){
-      toast('Add target', r.message || 'Failed');
-      return;
-    }
-    await refreshTargets();
-    if (discoverSelected){
-      discoverSelected.added_now = true;
-    }
-    renderDiscoverList();
-    toast('Add target', 'Added');
+    toast("Search network", "Scan started");
+    if (scanPoll) clearInterval(scanPoll);
+    scanPoll = setInterval(refreshScan, 800);
+    await refreshScan();
+  });
 
-    if (!keepOpen){
-      discoverSelected = null;
-      if (discoverAddCard) discoverAddCard.style.display='none';
-    } else {
-      discoverAddEndpoint.value = suggestEndpoint(discoverAddIp.value);
-      discoverAddEndpoint.focus();
-    }
-  }
-
-  discoverAddForm?.addEventListener('submit', async (e) => {
+  // Closing the modal should not stop the scan. We'll stop polling to save cycles,
+  // but keep a "running" indicator on the button.
+  btnCloseScan?.addEventListener("click", () => {
+    hide(scanModal);
+    if (scanPoll){ clearInterval(scanPoll); scanPoll = null; }
+  });
+  btnScanAddCancel?.addEventListener("click", () => hide(scanAddModal));
+  scanAddForm?.addEventListener("submit", async (e) => {
     e.preventDefault();
-    await submitDiscoverAdd(false);
-  });
-  btnDiscoverAddKeep?.addEventListener('click', async () => {
-    await submitDiscoverAdd(true);
-  });
-
-
-
-  // ---- INIT_BOOTSTRAP ----
-  (async () => {
     try{
-      // Ensure the table UI is fully interactive on first load (no need to click Run now).
+      const fd = new FormData(scanAddForm);
+      const data = await apiPost("/api/add", fd);
+      if (!data.ok){
+        toast("Add target", data.message || "Failed");
+        return;
+      }
+      toast("Add target", "Added");
+      hide(scanAddModal);
+      // remove from new list
+      if (scanSelected){
+        scanNew = scanNew.filter(d => d.ip !== scanSelected.ip);
+        renderScanList();
+        scanNewCount.textContent = String(scanNew.length);
+        scanSelected = null;
+      }
       await refreshState(true);
-    }catch(e){
-      // If the first state fetch fails, still bind handlers for the server-rendered rows.
-      try{ attachIntervalHandlers(); attachMenuActions(); attachBulkHandlers(); attachRowClickHandlers(); bindSortHeaders(); }catch(_){}
+    }catch(err){
+      toast("Add target", err?.message || "Failed");
+    }
+  });
+
+  // init
+  // Start with the server-rendered targets to avoid a flash of empty rows
+  // before the first /state poll completes.
+  try{
+    const seeded = window.__INITIAL_TARGETS__;
+    if (Array.isArray(seeded) && seeded.length){
+      lastTargets = seeded;
+      renderTargets(lastTargets);
+    } else {
+      // If nothing was seeded, do not wipe the DOM table here.
+      // We'll populate it as soon as /state returns.
+    }
+  }catch(e){}
+
+  bindSortHeaders();
+  // Ensure Enable/Disable visibility + row datasets are synced immediately
+  refreshState(true);
+  setInterval(() => refreshState(false), 2000);
+
+  // Keyboard UX: Esc closes sidepanel/modals, Enter toggles sidepanel on focused/selected row
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape"){
+      // Close Information modal first
+      if (infoModal && infoModal.classList.contains("show")){
+        hide(infoModal);
+        e.preventDefault();
+        return;
+      }
+      // Close the top-most open modal
+      const openModal = Array.from(document.querySelectorAll(".modal.show")).pop();
+      if (openModal){
+        hide(openModal);
+        e.preventDefault();
+        return;
+      }
+      // Finally close menus
+      closeAllMenus();
+      return;
     }
 
-    // periodic refresh
-    let pollS = 2;
-    try{
-      const v = Number(document.body?.dataset?.pollSeconds || 2);
-      if (Number.isFinite(v) && v > 0) pollS = v;
-    }catch(e){}
-    setInterval(() => { refreshState(false).catch(()=>{}); }, pollS*1000);
-  })();
-  // kick initial render if panel exists
-  resetDiscoverUI();
+    if (e.key === "Enter"){
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+      if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
 
-  // ---- End network discovery ----
+      const openModal = Array.from(document.querySelectorAll(".modal.show")).filter(m => m && m.id !== "infoModal").pop();
+      if (openModal) return;
 
+      const row = document.querySelector("tr.is-focused") || document.querySelector("tr.is-selected");
+      if (!row) return;
+      const name = row.getAttribute("data-name");
+      if (!name) return;
+
+      if (infoModal && infoModal.classList.contains("show") && infoTitle && infoTitle.textContent === name){
+        hide(infoModal);
+      } else {
+        openInfo(name);
+      }
+
+      e.preventDefault();
+    }
+  });
 
 })();
