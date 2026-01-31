@@ -687,13 +687,18 @@ function clearForcedStarting(name){
 
 function statusClass(name, status, enabled, lastRttMs, lastRespEpoch){
   const nm = String(name||"");
-  const st = String(status||"unknown").toLowerCase();
+  let st = String(status||"unknown").toLowerCase();
   const isEnabled = Number(enabled||0) === 1;
 
   const hbFail = isEnabled && st === "down" && Number(lastRttMs||-1) >= 0 && Number(lastRespEpoch||0) > 0;
   const hasForced = forcedStarting.has(nm);
 
   if (!isEnabled) return "status-unknown";
+
+  // Right after enabling, the DB may still report last_status='disabled'
+  // until the first run updates it. Treat that as STARTING to avoid
+  // flipping the UI back to DISABLED.
+  if (st === "disabled") st = "starting";
 
   if (st === "up")  { clearForcedStarting(nm); return "status-up"; }
   if (hbFail)       { clearForcedStarting(nm); return "status-hb"; }
@@ -707,13 +712,15 @@ function statusClass(name, status, enabled, lastRttMs, lastRespEpoch){
 
 function statusLabel(name, status, enabled, lastRttMs, lastRespEpoch){
   const nm = String(name||"");
-  const st = String(status||"unknown").toLowerCase();
+  let st = String(status||"unknown").toLowerCase();
   const isEnabled = Number(enabled||0) === 1;
 
   const hbFail = isEnabled && st === "down" && Number(lastRttMs||-1) >= 0 && Number(lastRespEpoch||0) > 0;
   const hasForced = forcedStarting.has(nm);
 
   if (!isEnabled) return "DISABLED";
+
+  if (st === "disabled") st = "starting";
   if (st === "up") return "OK";
   if (st === "starting") return "STARTING..";
   if (hasForced) return "STARTING..";
@@ -741,7 +748,7 @@ function renderSnapshots(snaps){
   }
 
   function buildRow(t){
-    const enabled = Number(t.enabled ?? 0) === 1 && String(t.status||"") !== "disabled";
+    const enabled = Number(t.enabled ?? 0) === 1;
     const ic = {
       info: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>`,
       edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`,
@@ -1003,18 +1010,23 @@ function attachMenuActions(){
 
 
 // ---- Real-time-ish refresh + row blink ----
-  function setStatusChip(row, status){
+  function setStatusChip(row, t){
   const chip = row.querySelector(".status-chip");
   const text = row.querySelector(".status-text");
   if (!chip || !text) return;
 
-  const enabled = Number(row.getAttribute("data-enabled") || "1") === 1;
-  const lastRtt = Number(row.getAttribute("data-last-rtt") || "-1");
-  const lastResp = Number(row.getAttribute("data-last-resp") || "0");
-  const st = String(status || "unknown").toLowerCase();
+  const enabled = Number(t?.enabled ?? 0) === 1;
+  const lastRtt = Number(t?.last_rtt_ms ?? -1);
+  const lastResp = Number(t?.last_response_epoch ?? 0);
+  let st = String(t?.status || "unknown").toLowerCase();
+
+  // Same logic as statusLabel/statusClass: treat last_status='disabled' as STARTING
+  // when the target is enabled, until the first run updates it.
+  if (enabled && st === "disabled") st = "starting";
+
   const hbFail = enabled && st === "down" && lastRtt >= 0 && lastResp > 0;
 
-  chip.classList.remove("status-up","status-down","status-unknown","status-hb");
+  chip.classList.remove("status-up","status-down","status-unknown","status-hb","status-starting");
 
   if (!enabled){
     chip.classList.add("status-unknown");
@@ -1022,6 +1034,9 @@ function attachMenuActions(){
   }else if (st === "up"){
     chip.classList.add("status-up");
     text.textContent = "OK";
+  }else if (st === "starting"){
+    chip.classList.add("status-starting");
+    text.textContent = "STARTING..";
   }else if (hbFail){
     chip.classList.add("status-hb");
     text.textContent = "HEARTBEAT FAILED";
@@ -1034,6 +1049,7 @@ function attachMenuActions(){
   }
 
   row.setAttribute("data-status", st);
+  row.setAttribute("data-enabled", enabled ? "1" : "0");
 }
 
 
@@ -1049,10 +1065,16 @@ function attachMenuActions(){
   async function refreshState(force=false){
     try{
       const data = await apiGet("/state");
-      lastTargets = data.targets || [];
+      const incoming = Array.isArray(data.targets) ? data.targets : [];
+      const backendOk = (data && data.ok !== false);
+      if (!backendOk && incoming.length === 0 && Array.isArray(lastTargets) && lastTargets.length > 0){
+        // keep current state
+        return;
+      }
+      lastTargets = incoming;
 
       // Only re-render the table if structure changed (add/remove) or if forced.
-      const namesNow = new Set((data.targets||[]).map(t => String(t.name||"")));
+      const namesNow = new Set((incoming||[]).map(t => String(t.name||"")));
       const namesRendered = new Set($$("tr[data-name]").map(tr => String(tr.getAttribute("data-name")||"")));
       let structureChanged = (namesNow.size !== namesRendered.size);
       if (!structureChanged){
@@ -1063,19 +1085,15 @@ function attachMenuActions(){
         bindSortHeaders();
       }
       const map = new Map();
-      (data.targets || []).forEach(t => map.set(t.name, t));
+      (incoming || []).forEach(t => map.set(t.name, t));
 
       $$("tr[data-name]").forEach(row => {
         const name = row.getAttribute("data-name");
         const t = map.get(name);
         if (!t) return;
 
-        setStatusChip(row, t.status);
-
-        // Track enabled + keep Actions menu consistent
-        const enabled = Number(t.enabled ?? 0) === 1 && String(t.status || "") !== "disabled";
-        row.setAttribute("data-enabled", enabled ? "1" : "0");
-        setActionVisibility(row, enabled);
+        setStatusChip(row, t);
+        setActionVisibility(row, Number(t.enabled ?? 0) === 1);
 
         // Blink row for 1s when a new ping happens (keep row blink),
         // but keep the gutter icon visible a bit longer.

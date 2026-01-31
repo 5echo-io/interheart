@@ -1,3 +1,9 @@
+## 4.10.13 - 2026-01-31
+
+- Fix: WebUI no longer clears the targets table on transient `/state` errors (uses last known good state).
+- Fix: Enabling a target keeps **STARTING** (even if DB still reports last_status=`disabled`) until the first OK / NOT RESPONDING.
+- Fix: Targets no longer get stuck visually in **DISABLED** after Enable/Run now.
+
 ## 4.10.12 - 2026-01-30
 
 - Fix: WebUI target listing/status parsing updated to match current CLI table format (targets now render immediately on page load).

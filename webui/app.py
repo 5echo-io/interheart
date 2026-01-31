@@ -6,6 +6,7 @@ import time
 import json
 import re
 import socket
+import datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -299,16 +300,20 @@ def human_ts(epoch: int):
         return "-"
 
 def merged_targets():
-    _, list_out = run_cmd(["list"])
+    rc_list, list_out = run_cmd(["list"])
     targets = parse_list_targets(list_out)
 
-    _, st_out = run_cmd(["status"])
+    rc_st, st_out = run_cmd(["status"])
     state = parse_status(st_out)
 
     merged = []
     for t in targets:
         st = state.get(t["name"], {})
         status = st.get("status", "unknown")
+        # When a target has just been enabled, the DB may still contain last_status='disabled'
+        # until the first run updates it. Treat that as STARTING so the UI does not flip to DISABLED.
+        if int(t.get("enabled") or 0) == 1 and str(status).lower() == "disabled":
+            status = "starting"
         last_ping_epoch = st.get("last_ping_epoch", 0)
         last_sent_epoch = st.get("last_sent_epoch", 0)
 
@@ -325,6 +330,7 @@ def merged_targets():
             "last_rtt_ms": int(st.get("last_rtt_ms", -1) or -1),
             # kept for info modal / masking
             "endpoint_masked": t.get("endpoint_masked") or "-",
+            "snapshots": t.get("snapshots") or [],
         })
         # Default sort: IP ascending
     def ip_key(ip: str):
@@ -336,6 +342,65 @@ def merged_targets():
 
     merged.sort(key=lambda x: ip_key(x.get("ip")))
     return merged
+
+
+# ---- state caching (avoid wiping the UI on transient CLI/DB lock errors) ----
+_LAST_STATE_CACHE = {"updated": 0, "targets": []}
+
+def merged_targets_safe():
+    """Return merged targets, but keep the last good state if the CLI errors.
+
+    This avoids the WebUI clearing the table when the DB is temporarily locked
+    (e.g. while a run is updating), or when the CLI emits a transient error.
+    """
+    global _LAST_STATE_CACHE
+    try:
+        rc_list, list_out = run_cmd(["list"])
+        rc_st, st_out = run_cmd(["status"])
+        if rc_list != 0 or rc_st != 0:
+            # serve cached targets if available
+            if _LAST_STATE_CACHE.get("targets"):
+                return False, _LAST_STATE_CACHE.get("targets")
+        targets = parse_list_targets(list_out)
+        state = parse_status(st_out)
+
+        merged = []
+        for t in targets:
+            st = state.get(t["name"], {})
+            status = st.get("status", "unknown")
+            if int(t.get("enabled") or 0) == 1 and str(status).lower() == "disabled":
+                status = "starting"
+            last_ping_epoch = st.get("last_ping_epoch", 0)
+            last_sent_epoch = st.get("last_sent_epoch", 0)
+            merged.append({
+                "name": t["name"],
+                "ip": t["ip"],
+                "interval": t["interval"],
+                "status": status,
+                "enabled": int(t.get("enabled") or 0),
+                "last_ping_human": human_ts(last_ping_epoch),
+                "last_response_human": human_ts(last_sent_epoch),
+                "last_ping_epoch": last_ping_epoch,
+                "last_response_epoch": last_sent_epoch,
+                "last_rtt_ms": int(st.get("last_rtt_ms", -1) or -1),
+                "endpoint_masked": t.get("endpoint_masked") or "-",
+                "snapshots": t.get("snapshots") or [],
+            })
+
+        def ip_key(ip: str):
+            try:
+                a,b,c,d = [int(x) for x in (ip or "0.0.0.0").split(".")]
+                return (a,b,c,d)
+            except Exception:
+                return (999,999,999,999)
+
+        merged.sort(key=lambda x: ip_key(x.get("ip")))
+        _LAST_STATE_CACHE = {"updated": int(time.time()), "targets": merged}
+        return True, merged
+    except Exception:
+        if _LAST_STATE_CACHE.get("targets"):
+            return False, _LAST_STATE_CACHE.get("targets")
+        return False, []
 
 
 # ---- API: info (DB-backed, uses history samples if present) ----
@@ -532,20 +597,23 @@ def index():
     if not tpl.exists():
         return f"Missing templates/index.html (looked for {tpl})", 500
 
+    ok, targets = merged_targets_safe()
     return render_template(
         "index.html",
-        targets=merged_targets(),
+        targets=targets,
         bind_host=BIND_HOST,
         bind_port=BIND_PORT,
         ui_version=UI_VERSION,
         copyright_year=COPYRIGHT_YEAR,
         log_lines=LOG_LINES_DEFAULT,
         poll_seconds=STATE_POLL_SECONDS,
+        state_ok=ok,
     )
 
 @APP.get("/state")
 def state():
-    return jsonify({"updated": int(time.time()), "targets": merged_targets()})
+    ok, targets = merged_targets_safe()
+    return jsonify({"ok": ok, "updated": int(time.time()), "targets": targets})
 
 @APP.get("/logs")
 def logs():
