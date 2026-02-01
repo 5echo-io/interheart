@@ -11,6 +11,15 @@
 
 set -euo pipefail
 
+# ------------------------------------------------------------
+# interheart runner + utilities
+#
+# v5.43.0-beta.4 (2026-02-01)
+# - Added: self-test and self-test-output commands (diagnostics)
+# ------------------------------------------------------------
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # interheart CLI
 # Stores state in /var/lib/interheart/state.db
 # Requires: sqlite3, curl, ping
@@ -786,6 +795,87 @@ cmd_run_now() {
 }
 
 
+cmd_self_test() {
+  ensure_exists
+  mkdir -p "$DEBUG_DIR" 2>/dev/null || true
+
+  local ts out latest
+  ts="$(date +%Y%m%d-%H%M%S)"
+  out="$DEBUG_DIR/selftest-${ts}.txt"
+  latest="$DEBUG_DIR/selftest-latest.txt"
+
+  local version
+  version="$(cat "${ROOT_DIR}/VERSION" 2>/dev/null || echo "unknown")"
+
+  local gw
+  gw="$(ip route show default 2>/dev/null | awk '{print $3}' | head -n1)"
+
+  {
+    echo "interheart_self_test"
+    echo "time=$(date -Is)"
+    echo "host=$(hostname)"
+    echo "version=$version"
+    echo "root_dir=${ROOT_DIR}"
+    echo "state_dir=$STATE_DIR"
+    echo "debug_dir=$DEBUG_DIR"
+    echo "default_gateway=${gw:-}";
+    echo "-"
+
+    echo "binaries"
+    echo "curl=$(command -v curl 2>/dev/null || echo missing)"
+    echo "ping=$(command -v ping 2>/dev/null || echo missing)"
+    echo "nmap=$(command -v nmap 2>/dev/null || echo missing)"
+    if command -v nmap >/dev/null 2>&1; then
+      echo "nmap_version=$(nmap --version 2>/dev/null | head -n1)"
+    fi
+    echo "-"
+
+    echo "systemd"
+    if command -v systemctl >/dev/null 2>&1; then
+      echo "interheart.service=$(systemctl is-active interheart.service 2>/dev/null || true)"
+      echo "interheart.timer=$(systemctl is-active interheart.timer 2>/dev/null || true)"
+      echo "interheart-webui.service=$(systemctl is-active interheart-webui.service 2>/dev/null || true)"
+    else
+      echo "systemctl=missing"
+    fi
+    echo "-"
+
+    echo "quick_checks"
+    if [ -n "${gw:-}" ] && command -v ping >/dev/null 2>&1; then
+      ping -c 1 -W 1 "$gw" >/dev/null 2>&1 && echo "ping_gateway=ok" || echo "ping_gateway=fail"
+    else
+      echo "ping_gateway=skipped"
+    fi
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsS -m 2 http://127.0.0.1:8088/state >/dev/null 2>&1 && echo "webui_state=ok" || echo "webui_state=fail"
+    else
+      echo "webui_state=skipped"
+    fi
+    echo "-"
+
+    echo "discovery_meta"
+    if [ -f "$DISCOVERY_META_FILE" ]; then
+      sed -n '1,120p' "$DISCOVERY_META_FILE" || true
+    else
+      echo "(none)"
+    fi
+  } >"$out" 2>&1
+
+  cp -f "$out" "$latest" 2>/dev/null || true
+  echo "OK: wrote $out"
+  echo "OK: latest $latest"
+}
+
+cmd_self_test_output() {
+  ensure_exists
+  local latest="$DEBUG_DIR/selftest-latest.txt"
+  if [ ! -f "$latest" ]; then
+    echo "ERROR: No self-test output found (run: interheart self-test)" >&2
+    exit 1
+  fi
+  cat "$latest"
+}
+
 cmd_debug() {
   ensure_exists
   local follow=0
@@ -906,6 +996,12 @@ main() {
       ;;
     debug)
       cmd_debug "$@"
+      ;;
+    self-test)
+      cmd_self_test "$@"
+      ;;
+    self-test-output)
+      cmd_self_test_output "$@"
       ;;
     *)
       die "ERROR: Unknown command: ${cmd} (try: interheart --help)"

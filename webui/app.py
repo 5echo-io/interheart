@@ -2852,10 +2852,11 @@ def api_discover_cancel():
         meta = load_discovery_meta() or {}
         pid = int(meta.get('pid') or 0)
         if not pid or not pid_is_running(pid):
-            meta['status'] = 'idle'
+            meta['status'] = 'cancelled'
             meta['finished'] = int(meta.get('finished') or int(time.time()))
-            if not meta.get('error'):
-                meta['error'] = 'Cancelled'
+            # Cancellation is a user action - do not treat it as an error.
+            meta['error'] = ''
+            meta['message'] = 'Cancelled'
             meta['pid'] = 0
             meta['pgid'] = 0
             try:
@@ -2868,7 +2869,10 @@ def api_discover_cancel():
         pass
 
     meta = load_discovery_meta() or {}
-    meta['status'] = 'cancelling'
+    meta['status'] = 'cancelled'
+    meta['message'] = 'Cancelled'
+    meta['error'] = ''
+    meta['updated'] = int(time.time())
     save_discovery_meta(meta)
 
     # Best-effort fast cancel: terminate the worker process group.

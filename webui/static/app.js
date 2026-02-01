@@ -1551,6 +1551,7 @@ function attachMenuActions(){
   const btnDiscoverStart = $("#btnDiscoverStart");
   const btnDiscoverCancel = $("#btnDiscoverCancel");
   const btnDiscoverAgain = $("#btnDiscoverAgain");
+  const btnDiscoverReset = $("#btnDiscoverReset");
   const btnDiscoverDebug = $("#btnDiscoverDebug");
   const discoverDebugCard = $("#discoverDebugCard");
   const discoverDebugOut = $("#discoverDebugOut");
@@ -1560,7 +1561,6 @@ function attachMenuActions(){
   const discoverScope = $("#discoverScope");
   const discoverCustom = $("#discoverCustom");
   const discoverOnlyNew = $("#discoverOnlyNew");
-  const btnDiscoverShowAll = $("#btnDiscoverShowAll");
   const discoverFilter = $("#discoverFilter");
   const discoverStopAfterToggle = $("#discoverStopAfterToggle");
   const discoverStopAfterCount = $("#discoverStopAfterCount");
@@ -1618,6 +1618,15 @@ function attachMenuActions(){
 
   function closeDiscoverDebug(){
     if (discoverDebugCard) discoverDebugCard.style.display = 'none';
+  }
+
+  async function resetDiscoveryBackend(){
+    try{
+      await fetch('/api/discover-reset', {method:'POST'});
+    }catch(e){
+      // best effort
+      console.warn('discover reset failed', e);
+    }
   }
 
   function scheduleDiscoverRender(){
@@ -1699,10 +1708,7 @@ function attachMenuActions(){
   discoverBtn?.addEventListener('click', openDiscover);
   btnCloseDiscover?.addEventListener('click', closeDiscover);
   discoverModal?.addEventListener('click', (e) => { if (e.target === discoverModal) closeDiscover(); });
-  btnDiscoverShowAll?.addEventListener('click', () => {
-    if (discoverOnlyNew) discoverOnlyNew.checked = false;
-    renderDiscoverList();
-  });
+  // "All results" button removed (the toggle is sufficient).
 
   function updateDiscoverScopeUI(){
     const v = String(discoverScope?.value || 'auto');
@@ -1978,6 +1984,15 @@ function attachMenuActions(){
   btnDiscoverStart?.addEventListener('click', startDiscovery);
   btnDiscoverAgain?.addEventListener('click', startDiscovery);
   btnDiscoverCancel?.addEventListener('click', cancelDiscovery);
+
+  btnDiscoverReset?.addEventListener('click', async () => {
+    try {
+      await fetch('/api/discover-reset', { method: 'POST' });
+    } catch (e) {
+      // ignore; UI will still reset locally
+    }
+    resetDiscoverUI();
+  });
   btnDiscoverDebug?.addEventListener('click', runDiscoveryDebug);
   btnDiscoverDebugClose?.addEventListener('click', closeDiscoverDebug);
   btnDiscoverDebugCopy?.addEventListener('click', async () => {
@@ -2020,7 +2035,18 @@ function attachMenuActions(){
           ? (pct < 1 ? pct.toFixed(2) : pct < 10 ? pct.toFixed(1) : Math.round(pct).toString())
           : "0";
         discoverBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+        const pbWrap = discoverBar.closest('.progress-bar');
+        if (pbWrap) {
+          if (st && (st.status === 'running' || st.status === 'starting')) pbWrap.classList.add('running');
+          else pbWrap.classList.remove('running');
+        }
         if (discoverPercent) discoverPercent.textContent = `${pctStr}%`;
+      }
+
+      // Only show Debug when something looks wrong.
+      if (btnDiscoverDebug) {
+        const needsDebug = !!(st && ((st.status === 'error') || (st.error && st.error !== 'Cancelled')));
+        btnDiscoverDebug.style.display = needsDebug ? 'inline-flex' : 'none';
       }
       if (st && (st.status === 'running' || st.status === 'starting' || st.status === 'cancelling')){
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';

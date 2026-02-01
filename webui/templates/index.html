@@ -490,7 +490,7 @@ Last modified: 2026-02-01
       </div>
 
       <div class="modal-body">
-      <div class="sidepanel-actions" style="padding:0; margin-bottom:10px;">
+      <div class="sidepanel-actions discover-actions" style="padding:0; margin-bottom:10px;">
       <select class="input input--sm" id="discoverIface" aria-label="Interface">
         <option value="auto" selected>Interface: Auto</option>
       </select>
@@ -506,8 +506,9 @@ Last modified: 2026-02-01
       <input class="input input--sm" id="discoverCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24" style="display:none; min-width: 240px;" />
       <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Start scan</button>
       <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
-      <button class="btn btn-ghost btn-mini" id="btnDiscoverAgain" type="button" style="display:none;" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Search again</button>
-      <button class="btn btn-ghost btn-mini" id="btnDiscoverDebug" type="button" title="Run discovery diagnostics">Debug</button>
+      <button class="btn btn-ghost btn-mini" id="btnDiscoverAgain" type="button" style="display:none;" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Scan now</button>
+      <button class="btn btn-ghost btn-mini" id="btnDiscoverReset" type="button" style="display:none;">Reset</button>
+      <button class="btn btn-ghost btn-mini" id="btnDiscoverDebug" type="button" title="Run discovery diagnostics" style="display:none;">Debug</button>
         <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
           <label class="toggle" title="Stop after scanning N subnets">
             <input type="checkbox" id="discoverStopAfterToggle" />
@@ -515,16 +516,12 @@ Last modified: 2026-02-01
           </label>
           <input class="input input--sm" id="discoverStopAfterCount" type="number" min="1" max="4096" value="10" style="width:84px; display:none;" aria-label="Stop after subnet count" />
 
-          <button class="btn btn-ghost btn-mini" id="btnDiscoverShowAll" type="button">All results</button>
-          <label class="toggle">
-            <input type="checkbox" id="discoverOnlyNew" checked />
-            <span>New devices</span>
-          </label>
+          <!-- Results filtering moved below (next to device list) -->
         </div>
     </div>
 
       <div class="sidepanel-body" style="padding:0;">
-      <div class="card card--soft">
+      <div class="card card--soft discover-progress" id="discoverProgressWrap">
         <div class="row">
           <div class="kpi">
             <div class="kpi-label">Subnets</div>
@@ -535,7 +532,8 @@ Last modified: 2026-02-01
             <div class="kpi-value" id="discoverFound">0</div>
           </div>
         </div>
-        <div class="progress"><div class="progress-bar" id="discoverBar" style="width:0%"></div></div><div class="progress-meta"><span id="discoverPercent">0%</span></div>
+        <div class="progress"><div class="progress-bar" id="discoverBar" style="width:0%"></div></div>
+        <div class="progress-meta"><span id="discoverPercent">0%</span></div>
         <div class="hint" id="discoverStatus">Idle</div>
         <div class="hint" id="discoverScanning" style="margin-top:-6px; opacity:.75;">-</div>
         </div>
@@ -555,23 +553,29 @@ Last modified: 2026-02-01
         </div>
       </div>
 
-      <div class="field" style="margin-top:-2px;">
-        <div class="input-with-clear">
+      <div class="row" style="gap:10px; align-items:center; margin-top:-2px;">
+        <div class="input-with-clear" style="flex:1; min-width: 220px;">
           <input id="discoverFilter" class="input" placeholder="Filter devices… (name / ip / mac / vendor)">
           <button class="btn-clear is-hidden" type="button" data-clear-for="discoverFilter" aria-label="Clear filter">×</button>
         </div>
-      </div>
 
-      <div class="chips" id="discoverLegend">
-        <span class="chip chip--ok">New</span>
-        <span class="chip">Already added</span>
-        <span class="chip chip--muted">Added now</span>
+        <div class="chips" id="discoverLegend" style="margin:0;">
+          <span class="chip chip--ok">New</span>
+          <span class="chip">Already added</span>
+          <span class="chip chip--muted">Added now</span>
+        </div>
       </div>
 
       <div class="card">
         <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
           <b>Devices</b>
-          <span class="hint" id="discoverCountHint">0 shown</span>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <label class="toggle" title="Show only devices that are not already added">
+              <input type="checkbox" id="discoverOnlyNew" checked />
+              <span>New devices</span>
+            </label>
+            <span class="hint" id="discoverCountHint">0 shown</span>
+          </div>
         </div>
         <div class="card-body">
           <div class="scan-list" id="discoverListEmpty">No devices yet. Hit Start.</div>
