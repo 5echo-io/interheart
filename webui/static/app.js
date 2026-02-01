@@ -1849,7 +1849,7 @@ function attachMenuActions(){
       iface: discoverIface?.value || 'auto',
       profile: 'safe',
       // Keep server load down by default.
-      cap: 1024,
+      cap: 256,
       stop_after: (discoverStopAfterToggle?.checked ? Number(discoverStopAfterCount?.value || 0) : 0),
     };
 
@@ -1993,9 +1993,12 @@ function attachMenuActions(){
       if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
       if (discoverBar && st.progress){
         const cur = Number(st.progress.current||0); const tot = Number(st.progress.total||0);
-        const pct = tot ? Math.round((cur/tot)*100) : 0;
-        discoverBar.style.width = `${pct}%`;
-        if (discoverPercent) discoverPercent.textContent = `${pct}%`;
+        const pct = tot ? ((cur/tot)*100) : 0;
+        const pctStr = tot
+          ? (pct < 1 ? pct.toFixed(2) : pct < 10 ? pct.toFixed(1) : Math.round(pct).toString())
+          : "0";
+        discoverBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+        if (discoverPercent) discoverPercent.textContent = `${pctStr}%`;
       }
       if (st && (st.status === 'running' || st.status === 'starting' || st.status === 'cancelling')){
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
@@ -2027,9 +2030,12 @@ function connectDiscoveryStream(){
         else if (obj.progress && obj.progress.total != null && discoverSubnets) discoverSubnets.textContent = String(obj.progress.total);
         if (obj.progress && discoverBar){
           const cur = Number(obj.progress.current||0); const tot = Number(obj.progress.total||0);
-          const pct = tot ? Math.round((cur/tot)*100) : 0;
-          discoverBar.style.width = `${pct}%`;
-          if (discoverPercent) discoverPercent.textContent = `${pct}%`;
+          const pct = tot ? ((cur/tot)*100) : 0;
+          const pctStr = tot
+            ? (pct < 1 ? pct.toFixed(2) : pct < 10 ? pct.toFixed(1) : Math.round(pct).toString())
+            : "0";
+          discoverBar.style.width = `${Math.min(100, pct)}%`;
+          if (discoverPercent) discoverPercent.textContent = `${pctStr}%`;
         }
         if (discoverStatus) discoverStatus.textContent = obj.message || st || 'Running…';
         try{

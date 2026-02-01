@@ -10,6 +10,7 @@ import socket
 import datetime
 import logging
 import signal
+import select
 import shutil
 import ipaddress
 import threading
@@ -1505,9 +1506,13 @@ def _get_local_cidrs(prefer_iface: str | None = None) -> list[str]:
                 if str(local).startswith("127.") or str(local).startswith("169.254."):
                     continue
 
-                # Avoid scanning overlay/VPN interfaces and non-private ranges by default.
+                # Avoid scanning overlay/VPN interfaces and container/virtual bridges.
                 # NetBird commonly uses 100.64.0.0/10; we don't want discovery to lock onto that.
-                if ifname and any(x in ifname for x in ("wt0", "netbird", "tailscale", "wg", "wireguard", "tun", "tap")):
+                if ifname and any(x in ifname for x in (
+                    "wt0", "netbird", "tailscale", "wg", "wireguard", "tun", "tap",
+                    # container/virtual
+                    "docker", "br-", "veth", "cni", "flannel", "kube", "podman",
+                )):
                     continue
 
                 # Some setups assign /32 to interfaces (point-to-point, overlays). A /32 scan is useless,
@@ -2256,11 +2261,16 @@ def _discover_build_cidrs(opts: dict) -> list[str]:
             cidrs += _get_local_cidrs(prefer_iface or None)
             cidrs += _cidrs_from_existing_targets()
 
-    # de-dup
+    # de-dup (normalize first to avoid "hidden" duplicates)
     seen=set(); uniq=[]
     for c in cidrs:
-        if c in seen: continue
-        seen.add(c); uniq.append(c)
+        c = (c or '').strip()
+        if not c:
+            continue
+        if c in seen:
+            continue
+        seen.add(c)
+        uniq.append(c)
 
     # normalize + split huge nets to /24 chunks (safe by default)
     out: list[str] = []
@@ -2304,6 +2314,16 @@ def _discover_worker():
     cancel_path = STATE_DIR / 'discovery_cancel'
 
     stop_after = int(opts.get('stop_after') or 0)
+
+    profile = str(opts.get('profile') or 'safe').strip().lower()
+    # Hard timeout per /24 to avoid long stalls. Nmap's own host-timeout can
+    # still take far longer than expected on some networks (ARP/ICMP behavior,
+    # rate limiting, etc.), so we enforce a wall-clock cutoff.
+    per_cidr_timeout_s = {
+        'safe': 30,
+        'fast': 18,
+        'aggressive': 12,
+    }.get(profile, 30)
 
     # reset output/events
     try:
@@ -2390,7 +2410,15 @@ def _discover_worker():
         args += _nmap_args_for_profile(meta.get('profile')) + [cidr]
         # stream normal output
         try:
-            p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            # Start nmap in its own process group so we can hard-kill it on timeout.
+            p = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                preexec_fn=os.setsid,
+            )
         except Exception as e:
             meta.update({'status':'error','finished':int(time.time()),'rc':1,'error':str(e)})
             save_discovery_meta(meta)
@@ -2400,9 +2428,9 @@ def _discover_worker():
 
         cur = {'ip':'','host':'','mac':'','vendor':'','type':''}
         def flush_current():
-            nonlocal event_id
+            nonlocal event_id, host_up
             ip = (cur.get('ip') or '').strip()
-            if not ip:
+            if not ip or not host_up:
                 return
             if ip in found_ips:
                 return
@@ -2418,50 +2446,107 @@ def _discover_worker():
             save_discovery_meta(meta)
             event_id += 1
             _append_discovery_event({'id': event_id,'type':'device','device':dev})
+            # reset so we don't emit the same host twice
+            host_up = False
 
-        for line in p.stdout:
+        start_ts = time.time()
+        timed_out = False
+        host_up = False
+
+        while True:
+            # cancellation
             if cancel_path.exists():
                 try:
                     p.terminate()
                 except Exception:
                     pass
                 break
-            line = (line or '').rstrip('\n')
-            if not line:
-                continue
-            # status event occasionally (throttle by subnet boundaries only)
-            if line.startswith('Nmap scan report for '):
-                # flush previous
-                flush_current()
-                cur = {'ip':'','host':'','mac':'','vendor':'','type':''}
-                rest = line.replace('Nmap scan report for ','').strip()
-                # rest can be IP or "name (ip)"; with -n it's usually IP
-                if '(' in rest and rest.endswith(')'):
-                    # name (ip)
-                    name, ip = rest.rsplit('(',1)
-                    cur['host'] = name.strip()
-                    cur['ip'] = ip.strip(') ').strip()
-                else:
-                    cur['ip'] = rest
-            elif 'MAC Address:' in line:
-                # MAC Address: AA:BB:CC:DD:EE:FF (Vendor)
+
+            # hard timeout per subnet
+            if per_cidr_timeout_s and (time.time() - start_ts) > float(per_cidr_timeout_s):
+                timed_out = True
                 try:
-                    seg = line.split('MAC Address:',1)[1].strip()
-                    mac = seg.split()[0].strip().lower()
-                    cur['mac'] = mac
-                    if '(' in seg and seg.endswith(')'):
-                        cur['vendor'] = seg.split('(',1)[1].strip(') ').strip()
+                    os.killpg(p.pid, signal.SIGKILL)
                 except Exception:
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+                break
+
+            # consume available output without blocking forever
+            try:
+                ready, _, _ = select.select([p.stdout], [], [], 0.2)
+            except Exception:
+                ready = []
+
+            if ready:
+                line = p.stdout.readline()
+                if not line:
+                    if p.poll() is not None:
+                        break
+                    continue
+                line = (line or '').rstrip('\n')
+                if not line:
+                    continue
+
+                if line.startswith('Nmap scan report for '):
+                    # When we hit a new host, we can now finalize the previous one (if it was up).
+                    if host_up:
+                        flush_current()
+                    host_up = False
+                    ip = None
+                    mac = ""
+                    vendor = ""
+
+                    rest = line.replace('Nmap scan report for ','').strip()
+                    # rest can be IP or "name (ip)". With -n we normally get the raw IP.
+                    if '(' in rest and rest.endswith(')'):
+                        _name, _ip = rest.rsplit('(',1)
+                        ip = _ip.strip(') ').strip()
+                    else:
+                        ip = rest
+
+                elif 'Host is up' in line:
+                    host_up = True
+
+                elif 'MAC Address:' in line:
+                    # MAC Address: AA:BB:CC:DD:EE:FF (Vendor)
+                    try:
+                        seg = line.split('MAC Address:',1)[1].strip()
+                        mac = seg.split()[0].strip().lower()
+                        if '(' in seg and seg.endswith(')'):
+                            vendor = seg.split('(',1)[1].strip(') ').strip()
+                    except Exception:
+                        pass
+
+                else:
+                    # ignore other lines
                     pass
-            elif line.startswith('Host is up'):
-                # nothing
-                pass
+            else:
+                # no output available
+                if p.poll() is not None:
+                    break
+
+        # best-effort wait/drain
         try:
-            p.wait(timeout=2)
+            p.wait(timeout=1)
         except Exception:
             pass
+
         # flush last host in this cidr
-        flush_current()
+        if host_up:
+            flush_current()
+
+        if timed_out:
+            event_id += 1
+            _append_discovery_event({
+                'id': event_id,
+                'type': 'status',
+                'status': 'running',
+                'message': f"Timeout scanning {cidr}",
+                'progress': {'current': idx+1, 'total': len(cidrs), 'cidr': cidr}
+            })
 
         # progress status per cidr
         event_id += 1
