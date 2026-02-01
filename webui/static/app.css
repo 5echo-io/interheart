@@ -1,3 +1,25 @@
+/*
+ * =============================================================================
+ * Copyright (c) 2026 5echo.io
+ * Project: interheart
+ * Purpose: WebUI styling.
+ * Path: /webui/static/app.css
+ * Created: 2026-02-01
+ * Last modified: 2026-02-01
+ * =============================================================================
+ */
+
+/*
+ * =============================================================================
+ * Copyright (c) 2026 5echo.io
+ * Project: interheart
+ * Purpose: WebUI styling.
+ * Path: /opt/interheart/webui/static/app.css
+ * Created: 2026-02-01
+ * Last modified: 2026-02-01
+ * =============================================================================
+ */
+
 :root{
   --bg:#091626;
   --panel: rgba(12,18,32,.62);

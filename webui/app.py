@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# File: app.py
+# Purpose: Flask WebUI API and frontend server, including discovery and targets management.
+# Intended path: /opt/interheart/webui/app.py
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
 from flask import Flask, request, jsonify, render_template, Response, send_file
 import os
 import sys
@@ -89,7 +99,46 @@ def ensure_state_dir():
     except Exception:
         pass
 
+
+def reset_discovery_state(reason: str = "startup"):
+    """Reset persisted discovery state.
+
+    Discovery progress and events are persisted to disk so the UI can show status.
+    This is convenient during a running scan, but it can be confusing after a
+    restart/update because old progress (e.g., 1024 subnets, cancelled) may show
+    up immediately.
+
+    Requirement: always reset discovery status on WebUI start.
+    """
+    try:
+        # Truncate event stream log
+        DISCOVERY_EVENTS_FILE.write_text("", encoding="utf-8")
+    except Exception:
+        pass
+
+    try:
+        meta = {
+            "status": "idle",
+            "message": "idle",
+            "cidrs": 0,
+            "found": 0,
+            "worker_running": False,
+            "worker_pid": 0,
+            "error": "",
+            "started_at": "",
+            "finished_at": "",
+            "default_gateway": "",
+            "iface_effective": "",
+            "opts": {},
+            "meta": {"cidrs": []},
+            "reset_reason": reason,
+        }
+        DISCOVERY_META_FILE.write_text(json.dumps(meta), encoding="utf-8")
+    except Exception:
+        pass
+
 ensure_state_dir()
+reset_discovery_state("webui_start")
 
 # Ensure Flask logger is usable under systemd (stdout/stderr -> journal)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

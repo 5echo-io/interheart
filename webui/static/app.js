@@ -1,3 +1,25 @@
+/*
+ * =============================================================================
+ * Copyright (c) 2026 5echo.io
+ * Project: interheart
+ * Purpose: WebUI client-side logic.
+ * Path: /webui/static/app.js
+ * Created: 2026-02-01
+ * Last modified: 2026-02-01
+ * =============================================================================
+ */
+
+/*
+ * =============================================================================
+ * Copyright (c) 2026 5echo.io
+ * Project: interheart
+ * Purpose: WebUI client-side logic (table rendering, modals, discovery UI, API calls).
+ * Path: /opt/interheart/webui/static/app.js
+ * Created: 2026-02-01
+ * Last modified: 2026-02-01
+ * =============================================================================
+ */
+
 (function(){
   const $ = (sel, root=document) => root.querySelector(sel);
   const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));

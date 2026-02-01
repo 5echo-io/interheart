@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# Purpose: CLI core helpers (colors, printing, validation utilities).
+# Path: /opt/interheart/cli/lib/core.sh
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
 set -euo pipefail
 
 # interheart core helpers

@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# Purpose: CLI command implementations and dispatcher.
+# Path: /opt/interheart/cli/lib/commands.sh
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
 set -euo pipefail
 
 # interheart CLI commands
@@ -153,6 +162,101 @@ cmd_debug() {
   echo "Tip: 'sudo interheart debug --follow' to tail runner logs live."
 }
 
+
+_selftest_latest_log() {
+  ls -1t /var/lib/interheart/debug/selftest-*.log 2>/dev/null | head -n 1
+}
+
+
+cmd_self_test() {
+  require_root
+  db_init
+
+  mkdir -p /var/lib/interheart/debug
+
+  local ts SELFTEST_LOG
+  ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+  SELFTEST_LOG="/var/lib/interheart/debug/selftest-${ts}.log"
+
+  {
+    echo "interheart self-test"
+    echo "time_utc=${ts}"
+    echo "host=$(hostname)"
+    echo "version=$(cat /opt/interheart/VERSION 2>/dev/null || echo 'unknown')"
+    echo "-"
+  } >"${SELFTEST_LOG}"
+
+  local ok=0 fail=0
+
+  _st() {
+    echo "$1" | tee -a "${SELFTEST_LOG}"
+  }
+
+  _st "[1] Files"
+  if [ -f /opt/interheart/VERSION ]; then
+    ok=$((ok + 1)); _st "  OK: VERSION exists"
+  else
+    fail=$((fail + 1)); _st "  FAIL: VERSION missing (/opt/interheart/VERSION)"
+  fi
+
+  if [ -f "${DB_PATH}" ]; then
+    ok=$((ok + 1)); _st "  OK: DB exists (${DB_PATH})"
+  else
+    fail=$((fail + 1)); _st "  FAIL: DB missing (${DB_PATH})"
+  fi
+
+  _st "[2] Services"
+  if systemctl is-active --quiet interheart-webui.service; then
+    ok=$((ok + 1)); _st "  OK: interheart-webui.service active"
+  else
+    fail=$((fail + 1)); _st "  FAIL: interheart-webui.service not active"
+  fi
+  if systemctl is-active --quiet interheart.timer; then
+    ok=$((ok + 1)); _st "  OK: interheart.timer active"
+  else
+    fail=$((fail + 1)); _st "  FAIL: interheart.timer not active"
+  fi
+
+  _st "[3] WebUI health"
+  if curl -fsS --max-time 2 http://127.0.0.1:8088/state >/dev/null 2>&1; then
+    ok=$((ok + 1)); _st "  OK: GET /state responds"
+  else
+    fail=$((fail + 1)); _st "  FAIL: GET /state did not respond on 127.0.0.1:8088"
+  fi
+
+  _st "[4] DB integrity (quick)"
+  if sqlite3 "${DB_PATH}" "PRAGMA quick_check;" 2>/dev/null | grep -qi '^ok'; then
+    ok=$((ok + 1)); _st "  OK: sqlite quick_check"
+  else
+    fail=$((fail + 1)); _st "  FAIL: sqlite quick_check"
+  fi
+
+  _st "-"
+  _st "result_ok=${ok}"
+  _st "result_fail=${fail}"
+  _st "log=${SELFTEST_LOG}"
+
+  echo
+  echo "Self-test complete: ok=${ok} fail=${fail}"
+  echo "Log: ${SELFTEST_LOG}"
+
+  if [ "${fail}" -ne 0 ]; then
+    return 1
+  fi
+}
+
+
+cmd_self_test_output() {
+  require_root
+  local latest
+  latest="$(_selftest_latest_log)"
+  if [ -z "${latest}" ]; then
+    echo "No self-test logs found in /var/lib/interheart/debug/"
+    return 1
+  fi
+  cat "${latest}"
+}
+
 cmd_help() {
   cat <<EOF
 interheart CLI
@@ -165,6 +269,8 @@ Commands:
   list
   status
   debug [--follow]
+  self-test
+  self-test-output
 EOF
 }
 
@@ -180,6 +286,8 @@ main() {
     list)     cmd_list ;;
     status)   cmd_status ;;
     debug)    cmd_debug "$@" ;;
+    self-test) cmd_self_test ;;
+    self-test-output) cmd_self_test_output ;;
     help|-h|--help) cmd_help ;;
     *)
       echo "Unknown command: $cmd" >&2

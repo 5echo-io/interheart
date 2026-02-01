@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# Purpose: Runner script for performing checks and updating persistent state.
+# Path: /interheart.sh
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
 set -euo pipefail
 
 # interheart CLI

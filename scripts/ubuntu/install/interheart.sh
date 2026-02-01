@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# Purpose: Ubuntu installer for interheart (systemd services, paths, ...).
+# Path: /scripts/ubuntu/install/interheart.sh
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
 set -euo pipefail
 
 # 5echo.io – interheart installer wizard

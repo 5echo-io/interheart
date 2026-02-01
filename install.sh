@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# Purpose: Installer script (install/update/uninstall).
+# Path: /opt/interheart/install.sh
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

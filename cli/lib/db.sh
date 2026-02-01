@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# Purpose: SQLite database helpers for targets.
+# Path: /opt/interheart/cli/lib/db.sh
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
 set -euo pipefail
 
 # interheart database helpers

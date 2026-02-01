@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# Purpose: WebUI discovery worker process (nmap scan and event streaming).
+# Path: /webui/discovery_worker.py
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
+#!/usr/bin/env python3
 """Background worker for network discovery.
 
 This is launched by the WebUI API endpoint /api/discover-start.

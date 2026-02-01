@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# Purpose: WebUI scan worker process (runner orchestration and snapshots).
+# Path: /webui/scan_worker.py
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
+#!/usr/bin/env python3
 import os, sys
 from pathlib import Path
 

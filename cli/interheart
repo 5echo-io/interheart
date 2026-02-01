@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# File: interheart
+# Purpose: Interheart CLI entrypoint wrapper.
+# Intended path: /usr/local/bin/interheart
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
 set -euo pipefail
 
 # interheart CLI (entrypoint from repo)

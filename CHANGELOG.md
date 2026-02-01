@@ -6,6 +6,17 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.43.1-beta.1 – 2026-02-01
+
+### Added
+- CLI: `interheart self-test` and `interheart self-test-output` for quick validation and log retrieval.
+
+### Changed
+- Repository: Added standard file headers across code files.
+
+### Fixed
+- WebUI Discovery: Persisted discovery state is reset on WebUI startup to avoid showing stale "Cancelled" state after restart/update.
+
 ## v5.43.0-beta.3 – 2026-02-01
 
 ### Fixed
