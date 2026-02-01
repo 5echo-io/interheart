@@ -2898,14 +2898,19 @@ def api_discover_pause():
     """Pause the discovery worker without losing progress (SIGSTOP)."""
     meta = load_discovery_meta()
     pid = int(meta.get('pid') or 0)
+    pgid = int(meta.get('pgid') or 0)
     if pid <= 0:
         return jsonify({'ok': False, 'error': 'No worker running'}), 409
 
     if meta.get('status') == 'paused':
         return jsonify({'ok': True, 'status': 'paused'})
 
+    # The worker is started in its own process group (see Popen(..., preexec_fn=os.setsid)).
+    # We must signal the PGID (not the PID) for pause/resume/cancel to work reliably.
+    target_pgid = pgid or os.getpgid(pid)
+
     try:
-        os.killpg(pid, signal.SIGSTOP)
+        os.killpg(target_pgid, signal.SIGSTOP)
     except ProcessLookupError:
         reset_discovery_state()
         return jsonify({'ok': False, 'error': 'Worker not found'}), 409
@@ -2922,14 +2927,17 @@ def api_discover_resume():
     """Resume a paused discovery worker (SIGCONT)."""
     meta = load_discovery_meta()
     pid = int(meta.get('pid') or 0)
+    pgid = int(meta.get('pgid') or 0)
     if pid <= 0:
         return jsonify({'ok': False, 'error': 'No worker running'}), 409
 
     if meta.get('status') != 'paused':
         return jsonify({'ok': False, 'error': 'Not paused'}), 409
 
+    target_pgid = pgid or os.getpgid(pid)
+
     try:
-        os.killpg(pid, signal.SIGCONT)
+        os.killpg(target_pgid, signal.SIGCONT)
     except ProcessLookupError:
         reset_discovery_state()
         return jsonify({'ok': False, 'error': 'Worker not found'}), 409

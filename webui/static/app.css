@@ -502,14 +502,22 @@ tr.flash-down{ animation: rowFail 1s ease; }
 .kpi-value{font-size:18px;font-weight:900;margin-top:6px}
 
 /* Scan progress bar (indeterminate feel when running) */
-.progress{height:10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);overflow:hidden;margin-top:10px}
-.progress-bar{height:100%;background:rgba(255,255,255,.28);transition: width .25s ease}
+.progress{height:10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);overflow:hidden;margin-top:10px;position:relative}
+.progress-bar{height:100%;background:rgba(255,255,255,.28);transition: width .25s ease;position:relative;z-index:1}
 .progress-bar.running{
-  background: linear-gradient(90deg, rgba(255,255,255,.10), rgba(255,255,255,.34), rgba(255,255,255,.10));
-  background-size: 220% 100%;
-  animation: shimmerMove 1.2s linear infinite;
+  background: var(--good);
+  animation: ihPulseGreen 1.6s ease-in-out infinite;
 }
-@keyframes shimmerMove{0%{background-position:0% 0}100%{background-position:220% 0}}
+@keyframes ihPulseGreen{0%,100%{filter:brightness(1)}50%{filter:brightness(1.2)}}
+
+/* Discovery: dotted scan shimmer (only visible in the unfilled area) */
+.discover-progressbar__dots{position:absolute;inset:0;z-index:0;opacity:0;pointer-events:none;
+  background: radial-gradient(circle at 2px 2px, rgba(255,255,255,.12) 0 1.2px, transparent 1.3px) 0 0/10px 10px;
+  mask-image: linear-gradient(90deg, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 70%, rgba(0,0,0,0) 100%);
+  animation: ihDotsScroll 1.1s linear infinite;
+}
+.discover-progressbar.is-running .discover-progressbar__dots{opacity:1}
+@keyframes ihDotsScroll{0%{transform:translateX(0)}100%{transform:translateX(-10px)}}
 
 /* Actions menu icons */
 .mi-ic{
@@ -807,6 +815,9 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 
 /* Discovery: layout + UX polish */
 .discover-controls{ display:flex; flex-direction:column; gap:12px; }
+.discover-actions__row{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+.discover-actions__left{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.discover-actions__right{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end; margin-left:auto; }
 .discover-settings-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
 .discover-settings-row .lbl{ margin-right:6px; }
 .discover-stopafter{ display:flex; align-items:center; gap:8px; flex-wrap:nowrap; }
@@ -820,28 +831,42 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 
 .discover-stopafter{ display:inline-flex; align-items:center; gap:8px; }
 .discover-stopafter-input{ width:94px; }
+
+/* Discovery: KPI row (Subnets / Found) */
+.discover-progress__kpis{ display:flex; gap:14px; flex-wrap:wrap; align-items:baseline; }
+.discover-progress__kpis .kpi{ background:transparent; border:none; padding:0; min-width:auto; }
+.discover-progress__kpis .kpi-value{ font-size:16px; font-weight:700; }
+.discover-progress__kpis .kpi-label{ font-size:12px; color:var(--muted); }
 .discover-stopafter-input.is-hidden{ visibility:hidden; pointer-events:none; }
 
 .discover-progress{ padding:2px 2px 0 2px; }
 .discover-progress-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .discover-progressbar{ position:relative; height:10px; border-radius:999px; background: rgba(255,255,255,0.10); overflow:hidden; }
-.discover-progressbar__fill{ position:absolute; top:0; left:0; height:100%; border-radius:999px; background: rgba(62, 255, 120, 0.70); animation: discoverFillPulse 1.6s ease-in-out infinite; }
+.discover-progressbar__fill{ position:absolute; top:0; left:0; height:100%; border-radius:999px; background: rgba(62, 255, 120, 0.70); }
 .discover-progressbar__shimmer{ position:absolute; top:0; height:100%; right:0; left: var(--fill, 0%); opacity:0.85; pointer-events:none; }
 .discover-progressbar__shimmer::before{
   content:"";
   position:absolute;
   inset:0;
   background:
-    repeating-linear-gradient(90deg,
-      rgba(255,255,255,0.55) 0 2px,
-      rgba(255,255,255,0.05) 2px 8px);
+    radial-gradient(circle at 2px 50%, rgba(255,255,255,0.28) 0 1.4px, rgba(255,255,255,0) 1.6px 10px);
   -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,1), rgba(0,0,0,0));
   mask-image: linear-gradient(90deg, rgba(0,0,0,1), rgba(0,0,0,0));
-  animation: discoverShimmer 1.1s linear infinite;
+  animation: discoverShimmer 1.2s linear infinite;
 }
+
+/* Animations only while running */
+.discover-progressbar.is-running .discover-progressbar__fill{ animation: discoverFillPulse 1.8s ease-in-out infinite; }
+.discover-progressbar:not(.is-running) .discover-progressbar__shimmer{ display:none; }
 
 @keyframes discoverShimmer{ from{ transform: translateX(-20px);} to{ transform: translateX(20px);} }
 @keyframes discoverFillPulse{ 0%,100%{ filter: brightness(0.95);} 50%{ filter: brightness(1.15);} }
+
+/* Discovery: KPI row inside progress */
+.discover-progress__kpis{ display:flex; gap:18px; align-items:center; }
+.discover-progress__kpis .kpi{ background: transparent; border: none; padding: 0; min-width: auto; }
+.discover-progress__kpis .kpi-label{ font-size: 12px; opacity: .72; }
+.discover-progress__kpis .kpi-value{ font-size: 14px; font-weight: 700; }
 
 .discover-statuslines{ margin-top:10px; display:flex; flex-direction:column; gap:10px; }
 .discover-statuslines .muted{ opacity:0.75; }

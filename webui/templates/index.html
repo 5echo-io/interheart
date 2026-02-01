@@ -518,13 +518,16 @@ Last modified: 2026-02-01
             <input class="input input--sm" id="discoverCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24" style="display:none; min-width: 240px;" />
           </div>
 
-          <div class="discover-actions__right">
+	          <div class="discover-actions__right">
             <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button">Scan now</button>
             <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
             <button class="btn btn-outline btn-mini" id="btnDiscoverResume" type="button" style="display:none;">Resume</button>
             <button class="btn btn-ghost btn-mini" id="btnDiscoverReset" type="button" style="display:none;">Reset</button>
             <button class="btn btn-outline btn-mini" id="btnDiscoverDebug" type="button" style="display:none;">Debug</button>
+	          </div>
+
         </div>
+      </div>
 
         <!-- Progress -->
         <div class="discover-progress" id="discoverProgressWrap">
@@ -538,10 +541,10 @@ Last modified: 2026-02-01
               <div class="kpi-value" id="discoverFound">0</div>
             </div>
             <div class="discover-progress__meta" id="discoverPercent">0%</div>
-            <div class="discover-progress__statusInline">
-              <div class="hint" id="discoverStatus">Idle</div>
-              <div class="hint" id="discoverScanning">-</div>
-            </div
+	            <div class="discover-progress__statusInline">
+	              <div class="hint" id="discoverStatus">Idle</div>
+	              <div class="hint" id="discoverScanning">-</div>
+	            </div>
           </div>
 
           <div class="progress discover-progressbar">

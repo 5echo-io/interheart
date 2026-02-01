@@ -1550,6 +1550,7 @@ function attachMenuActions(){
   const btnCloseDiscover = $("#btnCloseDiscover");
   const btnDiscoverStart = $("#btnDiscoverStart");
   const btnDiscoverCancel = $("#btnDiscoverCancel");
+  const btnDiscoverResume = $("#btnDiscoverResume");
   const btnDiscoverAgain = $("#btnDiscoverAgain");
   const btnDiscoverReset = $("#btnDiscoverReset");
   const btnDiscoverDebug = $("#btnDiscoverDebug");
@@ -1572,8 +1573,10 @@ function attachMenuActions(){
   const discoverFound = $("#discoverFound");
   const discoverSubnets = $("#discoverSubnets");
   const discoverBar = $("#discoverBar");
+  const discoverProgressBar = $("#discoverProgressBar");
   const discoverStatus = $("#discoverStatus");
   const discoverScanning = $("#discoverScanning");
+  const discoverProgressWrap = $("#discoverProgressWrap");
   const discoverError = $("#discoverError");
   const discoverCountHint = $("#discoverCountHint");
 
@@ -1859,10 +1862,13 @@ function attachMenuActions(){
     try{ if (discoverOnlyNew) discoverOnlyNew.checked = true; }catch(_){ }
     if (btnDiscoverAgain) btnDiscoverAgain.style.display = 'none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display = 'none';
-    if (btnDiscoverResume) btnDiscoverResume.style.display = "none";
-  if (btnDiscoverResume) btnDiscoverResume.style.display = 'none';
+    if (btnDiscoverResume) btnDiscoverResume.style.display = 'none';
     if (btnDiscoverStart) btnDiscoverStart.style.display = 'inline-flex';
-  if (btnDiscoverReset) btnDiscoverReset.style.display = 'none';
+    if (btnDiscoverReset) btnDiscoverReset.style.display = 'none';
+    if (discoverProgressWrap){
+      discoverProgressWrap.style.opacity = '0';
+      discoverProgressWrap.style.display = 'none';
+    }
     renderDiscoverList();
   }
 
@@ -2091,12 +2097,19 @@ async function cancelDiscovery(){
           : "0";
         const pctClamped = Math.min(100, Math.max(0, pct));
         discoverBar.style.width = `${pctClamped}%`;
-        const pbWrap = discoverBar.closest('.progress-bar');
-        if (pbWrap) {
-          if (st && (st.status === 'running' || st.status === 'starting')) pbWrap.classList.add('running');
-          else pbWrap.classList.remove('running');
-          pbWrap.style.setProperty('--ih-pct', `${pctClamped}%`);
+        const isRunning = !!(st && (st.status === 'running' || st.status === 'starting'));
+        if (discoverBar) {
+          if (isRunning) discoverBar.classList.add('running');
+          else discoverBar.classList.remove('running');
         }
+        if (discoverProgressBar) {
+          if (isRunning) discoverProgressBar.classList.add('is-running');
+          else discoverProgressBar.classList.remove('is-running');
+        }
+      if (discoverProgressWrap) {
+        const show = !!(st && (st.status === 'running' || st.status === 'starting' || st.status === 'paused' || st.status === 'cancelling' || st.status === 'done'));
+        discoverProgressWrap.style.display = show ? 'block' : 'none';
+      }
         if (discoverPercent) discoverPercent.textContent = `${pctStr}%`;
       }
 
