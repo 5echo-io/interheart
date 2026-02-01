@@ -1892,6 +1892,9 @@ def _scan_with_nmap(cidrs: list[str], speed: str, cancel_flag: threading.Event) 
         return found
 
     timing = {"slow": "-T2", "normal": "-T4", "fast": "-T5"}.get((speed or "normal").lower(), "-T4")
+    # Per-CIDR timeout is important: some nmap runs can hang far longer than their per-host timeouts,
+    # especially on noisy networks or when ARP/ND fallback behaves oddly.
+    per_cidr_timeout_s = {"slow": 30, "normal": 20, "fast": 15}.get((speed or "normal").lower(), 20)
 
     for cidr in cidrs:
         if cancel_flag.is_set():
@@ -1910,21 +1913,30 @@ def _scan_with_nmap(cidrs: list[str], speed: str, cancel_flag: threading.Event) 
                 "-n",
                 timing,
                 "--max-retries",
-                "2",
+                "1",
                 "--host-timeout",
-                "3s",
+                "2s",
+                "--min-parallelism",
+                "32",
+                "--min-hostgroup",
+                "32",
+                "--max-hostgroup",
+                "128",
                 "-oX",
                 "-",
                 cidr,
             ]
 
-            p = subprocess.run(cmd, capture_output=True, text=True)
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=per_cidr_timeout_s)
             xml = (p.stdout or "") + ("\n" + (p.stderr or "") if p.stderr else "")
             if p.returncode != 0:
                 # Include nmap output – this is often the only clue (permissions, missing binary, etc.)
                 short = " ".join((xml or "").strip().splitlines()[-3:])
                 _scan_log(f"warn: nmap rc={p.returncode} on {cidr}: {short}")
                 # Still try to parse if any XML was produced.
+        except subprocess.TimeoutExpired:
+            _scan_log(f"warn: nmap timeout on {cidr} (>{per_cidr_timeout_s}s)")
+            continue
         except Exception as e:
             _scan_log(f"warn: nmap error on {cidr}: {str(e)}")
             continue

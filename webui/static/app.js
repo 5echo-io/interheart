@@ -1564,6 +1564,7 @@ function attachMenuActions(){
   const discoverFilter = $("#discoverFilter");
   const discoverStopAfterToggle = $("#discoverStopAfterToggle");
   const discoverStopAfterCount = $("#discoverStopAfterCount");
+  const discoverStopAfterWrap = $("#discoverStopAfterWrap");
   const discoverPercent = $("#discoverPercent");
 
   const discoverList = $("#discoverList");
@@ -1723,7 +1724,14 @@ function attachMenuActions(){
   function updateDiscoverStopAfterUI(){
     if (!discoverStopAfterToggle || !discoverStopAfterCount) return;
     const on = !!discoverStopAfterToggle.checked;
-    discoverStopAfterCount.style.display = on ? 'inline-flex' : 'none';
+
+    // Keep layout stable (no line shifts) – reserve the space and just fade/hide the input.
+    if (discoverStopAfterWrap){
+      discoverStopAfterWrap.classList.toggle('is-off', !on);
+    }
+    discoverStopAfterCount.disabled = !on;
+    discoverStopAfterCount.style.visibility = on ? 'visible' : 'hidden';
+    discoverStopAfterCount.style.pointerEvents = on ? 'auto' : 'none';
   }
   discoverStopAfterToggle?.addEventListener('change', updateDiscoverStopAfterUI);
   updateDiscoverStopAfterUI();
@@ -1983,7 +1991,12 @@ function attachMenuActions(){
 
   btnDiscoverStart?.addEventListener('click', startDiscovery);
   btnDiscoverAgain?.addEventListener('click', startDiscovery);
-  btnDiscoverCancel?.addEventListener('click', cancelDiscovery);
+  btnDiscoverCancel?.addEventListener('click', () => {
+    // Simple safety net: it is easy to misclick Stop when scanning.
+    const ok = window.confirm('Stop the scan?');
+    if (!ok) return;
+    cancelDiscovery();
+  });
 
   btnDiscoverReset?.addEventListener('click', async () => {
     try {
@@ -2034,11 +2047,13 @@ function attachMenuActions(){
         const pctStr = tot
           ? (pct < 1 ? pct.toFixed(2) : pct < 10 ? pct.toFixed(1) : Math.round(pct).toString())
           : "0";
-        discoverBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+        const pctClamped = Math.min(100, Math.max(0, pct));
+        discoverBar.style.width = `${pctClamped}%`;
         const pbWrap = discoverBar.closest('.progress-bar');
         if (pbWrap) {
           if (st && (st.status === 'running' || st.status === 'starting')) pbWrap.classList.add('running');
           else pbWrap.classList.remove('running');
+          pbWrap.style.setProperty('--ih-pct', `${pctClamped}%`);
         }
         if (discoverPercent) discoverPercent.textContent = `${pctStr}%`;
       }
@@ -2057,8 +2072,8 @@ function attachMenuActions(){
       if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
         if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-        if (btnDiscoverAgain) btnDiscoverAgain.style.display='inline-flex';
-        if (btnDiscoverStart){ btnDiscoverStart.style.display='none'; btnDiscoverStart.disabled=false; }
+        if (btnDiscoverAgain) btnDiscoverAgain.style.display='none';
+        if (btnDiscoverStart){ btnDiscoverStart.style.display='inline-flex'; btnDiscoverStart.disabled=false; }
       }
     }catch(e){ /* ignore */ }
   }
@@ -2079,10 +2094,14 @@ function connectDiscoveryStream(){
         if (obj.progress && discoverBar){
           const cur = Number(obj.progress.current||0); const tot = Number(obj.progress.total||0);
           const pct = tot ? ((cur/tot)*100) : 0;
+          const pctClamped = Math.min(100, Math.max(0, pct));
           const pctStr = tot
-            ? (pct < 1 ? pct.toFixed(2) : pct < 10 ? pct.toFixed(1) : Math.round(pct).toString())
+            ? (pctClamped < 1 ? pctClamped.toFixed(2) : pctClamped < 10 ? pctClamped.toFixed(1) : Math.round(pctClamped).toString())
             : "0";
-          discoverBar.style.width = `${Math.min(100, pct)}%`;
+          discoverBar.style.width = `${pctClamped}%`;
+          // Used by CSS shimmer/scanline effect.
+          const pb = document.getElementById('discoverProgressBar');
+          if (pb) pb.style.setProperty('--ih-pct', `${pctClamped}%`);
           if (discoverPercent) discoverPercent.textContent = `${pctStr}%`;
         }
         if (discoverStatus) discoverStatus.textContent = obj.message || st || 'Running…';
@@ -2097,14 +2116,12 @@ function connectDiscoveryStream(){
         }
         if (obj.status === 'running' || obj.status === 'starting' || obj.status === 'cancelling'){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
-          if (btnDiscoverAgain) btnDiscoverAgain.style.display='none';
           if (btnDiscoverStart) btnDiscoverStart.style.display='none';
           if (discoverStatus && obj.status === 'cancelling') discoverStatus.textContent = obj.message || 'Cancelling…';
         }
         if (obj.status === 'done' || obj.status === 'cancelled' || obj.status === 'error'){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-          if (btnDiscoverAgain) btnDiscoverAgain.style.display='inline-flex';
-          if (btnDiscoverStart){ btnDiscoverStart.style.display='none'; btnDiscoverStart.disabled=false; }
+          if (btnDiscoverStart){ btnDiscoverStart.style.display='inline-flex'; btnDiscoverStart.disabled=false; }
         }
       }catch(e){}
     });

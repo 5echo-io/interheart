@@ -20,6 +20,14 @@ Last modified: 2026-02-01
   =============================================================================
 -->
 
+<!--
+  Copyright (c) 5echo.io
+  Project: interheart
+  File: Main WebUI template (includes Discovery modal)
+  Path: /opt/interheart/webui/templates/index.html
+  Created: 2025-01-01
+  Last modified: 2026-02-01
+-->
 <!doctype html>
 <html lang="en">
 <head>
@@ -482,7 +490,7 @@ Last modified: 2026-02-01
       <div class="modal-head">
         <div class="modal-title">
           <b>Network discovery</b>
-          <span class="hint" id="discoverMeta">nmap • safe scan</span>
+          <span class="hint" id="discoverMeta">nmap • search network devices</span>
         </div>
         <div class="modal-actions">
           <button class="btn btn-ghost btn-mini" id="btnCloseDiscover" type="button">Close</button>
@@ -490,52 +498,65 @@ Last modified: 2026-02-01
       </div>
 
       <div class="modal-body">
-      <div class="sidepanel-actions discover-actions" style="padding:0; margin-bottom:10px;">
-      <select class="input input--sm" id="discoverIface" aria-label="Interface">
-        <option value="auto" selected>Interface: Auto</option>
-      </select>
-      <select class="input input--sm" id="discoverScope" aria-label="Scope">
-        <option value="auto" selected>Auto (gateway first)</option>
-        <option value="10">RFC1918: 10.x.x.x</option>
-        <option value="172">RFC1918: 172.16-31.x.x</option>
-        <option value="192">RFC1918: 192.168.x.x</option>
-        <option value="all">RFC1918: All (slow)</option>
-        <option value="custom">Custom CIDR</option>
-      </select>
-        <!-- Profile selector removed: safe scan only -->
-      <input class="input input--sm" id="discoverCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24" style="display:none; min-width: 240px;" />
-      <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Start scan</button>
-      <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
-      <button class="btn btn-ghost btn-mini" id="btnDiscoverAgain" type="button" style="display:none;" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Scan now</button>
-      <button class="btn btn-ghost btn-mini" id="btnDiscoverReset" type="button" style="display:none;">Reset</button>
-      <button class="btn btn-ghost btn-mini" id="btnDiscoverDebug" type="button" title="Run discovery diagnostics" style="display:none;">Debug</button>
-        <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
-          <label class="toggle" title="Stop after scanning N subnets">
-            <input type="checkbox" id="discoverStopAfterToggle" />
-            <span>Stop after</span>
-          </label>
-          <input class="input input--sm" id="discoverStopAfterCount" type="number" min="1" max="4096" value="10" style="width:84px; display:none;" aria-label="Stop after subnet count" />
 
-          <!-- Results filtering moved below (next to device list) -->
-        </div>
-    </div>
-
-      <div class="sidepanel-body" style="padding:0;">
-      <div class="card card--soft discover-progress" id="discoverProgressWrap">
-        <div class="row">
-          <div class="kpi">
-            <div class="kpi-label">Subnets</div>
-            <div class="kpi-value" id="discoverSubnets">-</div>
+      <!-- Settings + actions -->
+      <div class="discover-actions" id="discoverActions">
+        <div class="discover-actions__row">
+          <div class="discover-actions__left">
+            <select class="input input--sm" id="discoverIface" aria-label="Interface">
+              <option value="auto" selected>Interface: Auto</option>
+            </select>
+            <select class="input input--sm" id="discoverScope" aria-label="Scope">
+              <option value="auto" selected>Auto (gateway first)</option>
+              <option value="10">RFC1918: 10.x.x.x</option>
+              <option value="172">RFC1918: 172.16-31.x.x</option>
+              <option value="192">RFC1918: 192.168.x.x</option>
+              <option value="all">RFC1918: All (slow)</option>
+              <option value="custom">Custom CIDR</option>
+            </select>
+            <!-- Profile selector removed: safe scan only -->
+            <input class="input input--sm" id="discoverCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24" style="display:none; min-width: 240px;" />
           </div>
-          <div class="kpi">
-            <div class="kpi-label">Found</div>
-            <div class="kpi-value" id="discoverFound">0</div>
+
+          <div class="discover-actions__right">
+            <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Scan now</button>
+            <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
+            <button class="btn btn-ghost btn-mini" id="btnDiscoverReset" type="button" style="display:none;">Reset</button>
+            <button class="btn btn-ghost btn-mini" id="btnDiscoverDebug" type="button" title="Run discovery diagnostics" style="display:none;">Debug</button>
+
+            <div class="discover-stopafter" title="Stop after scanning N subnets">
+              <label class="toggle">
+                <input type="checkbox" id="discoverStopAfterToggle" />
+                <span>Stop after</span>
+              </label>
+              <input class="input input--sm" id="discoverStopAfterCount" type="number" min="1" max="4096" value="10" aria-label="Stop after subnet count" />
+            </div>
           </div>
         </div>
-        <div class="progress"><div class="progress-bar" id="discoverBar" style="width:0%"></div></div>
-        <div class="progress-meta"><span id="discoverPercent">0%</span></div>
-        <div class="hint" id="discoverStatus">Idle</div>
-        <div class="hint" id="discoverScanning" style="margin-top:-6px; opacity:.75;">-</div>
+
+        <!-- Progress -->
+        <div class="discover-progress" id="discoverProgressWrap">
+          <div class="discover-progress__kpis">
+            <div class="kpi">
+              <div class="kpi-label">Subnets</div>
+              <div class="kpi-value" id="discoverSubnets">-</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Found</div>
+              <div class="kpi-value" id="discoverFound">0</div>
+            </div>
+            <div class="discover-progress__meta" id="discoverPercent">0%</div>
+          </div>
+
+          <div class="progress discover-progressbar">
+            <div class="progress-bar" id="discoverBar" style="width:0%"></div>
+            <div class="discover-progressbar__shimmer" aria-hidden="true"></div>
+          </div>
+
+          <div class="discover-progress__status">
+            <div class="hint" id="discoverStatus">Idle</div>
+            <div class="hint" id="discoverScanning">-</div>
+          </div>
         </div>
 
         <div class="alert alert--error" id="discoverError" style="display:none;"></div>
@@ -553,34 +574,28 @@ Last modified: 2026-02-01
         </div>
       </div>
 
-      <div class="row" style="gap:10px; align-items:center; margin-top:-2px;">
-        <div class="input-with-clear" style="flex:1; min-width: 220px;">
-          <input id="discoverFilter" class="input" placeholder="Filter devices… (name / ip / mac / vendor)">
-          <button class="btn-clear is-hidden" type="button" data-clear-for="discoverFilter" aria-label="Clear filter">×</button>
-        </div>
-
-        <div class="chips" id="discoverLegend" style="margin:0;">
-          <span class="chip chip--ok">New</span>
-          <span class="chip">Already added</span>
-          <span class="chip chip--muted">Added now</span>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <!-- Devices -->
+      <div class="discover-devices">
+        <div class="discover-devices__head">
           <b>Devices</b>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <label class="toggle" title="Show only devices that are not already added">
+          <span class="hint" id="discoverCountHint">0 shown</span>
+        </div>
+
+        <div class="discover-devices__controls">
+          <div class="discover-searchbox">
+            <div class="input-with-clear" style="flex:1;">
+              <input id="discoverFilter" class="input" placeholder="Filter devices…">
+              <button class="btn-clear is-hidden" type="button" data-clear-for="discoverFilter" aria-label="Clear filter">×</button>
+            </div>
+            <label class="toggle" title="Show only devices that are not already added" style="white-space:nowrap;">
               <input type="checkbox" id="discoverOnlyNew" checked />
               <span>New devices</span>
             </label>
-            <span class="hint" id="discoverCountHint">0 shown</span>
           </div>
         </div>
-        <div class="card-body">
-          <div class="scan-list" id="discoverListEmpty">No devices yet. Hit Start.</div>
-          <div class="scan-list" id="discoverList"></div>
-        </div>
+
+        <div class="scan-list" id="discoverListEmpty">No devices</div>
+        <div class="scan-list" id="discoverList"></div>
       </div>
 
       <div class="card" id="discoverAddCard" style="display:none;">

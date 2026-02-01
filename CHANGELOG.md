@@ -6,16 +6,18 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
-## v5.43.1-beta.1 – 2026-02-01
+## v5.43.0-beta.4 – 2026-02-01
 
 ### Added
 - CLI: `interheart self-test` and `interheart self-test-output` for quick validation and log retrieval.
 
 ### Changed
-- Repository: Added standard file headers across code files.
+- WebUI Discovery: Refined scan UX (progress bar effects, spacing, clearer device list layout, safer Stop action).
+- WebUI Discovery: Scan execution tuned to be a bit faster, while keeping a conservative per-subnet timeout to avoid hangs.
 
 ### Fixed
 - WebUI Discovery: Persisted discovery state is reset on WebUI startup to avoid showing stale "Cancelled" state after restart/update.
+- WebUI Discovery: Start/Stop button state now correctly returns to “Scan now” after cancel/complete.
 
 ## v5.43.0-beta.3 – 2026-02-01
 
