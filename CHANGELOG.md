@@ -6,6 +6,11 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## v5.43.0-beta.3 – 2026-02-01
+
+### Fixed
+- WebUI Discovery: Progress (percent + bar) now advances reliably even when a scanned subnet contains no devices (progress is persisted per-CIDR, not only on "device found").
+
 ## v5.43.0-beta.1 – 2026-02-01
 
 ### Added

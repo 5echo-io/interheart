@@ -2367,6 +2367,22 @@ def _discover_worker():
             'progress': {'current': idx+1, 'total': len(cidrs), 'cidr': cidr}
         })
 
+        # Keep the persisted meta in sync with the stream events so the UI can
+        # reliably show progress even when a subnet contains no devices.
+        #
+        # Previously, meta['progress'] was only updated when a device was found
+        # (flush_current). That made the percentage appear stuck on the first
+        # active subnet in sparse networks.
+        try:
+            meta = load_discovery_meta() or {}
+            meta['progress'] = {'current': idx+1, 'total': len(cidrs), 'cidr': cidr}
+            meta['scanning'] = f"{cidr}{(' • ' + rng) if rng else ''}"
+            if not meta.get('started'):
+                meta['started'] = int(time.time())
+            save_discovery_meta(meta)
+        except Exception:
+            pass
+
         args = ['nmap','-sn','-n']
         if prefer_iface:
             # Force interface selection to avoid VPN/overlay interfaces becoming the default.
@@ -2450,6 +2466,17 @@ def _discover_worker():
         # progress status per cidr
         event_id += 1
         _append_discovery_event({'id': event_id,'type':'status','status':'running','message':f"Scanned {idx+1}/{len(cidrs)}",'progress':{'current':idx+1,'total':len(cidrs),'cidr':cidr}})
+
+        # Persist the post-scan progress too (mirrors the stream event).
+        # This ensures /api/discover-status reflects forward movement even
+        # when the scan finds no hosts in a subnet.
+        try:
+            meta = load_discovery_meta() or {}
+            meta['progress'] = {'current': idx+1, 'total': len(cidrs), 'cidr': cidr}
+            meta['last_scanned'] = cidr
+            save_discovery_meta(meta)
+        except Exception:
+            pass
 
     meta = load_discovery_meta() or {}
     msg = 'Discovery finished'
