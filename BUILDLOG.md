@@ -1,5 +1,10 @@
 # BUILDLOG
 
+## Build 5.43.0-beta.6 (2026-02-01)
+
+- WebUI Discovery UI/UX pass (pause/resume, progress animation polish, layout tweaks).
+- Backend: discovery status/pause/resume endpoints + tuned nmap safe profile.
+
 Technical build notes intended for iterative zip handoffs.
 
 ---

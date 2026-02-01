@@ -519,19 +519,11 @@ Last modified: 2026-02-01
           </div>
 
           <div class="discover-actions__right">
-            <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button" onclick="window.__ihStartDiscovery && window.__ihStartDiscovery()">Scan now</button>
+            <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button">Scan now</button>
             <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
+            <button class="btn btn-outline btn-mini" id="btnDiscoverResume" type="button" style="display:none;">Resume</button>
             <button class="btn btn-ghost btn-mini" id="btnDiscoverReset" type="button" style="display:none;">Reset</button>
-            <button class="btn btn-ghost btn-mini" id="btnDiscoverDebug" type="button" title="Run discovery diagnostics" style="display:none;">Debug</button>
-
-            <div class="discover-stopafter" title="Stop after scanning N subnets">
-              <label class="toggle">
-                <input type="checkbox" id="discoverStopAfterToggle" />
-                <span>Stop after</span>
-              </label>
-              <input class="input input--sm" id="discoverStopAfterCount" type="number" min="1" max="4096" value="10" aria-label="Stop after subnet count" />
-            </div>
-          </div>
+            <button class="btn btn-outline btn-mini" id="btnDiscoverDebug" type="button" style="display:none;">Debug</button>
         </div>
 
         <!-- Progress -->
@@ -546,17 +538,18 @@ Last modified: 2026-02-01
               <div class="kpi-value" id="discoverFound">0</div>
             </div>
             <div class="discover-progress__meta" id="discoverPercent">0%</div>
+            <div class="discover-progress__statusInline">
+              <div class="hint" id="discoverStatus">Idle</div>
+              <div class="hint" id="discoverScanning">-</div>
+            </div
           </div>
 
           <div class="progress discover-progressbar">
             <div class="progress-bar" id="discoverBar" style="width:0%"></div>
-            <div class="discover-progressbar__shimmer" aria-hidden="true"></div>
+            <div class="discover-progressbar__dots" aria-hidden="true"></div>
           </div>
 
-          <div class="discover-progress__status">
-            <div class="hint" id="discoverStatus">Idle</div>
-            <div class="hint" id="discoverScanning">-</div>
-          </div>
+          
         </div>
 
         <div class="alert alert--error" id="discoverError" style="display:none;"></div>

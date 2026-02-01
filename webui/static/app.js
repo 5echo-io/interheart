@@ -1859,7 +1859,10 @@ function attachMenuActions(){
     try{ if (discoverOnlyNew) discoverOnlyNew.checked = true; }catch(_){ }
     if (btnDiscoverAgain) btnDiscoverAgain.style.display = 'none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display = 'none';
+    if (btnDiscoverResume) btnDiscoverResume.style.display = "none";
+  if (btnDiscoverResume) btnDiscoverResume.style.display = 'none';
     if (btnDiscoverStart) btnDiscoverStart.style.display = 'inline-flex';
+  if (btnDiscoverReset) btnDiscoverReset.style.display = 'none';
     renderDiscoverList();
   }
 
@@ -1951,7 +1954,42 @@ function attachMenuActions(){
   // This avoids situations where a browser/extension interferes with event binding.
   window.__ihStartDiscovery = startDiscovery;
 
-  async function cancelDiscovery(){
+  async function pauseDiscovery(){
+    try{
+      const r = await apiPostJson('/api/discover-pause', {});
+      if (!r || !r.ok){
+        toast('Discovery', (r && r.error) ? r.error : 'Pause failed');
+        return;
+      }
+      discoverState.status = 'paused';
+      if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+      if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
+      if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+      if (btnDiscoverReset) btnDiscoverReset.style.display='inline-flex';
+      renderDiscover();
+    }catch(e){
+      toast('Discovery', 'Pause failed');
+    }
+  }
+
+  async function resumeDiscovery(){
+    try{
+      const r = await apiPostJson('/api/discover-resume', {});
+      if (!r || !r.ok){
+        toast('Discovery', (r && r.error) ? r.error : 'Resume failed');
+        return;
+      }
+      discoverState.status = 'running';
+      if (btnDiscoverResume) btnDiscoverResume.style.display='none';
+      if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
+      if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+      renderDiscover();
+    }catch(e){
+      toast('Discovery', 'Resume failed');
+    }
+  }
+
+async function cancelDiscovery(){
     await apiPostJson('/api/discover-cancel', {});
     // Immediately stop local listeners/pollers so the UI doesn't look "stuck running".
     try{ if (discoverES){ discoverES.close(); discoverES = null; } }catch(_){ }
@@ -1993,9 +2031,13 @@ function attachMenuActions(){
   btnDiscoverAgain?.addEventListener('click', startDiscovery);
   btnDiscoverCancel?.addEventListener('click', () => {
     // Simple safety net: it is easy to misclick Stop when scanning.
-    const ok = window.confirm('Stop the scan?');
+    const ok = window.confirm('Stop the scan? You can resume later.');
     if (!ok) return;
-    cancelDiscovery();
+    pauseDiscovery();
+  });
+
+  btnDiscoverResume?.addEventListener('click', () => {
+    resumeDiscovery();
   });
 
   btnDiscoverReset?.addEventListener('click', async () => {

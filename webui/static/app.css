@@ -145,6 +145,7 @@ th{color:var(--muted);font-weight:850;text-align:left}
 .status-flex .snapshots{ margin-left:auto; display:flex; justify-content:flex-end; gap:6px; }
 .chip--ok{ border-color: rgba(53,211,159,.28); background: rgba(53,211,159,.10); color: rgba(255,255,255,.85); min-width: unset; }
 .chip--muted{ border-color: rgba(156,163,175,.22); background: rgba(156,163,175,.08); color: rgba(255,255,255,.70); min-width: unset; }
+.chip--info{ border-color: rgba(59,130,246,.30); background: rgba(59,130,246,.10); color: rgba(255,255,255,.85); min-width: unset; }
 
 .toggle{ display:inline-flex; align-items:center; gap:8px; font-size:12px; color: rgba(255,255,255,.72); user-select:none; }
 .toggle input{

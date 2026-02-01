@@ -2359,11 +2359,11 @@ def _discover_build_cidrs(opts: dict) -> list[str]:
 def _nmap_args_for_profile(profile: str) -> list[str]:
     p = (profile or 'safe').lower()
     if p == 'fast':
-        return ['-T4','--max-retries','1','--host-timeout','2s']
+        return ['-T4','--max-retries','1','--host-timeout','1s','--scan-delay','0ms','--min-parallelism','64','--max-parallelism','256']
     if p == 'normal':
-        return ['-T3','--max-retries','1','--host-timeout','2s']
+        return ['-T3','--max-retries','1','--host-timeout','2s','--scan-delay','0ms','--min-parallelism','32','--max-parallelism','192']
     # safe
-    return ['-T2','--max-retries','1','--host-timeout','3s','--scan-delay','5ms']
+    return ['-T2','--max-retries','1','--host-timeout','2s','--scan-delay','0ms','--min-parallelism','32','--max-parallelism','128']
 
 
 def _discover_worker():
@@ -2643,6 +2643,13 @@ def api_discover_start():
     except Exception:
         pass
 
+    # Clear previous progress/events so a new scan starts cleanly
+    try:
+        (STATE_DIR / 'discovery_events.jsonl').write_text('')
+    except Exception:
+        pass
+
+
     meta = load_discovery_meta() or {}
     if meta.get('status') == 'running' and pid_is_running(int(meta.get('pid') or 0)):
         return jsonify({'ok': False, 'message':'Discovery already running'})
@@ -2652,8 +2659,8 @@ def api_discover_start():
         'custom': data.get('custom') or '',
         'iface': data.get('iface') or 'auto',
         'profile': data.get('profile') or 'safe',
-        'cap': data.get('cap') or 2048,
-            'stop_after': int(data.get('stop_after') or 0),
+        'cap': int(data.get('cap') or 256),
+        'stop_after': int(data.get('stop_after') or 0),
     }
 
     try:
@@ -2693,56 +2700,32 @@ def api_discover_start():
 
 @APP.get('/api/discover-status')
 def api_discover_status():
-    meta = load_discovery_meta() or {}
+    meta = load_discovery_meta()
+    status = meta.get('status', 'idle')
     pid = int(meta.get('pid') or 0)
-    st = (meta.get('status') or 'idle').strip().lower()
+    pid_alive = _pid_running(pid)
 
-    # Handle crashed worker
-    if st == 'running' and pid and not pid_is_running(pid):
-        meta['status'] = 'error'
-        meta['rc'] = int(meta.get('rc') or 1)
-        meta['finished'] = int(meta.get('finished') or int(time.time()))
-        meta['error'] = meta.get('error') or 'Worker stopped unexpectedly'
-        # avoid showing "running" forever on next UI open
-        meta['pid'] = 0
-        meta['pgid'] = 0
+    # Normalize statuses when the worker is no longer present.
+    if status in ('running', 'cancelling', 'paused') and not pid_alive:
+        if status == 'cancelling':
+            status = 'cancelled'
+        else:
+            status = 'done'
+        meta['status'] = status
         save_discovery_meta(meta)
 
-    # Handle cancelled worker that is already stopped (common after SIGTERM/SIGKILL)
-    if st == 'cancelling':
-        if pid and pid_is_running(pid):
-            pass
-        else:
-            meta['status'] = 'idle'
-            meta['finished'] = int(meta.get('finished') or int(time.time()))
-            # keep the original error if it exists, otherwise mark as cancelled
-            if not meta.get('error'):
-                meta['error'] = 'Cancelled'
-            meta['pid'] = 0
-            meta['pgid'] = 0
-            try:
-                (STATE_DIR / 'discovery_cancel').unlink(missing_ok=True)
-            except Exception:
-                pass
-            save_discovery_meta(meta)
-    # The WebUI polls this endpoint as a fallback when SSE is blocked.
-    # Return both the raw meta and flattened fields (cidrs count, found count, etc.)
-    # so the frontend can render progress without special-casing.
-    cidrs = meta.get('cidrs') or []
-    found = meta.get('found') or []
-    prog = meta.get('progress') or {}
-    out = {
-        'ok': True,
-        'meta': meta,
-        'status': meta.get('status') or 'idle',
-        'message': meta.get('error') or meta.get('status') or 'idle',
-        'cidrs': len(cidrs),
-        'found': len(found),
-        'progress': prog if isinstance(prog, dict) else {},
-        'scanning': (prog.get('cidr') if isinstance(prog, dict) else '') or '',
-    }
-    return jsonify(out)
-
+    return jsonify({
+        'status': status,
+        'worker_running': pid_alive,
+        'percent': float(meta.get('percent') or 0.0),
+        'current': meta.get('current') or '',
+        'targets_total': int(meta.get('targets_total') or 0),
+        'targets_done': int(meta.get('targets_done') or 0),
+        'subnets_total': int(meta.get('subnets_total') or 0),
+        'found': meta.get('found') or [],
+        'events_tail': load_discovery_events_tail(limit=50),
+        'started': int(meta.get('started') or 0),
+    })
 
 @APP.post('/api/discover-debug')
 def api_discover_debug():
@@ -2909,6 +2892,53 @@ def api_discover_cancel():
 
     return jsonify({'ok': True, 'message':'Cancelling'})
 
+
+@APP.post('/api/discover-pause')
+def api_discover_pause():
+    """Pause the discovery worker without losing progress (SIGSTOP)."""
+    meta = load_discovery_meta()
+    pid = int(meta.get('pid') or 0)
+    if pid <= 0:
+        return jsonify({'ok': False, 'error': 'No worker running'}), 409
+
+    if meta.get('status') == 'paused':
+        return jsonify({'ok': True, 'status': 'paused'})
+
+    try:
+        os.killpg(pid, signal.SIGSTOP)
+    except ProcessLookupError:
+        reset_discovery_state()
+        return jsonify({'ok': False, 'error': 'Worker not found'}), 409
+
+    meta['status'] = 'paused'
+    meta['paused_at'] = int(time.time())
+    save_discovery_meta(meta)
+    append_discovery_event({'type': 'status', 'status': 'paused', 'message': 'Discovery paused'})
+    return jsonify({'ok': True, 'status': 'paused'})
+
+
+@APP.post('/api/discover-resume')
+def api_discover_resume():
+    """Resume a paused discovery worker (SIGCONT)."""
+    meta = load_discovery_meta()
+    pid = int(meta.get('pid') or 0)
+    if pid <= 0:
+        return jsonify({'ok': False, 'error': 'No worker running'}), 409
+
+    if meta.get('status') != 'paused':
+        return jsonify({'ok': False, 'error': 'Not paused'}), 409
+
+    try:
+        os.killpg(pid, signal.SIGCONT)
+    except ProcessLookupError:
+        reset_discovery_state()
+        return jsonify({'ok': False, 'error': 'Worker not found'}), 409
+
+    meta['status'] = 'running'
+    meta.pop('paused_at', None)
+    save_discovery_meta(meta)
+    append_discovery_event({'type': 'status', 'status': 'running', 'message': 'Discovery resumed'})
+    return jsonify({'ok': True, 'status': 'running'})
 
 @APP.get('/api/netifs')
 def api_netifs():

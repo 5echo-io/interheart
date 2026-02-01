@@ -6,7 +6,20 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
-## v5.43.0-beta.4 – 2026-02-01
+## v5.43.0-beta.6 – 2026-02-01
+
+### Added
+- WebUI Discovery: Pause/Resume flow (Stop pauses the scan; Resume continues without restarting).
+
+### Changed
+- WebUI Discovery: Progress bar animation updated (dotted shimmer on unfilled area + gentle green pulse on fill) and progress UI is hidden until a scan starts.
+- WebUI Discovery: Layout tweaks for clearer hierarchy (KPIs left, controls right, spacing adjustments).
+- Discovery: "safe" nmap profile tuned for slightly faster scans (lower host timeout, no scan delay, conservative parallelism).
+
+### Fixed
+- WebUI Discovery: Button states and device list behavior improved when pausing/resuming and when starting a new scan (clears previous run events).
+
+## v5.43.0-beta.5 – 2026-02-01
 
 ### Added
 - CLI: `interheart self-test` and `interheart self-test-output` for quick validation and log retrieval.
