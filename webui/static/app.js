@@ -28,6 +28,52 @@
   function show(el){ el.classList.add("show"); el.setAttribute("aria-hidden","false"); }
   function hide(el){ el.classList.remove("show"); el.setAttribute("aria-hidden","true"); }
 
+  // ---- Client debug reporting ----
+  let _clientLogLast = 0;
+  function reportClientLog(level, message, context){
+    try{
+      const now = Date.now();
+      // basic throttle to avoid loops when the backend is down
+      if (now - _clientLogLast < 600) return;
+      _clientLogLast = now;
+      const payload = {
+        level: String(level || 'INFO').toUpperCase(),
+        message: String(message || ''),
+        context: context || {},
+        path: location.pathname,
+        href: location.href,
+        ua: navigator.userAgent,
+        ts: new Date().toISOString(),
+      };
+      if (navigator.sendBeacon){
+        const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
+        navigator.sendBeacon('/api/client-log', blob);
+        return;
+      }
+      fetch('/api/client-log', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+    }catch(e){
+      // ignore
+    }
+  }
+
+  window.addEventListener('error', (ev) => {
+    reportClientLog('ERROR', 'window.error', {
+      message: ev?.message,
+      source: ev?.filename,
+      lineno: ev?.lineno,
+      colno: ev?.colno,
+    });
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    reportClientLog('ERROR', 'window.unhandledrejection', {
+      reason: String(ev?.reason?.message || ev?.reason || ''),
+    });
+  });
+
   // ---- API helpers ----
   async function apiPost(url, fd){
     const res = await fetch(url, {method:"POST", body: fd});
@@ -68,26 +114,34 @@
       const txt = await res.text();
       return { ok: res.ok, message: txt ? String(txt).slice(0,240) : (res.statusText || 'Error') };
     }catch(e){
+      reportClientLog('ERROR', 'apiPostJson exception', { url, error: String(e?.message || e) });
       return { ok:false, message: e?.message || 'Failed to fetch' };
     }
   }
   async function apiGet(url){
-    const res = await fetch(url, {cache:"no-store"});
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (ct.includes("application/json")){
-      const data = await res.json();
-      if (!res.ok){
-        // Bubble up a readable error (this avoids "Failed to fetch" with no context)
-        throw new Error(data?.message || res.statusText || "Request failed");
+    try{
+      const res = await fetch(url, {cache:"no-store"});
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      if (ct.includes("application/json")){
+        const data = await res.json();
+        if (!res.ok){
+          reportClientLog('WARN', 'apiGet non-ok response', { url, status: res.status, body: data });
+          // Bubble up a readable error (this avoids "Failed to fetch" with no context)
+          throw new Error(data?.message || res.statusText || "Request failed");
+        }
+        return data;
       }
-      return data;
+      const txt = await res.text();
+      if (!res.ok){
+        reportClientLog('WARN', 'apiGet non-ok text response', { url, status: res.status, text: String(txt).slice(0,240) });
+        throw new Error(res.statusText || "Request failed");
+      }
+      // Non-JSON but OK (rare) -> return wrapper
+      return { ok: true, text: txt };
+    }catch(e){
+      reportClientLog('ERROR', 'apiGet exception', { url, error: String(e?.message || e) });
+      throw e;
     }
-    const txt = await res.text();
-    if (!res.ok){
-      throw new Error(res.statusText || "Request failed");
-    }
-    // Non-JSON but OK (rare) -> return wrapper
-    return { ok: true, text: txt };
   }
 
   // ---- Logs modal ----
@@ -1863,7 +1917,13 @@ function attachMenuActions(){
 
   async function cancelDiscovery(){
     await apiPostJson('/api/discover-cancel', {});
+    // Immediately stop local listeners/pollers so the UI doesn't look "stuck running".
+    try{ if (discoverES){ discoverES.close(); discoverES = null; } }catch(_){ }
+    try{ if (typeof discoverFallbackPoll !== 'undefined' && discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; } }catch(_){ }
+    try{ discoverGotSSE = false; }catch(_){ }
     if (discoverStatus) discoverStatus.textContent = 'Cancelling…';
+    // Fetch a fresh state shortly after (backend may transition to idle quickly if the worker is already gone)
+    setTimeout(() => { try{ pollDiscoveryFallback(); }catch(_){ } }, 400);
   }
 
   async function runDiscoveryDebug(){

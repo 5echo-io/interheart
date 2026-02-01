@@ -93,35 +93,84 @@ ensure_state_dir()
 # Ensure Flask logger is usable under systemd (stdout/stderr -> journal)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-def _debug_log(msg: str, force: bool = False):
-    """Write a debug line to journal + a persistent file.
+# -----------------------------------------------------------------------------
+# Debug logging (WebUI)
+# - Writes to journald as usual
+# - ALSO writes to /var/lib/interheart/debug/webui-YYYY-MM-DD.log (UTC)
+# - Retention is handled by the installer + runner rotate logic
+# -----------------------------------------------------------------------------
 
-    We only log when something looks off, or when explicitly forced (e.g. via /api/debug-state).
-    This avoids spamming the journal every 2 seconds (the UI polls /state).
-    """
-    global _LAST_DEBUG_TS
-    if not WEBUI_DEBUG_ENABLED:
-        return
-    now = int(time.time())
-    # throttle to max 1 line / 3 seconds unless forced
-    if not force and (now - _LAST_DEBUG_TS) < 3:
-        return
-    _LAST_DEBUG_TS = now
+DEBUG_DIR = STATE_DIR / "debug"
 
-    line = f"[webui] {msg}"
+def _utc_day_str() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d")
+
+def _ensure_debug_dir():
     try:
-        APP.logger.info(line)
-    except Exception:
-        try:
-            print(line, flush=True)
-        except Exception:
-            pass
-    try:
-        ensure_state_dir()
-        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
-        WEBUI_DEBUG_FILE.open("a", encoding="utf-8").write(f"{ts} {line}\n")
+        DEBUG_DIR.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
+
+def _webui_log_path() -> Path:
+    _ensure_debug_dir()
+    return DEBUG_DIR / f"webui-{_utc_day_str()}.log"
+
+def _client_log_path() -> Path:
+    _ensure_debug_dir()
+    return DEBUG_DIR / f"client-{_utc_day_str()}.log"
+
+def _append_debug_line(path: Path, line: str):
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(line.rstrip("\n") + "\n")
+    except Exception:
+        pass
+
+
+def _cleanup_debug_dir(days: int = 7):
+    """Remove debug log files older than N days (best effort)."""
+    try:
+        _ensure_debug_dir()
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        for p in DEBUG_DIR.glob("*.log"):
+            try:
+                if datetime.utcfromtimestamp(p.stat().st_mtime) < cutoff:
+                    p.unlink(missing_ok=True)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+@APP.before_request
+def _debug_req_start():
+    try:
+        # Periodic debug cleanup (hourly)
+        global _LAST_DEBUG_CLEANUP
+        now = time.time()
+        if '_LAST_DEBUG_CLEANUP' not in globals():
+            _LAST_DEBUG_CLEANUP = 0
+        if now - _LAST_DEBUG_CLEANUP > 3600:
+            _cleanup_debug_dir(days=7)
+            _LAST_DEBUG_CLEANUP = now
+        g._t0 = time.time()
+    except Exception:
+        pass
+
+@APP.after_request
+def _debug_req_end(resp):
+    try:
+        t0 = getattr(g, "_t0", None)
+        ms = int((time.time() - t0) * 1000) if t0 else -1
+        if request and request.path and request.path.startswith("/api/"):
+            enabled = os.environ.get("INTERHEART_WEBUI_DEBUG", "0").lower() in ("1", "true", "yes")
+            if enabled or resp.status_code >= 400 or (ms >= 1000 and ms != -1):
+                lvl = "WARN" if (resp.status_code >= 400 or (ms >= 1000 and ms != -1)) else "INFO"
+                line = f"[{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z] {lvl} api {resp.status_code} {request.method} {request.path} ms={ms}"
+                _append_debug_line(_webui_log_path(), line)
+    except Exception:
+        pass
+    return resp
 
 def die_json(msg: str, code: int = 500):
     return jsonify({"ok": False, "message": msg}), code
@@ -132,6 +181,11 @@ def _handle_all_errors(err):
     """Return JSON for API routes so the frontend doesn't explode on HTML errors."""
     try:
         if request and request.path and request.path.startswith("/api/"):
+            try:
+                line = f"[{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z] ERROR api {request.method} {request.path} {type(err).__name__}: {str(err)}"
+                _append_debug_line(_webui_log_path(), line)
+            except Exception:
+                pass
             code = getattr(err, "code", 500)
             return jsonify({"ok": False, "message": str(err)}), code
     except Exception:
@@ -907,6 +961,36 @@ def api_debug_state():
         force=True,
     )
     return jsonify({"ok": True, "diag": diag, "targets": targets})
+
+
+@APP.post("/api/client-log")
+def api_client_log():
+    """Receive frontend errors/events and persist them for troubleshooting.
+
+    The WebUI can report:
+      - unhandled JS errors / promise rejections
+      - failed API calls
+      - user actions (optional)
+    """
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        payload = {}
+
+    level = str(payload.get("level") or "INFO").upper()
+    message = str(payload.get("message") or "").strip()
+    context = payload.get("context") or {}
+
+    # Keep it small to avoid log spam
+    message = message[:600]
+    try:
+        ctx_str = json.dumps(context, ensure_ascii=False)[:1200]
+    except Exception:
+        ctx_str = "{}"
+
+    line = f"[{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z] {level} {message} ctx={ctx_str}"
+    _append_debug_line(_client_log_path(), line)
+    return jsonify({"ok": True})
 
 @APP.get("/logs")
 def logs():
@@ -2438,13 +2522,36 @@ def api_discover_start():
 def api_discover_status():
     meta = load_discovery_meta() or {}
     pid = int(meta.get('pid') or 0)
-    if meta.get('status') == 'running' and pid and not pid_is_running(pid):
-        # if process died, mark as error
+    st = (meta.get('status') or 'idle').strip().lower()
+
+    # Handle crashed worker
+    if st == 'running' and pid and not pid_is_running(pid):
         meta['status'] = 'error'
         meta['rc'] = int(meta.get('rc') or 1)
         meta['finished'] = int(meta.get('finished') or int(time.time()))
         meta['error'] = meta.get('error') or 'Worker stopped unexpectedly'
+        # avoid showing "running" forever on next UI open
+        meta['pid'] = 0
+        meta['pgid'] = 0
         save_discovery_meta(meta)
+
+    # Handle cancelled worker that is already stopped (common after SIGTERM/SIGKILL)
+    if st == 'cancelling':
+        if pid and pid_is_running(pid):
+            pass
+        else:
+            meta['status'] = 'idle'
+            meta['finished'] = int(meta.get('finished') or int(time.time()))
+            # keep the original error if it exists, otherwise mark as cancelled
+            if not meta.get('error'):
+                meta['error'] = 'Cancelled'
+            meta['pid'] = 0
+            meta['pgid'] = 0
+            try:
+                (STATE_DIR / 'discovery_cancel').unlink(missing_ok=True)
+            except Exception:
+                pass
+            save_discovery_meta(meta)
     # The WebUI polls this endpoint as a fallback when SSE is blocked.
     # Return both the raw meta and flattened fields (cidrs count, found count, etc.)
     # so the frontend can render progress without special-casing.
@@ -2576,6 +2683,26 @@ def api_discover_cancel():
     # Mark cancel flag for the worker loop
     try:
         (STATE_DIR / 'discovery_cancel').write_text('1', encoding='utf-8')
+    except Exception:
+        pass
+
+    # If the worker is already gone, do not leave the UI stuck in "cancelling".
+    try:
+        meta = load_discovery_meta() or {}
+        pid = int(meta.get('pid') or 0)
+        if not pid or not pid_is_running(pid):
+            meta['status'] = 'idle'
+            meta['finished'] = int(meta.get('finished') or int(time.time()))
+            if not meta.get('error'):
+                meta['error'] = 'Cancelled'
+            meta['pid'] = 0
+            meta['pgid'] = 0
+            try:
+                (STATE_DIR / 'discovery_cancel').unlink(missing_ok=True)
+            except Exception:
+                pass
+            save_discovery_meta(meta)
+            return jsonify({'ok': True, 'message': 'Discovery cancelled'})
     except Exception:
         pass
 

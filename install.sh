@@ -23,6 +23,21 @@ sudo install -m 0755 "${REPO_DIR}/interheart.sh" /usr/local/bin/interheart
 # 3) Init DB (creates /var/lib/interheart/state.db)
 sudo /usr/local/bin/interheart init-db || true
 
+# 3b) Debug log directory (7-day retention handled by the app; this is just setup + cleanup)
+sudo mkdir -p "${STATE_DIR}/debug"
+sudo chmod 755 "${STATE_DIR}/debug"
+
+# Keep disk usage bounded across upgrades: delete debug logs older than 7 days.
+# Also truncate today's logs on install/update so new versions start with a clean slate.
+if command -v find >/dev/null 2>&1; then
+  sudo find "${STATE_DIR}/debug" -maxdepth 1 -type f -name '*.log' -mtime +7 -delete 2>/dev/null || true
+fi
+today_utc="$(date -u '+%Y-%m-%d' 2>/dev/null || date '+%Y-%m-%d')"
+sudo truncate -s 0 "${STATE_DIR}/debug/runner-${today_utc}.log" 2>/dev/null || true
+sudo truncate -s 0 "${STATE_DIR}/debug/webui-${today_utc}.log" 2>/dev/null || true
+sudo truncate -s 0 "${STATE_DIR}/debug/client-${today_utc}.log" 2>/dev/null || true
+sudo bash -lc "echo '[install] version=$(cat ${REPO_DIR}/VERSION 2>/dev/null || echo -) time=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date)' >> '${STATE_DIR}/debug/runner-${today_utc}.log'" 2>/dev/null || true
+
 # 4) WebUI venv + deps
 if [ -d "${INSTALL_DIR}/webui" ]; then
   echo "[interheart] Setting up webui venv"

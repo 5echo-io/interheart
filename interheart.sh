@@ -10,34 +10,91 @@ DB="${STATE_DIR}/state.db"
 LOG_TAG="interheart"
 
 
-# Lightweight debug system
-# - Always writes a small snapshot to: /var/lib/interheart/debug_state.txt
-# - If INTERHEART_DEBUG=1, also appends verbose logs to: /var/lib/interheart/debug.log
-DEBUG_STATE_FILE="${STATE_DIR}/debug_state.txt"
-DEBUG_LOG_FILE="${STATE_DIR}/debug.log"
-DEBUG_MAX_BYTES=$((256*1024))
+#############################################
+# Debug system (backend)
+#
+# Goals:
+# - Always keep a small snapshot for quick copy/paste:   /var/lib/interheart/debug_state.txt
+# - Keep structured, timestamped debug logs for 7 days:  /var/lib/interheart/debug/*.log
+# - Never grow without bounds (auto-rotates daily + retention)
+# - Survives reboots (logs are files on disk)
+# - Can be made noisier via: INTERHEART_DEBUG=1
+#############################################
 
-_debug_ts() { date -u "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date; }
+DEBUG_STATE_FILE="${STATE_DIR}/debug_state.txt"
+DEBUG_DIR="${STATE_DIR}/debug"
+
+DEBUG_RETENTION_DAYS=7
+DEBUG_MAX_LINES_PER_FILE=20000
+
+_debug_day() { date -u "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d"; }
+_debug_ts() { date -u "+%Y-%m-%dT%H:%M:%S.%3NZ" 2>/dev/null || date -u "+%Y-%m-%dT%H:%M:%SZ"; }
 _debug_enabled() { [[ "${INTERHEART_DEBUG:-0}" == "1" || "${INTERHEART_DEBUG:-0}" == "true" ]]; }
 
-_debug_log() {
-  # Usage: _debug_log LEVEL message...
-  local lvl="${1:-INFO}"; shift || true
-  local msg="$*"
-  local line="[$(_debug_ts)] ${lvl} ${msg}"
-  if _debug_enabled; then
-    echo "${line}"
-    if [[ -f "${DEBUG_LOG_FILE}" ]]; then
-      local sz
-      sz=$(wc -c <"${DEBUG_LOG_FILE}" 2>/dev/null || echo 0)
-      if [[ "${sz}" =~ ^[0-9]+$ ]] && (( sz > DEBUG_MAX_BYTES )); then
-        tail -c $((DEBUG_MAX_BYTES/2)) "${DEBUG_LOG_FILE}" > "${DEBUG_LOG_FILE}.tmp" 2>/dev/null || true
-        mv -f "${DEBUG_LOG_FILE}.tmp" "${DEBUG_LOG_FILE}" 2>/dev/null || true
+_debug_log_file() {
+  mkdir -p "${DEBUG_DIR}" >/dev/null 2>&1 || true
+  echo "${DEBUG_DIR}/runner-$(_debug_day).log"
+}
+
+_debug_rotate() {
+  mkdir -p "${DEBUG_DIR}" >/dev/null 2>&1 || true
+  # Keep only the newest N days (by filename date). Best-effort, no strict TZ assumptions.
+  local keep_days="$DEBUG_RETENTION_DAYS"
+  local files
+  files=$(ls -1 "${DEBUG_DIR}"/*.log 2>/dev/null | sort || true)
+  [[ -n "${files}" ]] || return 0
+
+  # Remove anything older than keep_days using the date in the filename when possible.
+  # Format: <component>-YYYY-MM-DD.log
+  local cutoff
+  cutoff=$(date -u -d "${keep_days} days ago" "+%Y-%m-%d" 2>/dev/null || true)
+  if [[ -n "${cutoff}" ]]; then
+    while IFS= read -r f; do
+      local base day
+      base="$(basename "${f}")"
+      day="${base##*-}"
+      day="${day%.log}"
+      if [[ "${day}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [[ "${day}" < "${cutoff}" ]]; then
+        rm -f "${f}" 2>/dev/null || true
       fi
+    done <<<"${files}"
+  fi
+
+  # Also keep files from exploding in size (line-based cap).
+  local cur
+  cur="$(_debug_log_file)"
+  if [[ -f "${cur}" ]]; then
+    local lines
+    lines=$(wc -l <"${cur}" 2>/dev/null || echo 0)
+    if [[ "${lines}" =~ ^[0-9]+$ ]] && (( lines > DEBUG_MAX_LINES_PER_FILE )); then
+      tail -n $((DEBUG_MAX_LINES_PER_FILE/2)) "${cur}" > "${cur}.tmp" 2>/dev/null || true
+      mv -f "${cur}.tmp" "${cur}" 2>/dev/null || true
     fi
-    echo "${line}" >>"${DEBUG_LOG_FILE}" 2>/dev/null || true
   fi
 }
+
+_debug_event() {
+  # Usage: _debug_event LEVEL COMPONENT message...
+  local lvl="${1:-INFO}"; shift || true
+  local comp="${1:-runner}"; shift || true
+  local msg="$*"
+  local line="[$(_debug_ts)] ${lvl} ${comp} ${msg}"
+
+  _debug_rotate || true
+
+  # Always write to file (low overhead), print to stdout only when debug enabled.
+  local f
+  f="$(_debug_log_file)"
+  echo "${line}" >>"${f}" 2>/dev/null || true
+  if _debug_enabled; then
+    echo "${line}"
+  fi
+}
+
+### NOTE:
+# Older versions had a single debug.log with size-based truncation.
+# That approach made it hard to understand *what happened when*.
+# We now keep daily logs with a 7-day retention window.
 
 _write_debug_state() {
   # Always update snapshot so we can fetch it from terminal.
@@ -78,12 +135,30 @@ _write_debug_state() {
     echo "service_interheart.service=${svc_runner}"
     echo "service_interheart-webui.service=${svc_web}"
     echo "service_interheart.timer=${svc_timer}"
+    echo "debug_dir=${DEBUG_DIR}"
     echo
     echo "down_targets_top8"
     sqlite3 -noheader -batch "${DB}" "SELECT t.name||'|'||t.ip||'|'||t.endpoint FROM targets t JOIN runtime r ON r.name=t.name WHERE r.status='down' ORDER BY t.name COLLATE NOCASE LIMIT 8;" 2>/dev/null | while IFS='|' read -r n ip ep; do
       [[ -n "${n:-}" ]] || continue
       echo "${n}|${ip}|$(mask_endpoint "${ep}")"
     done
+
+    echo
+    echo "tail_runner_30"
+    tail -n 30 "$(_debug_log_file)" 2>/dev/null || true
+
+    # WebUI + Client logs (best effort; written by the Python WebUI)
+    day="$(_debug_day)"
+    webui_log="${DEBUG_DIR}/webui-${day}.log"
+    client_log="${DEBUG_DIR}/client-${day}.log"
+
+    echo
+    echo "tail_webui_30"
+    tail -n 30 "${webui_log}" 2>/dev/null || true
+
+    echo
+    echo "tail_client_30"
+    tail -n 30 "${client_log}" 2>/dev/null || true
   } >"${DEBUG_STATE_FILE}" 2>/dev/null || true
 }
 
@@ -574,6 +649,8 @@ cmd_run_now() {
   local start_epoch
   start_epoch="$(now_epoch)"
 
+  _debug_event INFO runner "run-now start force=${force} targets='${targets_csv:-all}'"
+
   local total=0 due=0 skipped=0 ping_ok=0 ping_fail=0 sent=0 curl_fail=0 disabled=0
 
   local now
@@ -659,6 +736,8 @@ cmd_run_now() {
           sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
                     VALUES(${now},'${name//\'/\'\'}','up',${rtt_ms},${http_code:-0});" >/dev/null 2>&1 || true
           echo "run: ${name} ping_ok=1 curl_http=${http_code} rtt_ms=${rtt_ms}"
+          _debug_event INFO check "${name} up ping_ok=1 curl_http=${http_code} rtt_ms=${rtt_ms}"
+          _debug_event INFO runner "target '${name}' up ip=${ip} rtt_ms=${rtt_ms} http=${http_code}"
         else
           curl_fail=$((curl_fail+1))
           # status down (endpoint)
@@ -667,6 +746,8 @@ cmd_run_now() {
           sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
                     VALUES(${now},'${name//\'/\'\'}','down',${rtt_ms},${http_code:-0});" >/dev/null 2>&1 || true
           echo "run: ${name} ping_ok=1 curl_fail=1 curl_http=${http_code} rtt_ms=${rtt_ms}"
+          _debug_event WARN check "${name} down ping_ok=1 curl_fail=1 curl_http=${http_code} rtt_ms=${rtt_ms}"
+          _debug_event WARN runner "target '${name}' down(endpoint) ip=${ip} rtt_ms=${rtt_ms} http=${http_code}"
         fi
       else
         ping_fail=$((ping_fail+1))
@@ -676,6 +757,8 @@ cmd_run_now() {
         sql_exec "INSERT INTO history(ts,name,status,rtt_ms,curl_http)
                   VALUES(${now},'${name//\'/\'\'}','down',-1,0);" >/dev/null 2>&1 || true
         echo "run: ${name} ping_ok=0"
+        _debug_event WARN check "${name} down ping_ok=0"
+        _debug_event WARN runner "target '${name}' down(ping) ip=${ip}"
       fi
     done < <(sqlite3 -noheader -batch "${DB}" "${list_sql}")
 
@@ -688,6 +771,7 @@ cmd_run_now() {
 
   # Print summary line (WebUI parses this)
   echo "total=${total} due=${due} skipped=${skipped} ping_ok=${ping_ok} ping_fail=${ping_fail} sent=${sent} curl_fail=${curl_fail} disabled=${disabled} force=${force} duration_ms=${dur_ms}"
+  _debug_event INFO runner "run-now done total=${total} due=${due} skipped=${skipped} up=${ping_ok} down=${ping_fail} sent=${sent} curl_fail=${curl_fail} duration_ms=${dur_ms}"
   _write_debug_state
 }
 
@@ -738,6 +822,15 @@ PYS
   fi
 
   if [[ "$follow" -eq 1 ]]; then
+    echo
+    echo "--- tail -n 120 ${DEBUG_DIR}/runner-$(_debug_day).log ---"
+    tail -n 120 "${DEBUG_DIR}/runner-$(_debug_day).log" 2>/dev/null || true
+    echo
+    echo "--- tail -n 120 ${DEBUG_DIR}/webui-$(_debug_day).log ---"
+    tail -n 120 "${DEBUG_DIR}/webui-$(_debug_day).log" 2>/dev/null || true
+    echo
+    echo "--- tail -n 120 ${DEBUG_DIR}/client-$(_debug_day).log ---"
+    tail -n 120 "${DEBUG_DIR}/client-$(_debug_day).log" 2>/dev/null || true
     echo
     echo "--- journalctl -u interheart.service -n 80 ---"
     journalctl -u interheart.service -n 80 --no-pager -l 2>/dev/null || true
