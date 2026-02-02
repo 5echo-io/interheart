@@ -1587,7 +1587,6 @@ function attachMenuActions(){
   const restartModal = $("#restartModal");
   const btnRestartConfirm = $("#btnRestartConfirm");
   const btnRestartCancel = $("#btnRestartCancel");
-  const btnRestartCancel2 = $("#btnRestartCancel2");
 
   const discoverAddCard = $("#discoverAddCard");
   const discoverAddForm = $("#discoverAddForm");
@@ -1610,6 +1609,9 @@ function attachMenuActions(){
   let discoverUiDirty = false;
   let discoverLocalRunning = false;
   let discoverLocalPaused = false;
+  let discoverPauseRetries = 0;
+  let discoverPauseRetryTimer = null;
+  let discoverResultsLastTs = 0;
 
   // Lightweight debug logger for Discovery.
   // Keeps last ~200 entries and renders them into the debug box.
@@ -1884,6 +1886,8 @@ function attachMenuActions(){
     discoverSelected = null;
     discoverLocalRunning = false;
     discoverLocalPaused = false;
+    discoverPauseRetries = 0;
+    if (discoverPauseRetryTimer){ clearTimeout(discoverPauseRetryTimer); discoverPauseRetryTimer = null; }
     if (discoverAddCard) discoverAddCard.style.display = 'none';
     if (discoverError){ discoverError.style.display='none'; discoverError.textContent=''; }
     if (discoverBar) discoverBar.style.width = '0%';
@@ -2008,19 +2012,15 @@ function attachMenuActions(){
         const err = (r && r.error) ? String(r.error) : 'Pause failed';
         // If the worker is already gone, treat this as "stopped" and just refresh.
         if (err.toLowerCase().includes('no worker') || err.toLowerCase().includes('worker not')){
-          if (discoverLocalRunning){
-            discoverLocalRunning = false;
-            discoverLocalPaused = true;
-            if (discoverStatus) discoverStatus.textContent = 'Paused';
-            if (discoverScanning) discoverScanning.textContent = '-';
-            if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-            if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
-            if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
-            if (btnDiscoverStart) btnDiscoverStart.style.display='none';
-            setDiscoverRunning(false);
-          } else {
-            await pollDiscoveryFallback();
+          if (discoverLocalRunning && discoverPauseRetries < 3){
+            discoverPauseRetries += 1;
+            if (discoverStatus) discoverStatus.textContent = 'Pausing…';
+            if (discoverPauseRetryTimer) clearTimeout(discoverPauseRetryTimer);
+            discoverPauseRetryTimer = setTimeout(() => pauseDiscovery(), 900);
+            return;
           }
+          discoverPauseRetries = 0;
+          await pollDiscoveryFallback();
           return;
         }
         toast('Discovery', err);
@@ -2029,6 +2029,7 @@ function attachMenuActions(){
       discoverState.status = 'paused';
       discoverLocalRunning = false;
       discoverLocalPaused = true;
+      discoverPauseRetries = 0;
       if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
       if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
       if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
@@ -2047,7 +2048,12 @@ function attachMenuActions(){
     try{
       const r = await apiPostJson('/api/discover-resume', {});
       if (!r || !r.ok){
-        toast('Discovery', (r && r.error) ? r.error : 'Resume failed');
+        const err = (r && r.error) ? String(r.error) : 'Resume failed';
+        if (err.toLowerCase().includes('no worker')){
+          await startDiscovery();
+          return;
+        }
+        toast('Discovery', err);
         return;
       }
       discoverState.status = 'running';
@@ -2134,7 +2140,6 @@ async function cancelDiscovery(){
   });
   btnRestartConfirm?.addEventListener('click', restartDiscovery);
   btnRestartCancel?.addEventListener('click', closeRestartModal);
-  btnRestartCancel2?.addEventListener('click', closeRestartModal);
   restartModal?.addEventListener('click', (e) => { if (e.target === restartModal) closeRestartModal(); });
   btnDiscoverDebug?.addEventListener('click', runDiscoveryDebug);
   btnDiscoverDebugClose?.addEventListener('click', closeDiscoverDebug);
@@ -2194,6 +2199,32 @@ async function cancelDiscovery(){
         discoverBar.style.width = `${pctClamped}%`;
         if (discoverProgressBar) discoverProgressBar.style.setProperty('--ih-pct', `${pctClamped}%`);
         if (discoverPercent) discoverPercent.textContent = `${pctStr}%`;
+      }
+
+      // Pull discovered devices when SSE is blocked or slow.
+      if (!discoverGotSSE && (st.status === 'running' || st.status === 'starting' || st.status === 'paused')){
+        const now = Date.now();
+        if (!discoverResultsLastTs || (now - discoverResultsLastTs) > 1600){
+          discoverResultsLastTs = now;
+          try{
+            const res = await apiGet('/api/discover-result');
+            if (res && Array.isArray(res.found)){
+              res.found.forEach(dev => {
+                const ip = String(dev?.ip || '').trim();
+                if (!ip) return;
+                const prev = discoverDeviceMap.get(ip) || null;
+                if (prev){
+                  discoverDeviceMap.set(ip, Object.assign({}, prev, dev));
+                } else {
+                  discoverDeviceMap.set(ip, dev);
+                }
+              });
+              discoverDevices = Array.from(discoverDeviceMap.values());
+              if (discoverFound) discoverFound.textContent = String(discoverDeviceMap.size);
+              scheduleDiscoverRender();
+            }
+          }catch(_){ }
+        }
       }
 
       // Only show Debug when something looks wrong.

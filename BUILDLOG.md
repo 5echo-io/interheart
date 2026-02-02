@@ -74,3 +74,10 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery pause: avoid false "already stopped" toast and preserve paused UI state.
   - Discovery restart: move confirmation to modal and remove pause warning.
   - Files: webui/templates/index.html, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.5 | bugfix
+  - Discovery pause: retry until worker PID appears; preserve paused state.
+  - Discovery resume: restart scan when no worker exists.
+  - Discovery results: fallback polling to populate devices when SSE is blocked.
+  - Discovery layout: move percent/status left, KPIs right; restart modal matches delete style.
+  - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION

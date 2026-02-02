@@ -533,6 +533,13 @@ Last modified: 2026-02-01
         <!-- Progress -->
         <div class="discover-progress" id="discoverProgressWrap">
           <div class="discover-progress__kpis">
+            <div class="discover-progress-left">
+              <div class="discover-progress__meta" id="discoverPercent">0%</div>
+              <div class="discover-progress__statusInline">
+                <div class="hint" id="discoverStatus">Idle</div>
+                <div class="hint" id="discoverScanning">-</div>
+              </div>
+            </div>
             <div class="discover-kpi-group">
               <div class="kpi">
                 <div class="kpi-label">Subnets</div>
@@ -541,15 +548,6 @@ Last modified: 2026-02-01
               <div class="kpi">
                 <div class="kpi-label">Found</div>
                 <div class="kpi-value" id="discoverFound">0</div>
-              </div>
-            </div>
-            <div class="discover-progress-meta">
-              <div class="discover-progress-row">
-                <div class="discover-progress__meta" id="discoverPercent">0%</div>
-                <div class="discover-progress__statusInline">
-                  <div class="hint" id="discoverStatus">Idle</div>
-                  <div class="hint" id="discoverScanning">-</div>
-                </div>
               </div>
             </div>
           </div>
@@ -649,22 +647,24 @@ Last modified: 2026-02-01
 
   <!-- Restart discovery confirmation -->
   <div class="modal" id="restartModal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Restart scan">
+    <div class="modal-card small" role="dialog" aria-modal="true" aria-label="Restart scan">
       <div class="modal-head">
         <div class="modal-title">
           <b>Restart scan</b>
-          <span>Discard current progress and start over?</span>
-        </div>
-        <div class="modal-actions">
-          <button class="btn btn-ghost btn-mini" id="btnRestartCancel" type="button">Cancel</button>
+          <span>This will discard current progress</span>
         </div>
       </div>
       <div class="modal-body">
-        <p class="hint">This will stop the current scan and start a fresh one.</p>
-      </div>
-      <div class="footer footer--modal" style="display:flex;justify-content:flex-end;gap:8px;">
-        <button class="btn btn-ghost" id="btnRestartCancel2" type="button">Cancel</button>
-        <button class="btn btn-primary" id="btnRestartConfirm" type="button">Restart scan</button>
+        <div class="danger-box">
+          You are about to restart the scan.
+          <div style="margin-top:8px;">
+            <span class="hint">Current progress will be lost.</span>
+          </div>
+        </div>
+        <div class="modal-foot-actions" style="margin-top:14px;">
+          <button class="btn btn-danger" id="btnRestartConfirm" type="button">Restart</button>
+          <button class="btn btn-ghost" id="btnRestartCancel" type="button">Cancel</button>
+        </div>
       </div>
     </div>
   </div>

@@ -22,6 +22,10 @@ This project follows Semantic Versioning (SemVer).
 - WebUI Discovery: Pause no longer reports "already stopped" during active scans.
 - WebUI Discovery: Restart confirmation uses a modal instead of a browser prompt.
 - WebUI Discovery: Paused state no longer flips back to running automatically.
+- WebUI Discovery: Pause waits for worker PID before marking paused.
+- WebUI Discovery: Resume falls back to restarting when no worker exists.
+- WebUI Discovery: Devices list updates via fallback polling when SSE is blocked.
+- WebUI Discovery: Progress layout flipped (percent/status left, KPIs right).
 
 ## v5.44.0-beta.1 – 2026-02-02
 
