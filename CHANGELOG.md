@@ -19,6 +19,9 @@ This project follows Semantic Versioning (SemVer).
 - WebUI Discovery: Pause handles missing worker without error spam.
 - WebUI Discovery: KPI spacing tightened and percent aligned with status text.
 - WebUI Discovery: Pause now succeeds when status is running but worker PID is missing.
+- WebUI Discovery: Pause no longer reports "already stopped" during active scans.
+- WebUI Discovery: Restart confirmation uses a modal instead of a browser prompt.
+- WebUI Discovery: Paused state no longer flips back to running automatically.
 
 ## v5.44.0-beta.1 – 2026-02-02
 

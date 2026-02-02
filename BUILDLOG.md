@@ -69,3 +69,8 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery pause: treat missing PID as paused when status is running/starting.
   - Discovery progress: keep running animation independent of progress events.
   - Files: webui/app.py, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.4 | bugfix
+  - Discovery pause: avoid false "already stopped" toast and preserve paused UI state.
+  - Discovery restart: move confirmation to modal and remove pause warning.
+  - Files: webui/templates/index.html, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION

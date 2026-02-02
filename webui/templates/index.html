@@ -646,6 +646,28 @@ Last modified: 2026-02-01
       </div>
     </div>
   </div>
+
+  <!-- Restart discovery confirmation -->
+  <div class="modal" id="restartModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Restart scan">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Restart scan</b>
+          <span>Discard current progress and start over?</span>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost btn-mini" id="btnRestartCancel" type="button">Cancel</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <p class="hint">This will stop the current scan and start a fresh one.</p>
+      </div>
+      <div class="footer footer--modal" style="display:flex;justify-content:flex-end;gap:8px;">
+        <button class="btn btn-ghost" id="btnRestartCancel2" type="button">Cancel</button>
+        <button class="btn btn-primary" id="btnRestartConfirm" type="button">Restart scan</button>
+      </div>
+    </div>
+  </div>
 <script>
     // Seed the UI with the server-rendered targets. This prevents the table
     // from flashing empty before the first /state poll returns.

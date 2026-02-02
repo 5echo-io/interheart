@@ -1584,6 +1584,11 @@ function attachMenuActions(){
   const discoverError = $("#discoverError");
   const discoverCountHint = $("#discoverCountHint");
 
+  const restartModal = $("#restartModal");
+  const btnRestartConfirm = $("#btnRestartConfirm");
+  const btnRestartCancel = $("#btnRestartCancel");
+  const btnRestartCancel2 = $("#btnRestartCancel2");
+
   const discoverAddCard = $("#discoverAddCard");
   const discoverAddForm = $("#discoverAddForm");
   const discoverAddName = $("#discoverAddName");
@@ -1604,6 +1609,7 @@ function attachMenuActions(){
   let discoverUiTick = null;
   let discoverUiDirty = false;
   let discoverLocalRunning = false;
+  let discoverLocalPaused = false;
 
   // Lightweight debug logger for Discovery.
   // Keeps last ~200 entries and renders them into the debug box.
@@ -1638,6 +1644,14 @@ function attachMenuActions(){
       if (isRunning) discoverProgressBar.classList.add('is-running');
       else discoverProgressBar.classList.remove('is-running');
     }
+  }
+
+  function openRestartModal(){
+    if (restartModal) show(restartModal);
+  }
+
+  function closeRestartModal(){
+    if (restartModal) hide(restartModal);
   }
 
   async function resetDiscoveryBackend(){
@@ -1869,6 +1883,7 @@ function attachMenuActions(){
     discoverDeviceMap = new Map();
     discoverSelected = null;
     discoverLocalRunning = false;
+    discoverLocalPaused = false;
     if (discoverAddCard) discoverAddCard.style.display = 'none';
     if (discoverError){ discoverError.style.display='none'; discoverError.textContent=''; }
     if (discoverBar) discoverBar.style.width = '0%';
@@ -1895,6 +1910,7 @@ function attachMenuActions(){
       discoverStartInFlight = true;
       resetDiscoverUI();
       discoverLocalRunning = true;
+      discoverLocalPaused = false;
       discoverDbg('Start clicked', {
         iface: discoverIface?.value || 'auto',
         scope: discoverScope?.value || 'auto',
@@ -1992,9 +2008,19 @@ function attachMenuActions(){
         const err = (r && r.error) ? String(r.error) : 'Pause failed';
         // If the worker is already gone, treat this as "stopped" and just refresh.
         if (err.toLowerCase().includes('no worker') || err.toLowerCase().includes('worker not')){
-          toast('Discovery', 'Scan already stopped');
-          discoverLocalRunning = false;
-          await pollDiscoveryFallback();
+          if (discoverLocalRunning){
+            discoverLocalRunning = false;
+            discoverLocalPaused = true;
+            if (discoverStatus) discoverStatus.textContent = 'Paused';
+            if (discoverScanning) discoverScanning.textContent = '-';
+            if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+            if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
+            if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
+            if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+            setDiscoverRunning(false);
+          } else {
+            await pollDiscoveryFallback();
+          }
           return;
         }
         toast('Discovery', err);
@@ -2002,11 +2028,15 @@ function attachMenuActions(){
       }
       discoverState.status = 'paused';
       discoverLocalRunning = false;
+      discoverLocalPaused = true;
       if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
       if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
       if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
       if (btnDiscoverStart) btnDiscoverStart.style.display='none';
       if (btnDiscoverReset) btnDiscoverReset.style.display='inline-flex';
+      if (discoverStatus) discoverStatus.textContent = 'Paused';
+      if (discoverScanning) discoverScanning.textContent = '-';
+      setDiscoverRunning(false);
       renderDiscover();
     }catch(e){
       toast('Discovery', 'Pause failed');
@@ -2022,10 +2052,13 @@ function attachMenuActions(){
       }
       discoverState.status = 'running';
       discoverLocalRunning = true;
+      discoverLocalPaused = false;
       if (btnDiscoverResume) btnDiscoverResume.style.display='none';
       if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
       if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
       if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+      if (discoverStatus) discoverStatus.textContent = 'Running…';
+      setDiscoverRunning(true);
       renderDiscover();
     }catch(e){
       toast('Discovery', 'Resume failed');
@@ -2039,14 +2072,14 @@ async function cancelDiscovery(){
     try{ if (typeof discoverFallbackPoll !== 'undefined' && discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; } }catch(_){ }
     try{ discoverGotSSE = false; }catch(_){ }
     discoverLocalRunning = false;
+    discoverLocalPaused = false;
     if (discoverStatus) discoverStatus.textContent = 'Cancelling…';
     // Fetch a fresh state shortly after (backend may transition to idle quickly if the worker is already gone)
     setTimeout(() => { try{ pollDiscoveryFallback(); }catch(_){ } }, 400);
   }
 
   async function restartDiscovery(){
-    const ok = window.confirm('Restart the scan? This will discard current progress.');
-    if (!ok) return;
+    closeRestartModal();
     try{
       await apiPostJson('/api/discover-cancel', {});
       await resetDiscoveryBackend();
@@ -2082,11 +2115,8 @@ async function cancelDiscovery(){
   window.__ihDiscoveryDebug = runDiscoveryDebug;
 
   btnDiscoverStart?.addEventListener('click', startDiscovery);
-  btnDiscoverRestart?.addEventListener('click', restartDiscovery);
+  btnDiscoverRestart?.addEventListener('click', openRestartModal);
   btnDiscoverCancel?.addEventListener('click', () => {
-    // Simple safety net: it is easy to misclick Stop when scanning.
-    const ok = window.confirm('Pause the scan? You can resume or restart later.');
-    if (!ok) return;
     pauseDiscovery();
   });
 
@@ -2102,6 +2132,10 @@ async function cancelDiscovery(){
     }
     resetDiscoverUI();
   });
+  btnRestartConfirm?.addEventListener('click', restartDiscovery);
+  btnRestartCancel?.addEventListener('click', closeRestartModal);
+  btnRestartCancel2?.addEventListener('click', closeRestartModal);
+  restartModal?.addEventListener('click', (e) => { if (e.target === restartModal) closeRestartModal(); });
   btnDiscoverDebug?.addEventListener('click', runDiscoveryDebug);
   btnDiscoverDebugClose?.addEventListener('click', closeDiscoverDebug);
   btnDiscoverDebugCopy?.addEventListener('click', async () => {
@@ -2135,14 +2169,20 @@ async function cancelDiscovery(){
       const st = await apiGet('/api/discover-status');
       if (discoverSubnets && st && st.cidrs != null) discoverSubnets.textContent = String(st.cidrs);
       if (discoverFound && st && st.found != null) discoverFound.textContent = String(st.found);
-      if (discoverStatus) discoverStatus.textContent = st.message || st.status || 'Running…';
-      if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
+      const stStatus = (st && st.status) ? String(st.status).toLowerCase() : '';
+      if (discoverLocalPaused && (stStatus === 'running' || stStatus === 'starting')){
+        if (discoverStatus) discoverStatus.textContent = 'Paused';
+        if (discoverScanning) discoverScanning.textContent = '-';
+      } else {
+        if (discoverStatus) discoverStatus.textContent = st.message || st.status || 'Running…';
+        if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
+      }
       if (discoverProgressWrap) {
         const show = !!(st && (st.status === 'running' || st.status === 'starting' || st.status === 'paused' || st.status === 'cancelling' || st.status === 'done'));
         discoverProgressWrap.style.display = show ? 'block' : 'none';
         discoverProgressWrap.style.opacity = show ? '1' : '0';
       }
-      const isRunning = !!(st && (st.status === 'running' || st.status === 'starting')) || discoverLocalRunning;
+      const isRunning = (!discoverLocalPaused) && (!!(st && (st.status === 'running' || st.status === 'starting')) || discoverLocalRunning);
       setDiscoverRunning(isRunning);
       if (discoverBar && st.progress){
         const cur = Number(st.progress.current||0); const tot = Number(st.progress.total||0);
@@ -2169,6 +2209,7 @@ async function cancelDiscovery(){
         if (discoverStatus && st.status === 'cancelling') discoverStatus.textContent = st.message || 'Cancelling…';
       }
       if (st && st.status === 'paused'){
+        discoverLocalPaused = true;
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
         if (btnDiscoverStart) btnDiscoverStart.style.display='none';
         if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
@@ -2176,6 +2217,7 @@ async function cancelDiscovery(){
       }
       if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
         discoverLocalRunning = false;
+        discoverLocalPaused = false;
         if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
