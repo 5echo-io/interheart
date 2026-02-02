@@ -299,6 +299,8 @@ Usage:
   interheart test <name>
   interheart run-now [--targets name1,name2,...] [--force]
   interheart debug [--follow] [--json]
+  interheart self-test
+  interheart self-test-output
 
 Notes:
   - Data stored in: ${DB}
@@ -796,6 +798,7 @@ cmd_run_now() {
 
 
 cmd_self_test() {
+  [[ "${EUID}" -eq 0 ]] || die "ERROR: This command must be run as root. Use sudo."
   ensure_exists
   mkdir -p "$DEBUG_DIR" 2>/dev/null || true
 
@@ -867,6 +870,7 @@ cmd_self_test() {
 }
 
 cmd_self_test_output() {
+  [[ "${EUID}" -eq 0 ]] || die "ERROR: This command must be run as root. Use sudo."
   ensure_exists
   local latest="$DEBUG_DIR/selftest-latest.txt"
   if [ ! -f "$latest" ]; then

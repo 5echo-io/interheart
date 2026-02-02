@@ -18,6 +18,10 @@ This project follows Semantic Versioning (SemVer).
 
 ### Fixed
 - WebUI Discovery: Button states and device list behavior improved when pausing/resuming and when starting a new scan (clears previous run events).
+- WebUI Discovery: Fixed backend regressions that prevented Scan/Stop from working (worker status checks + pause/resume event logging).
+- WebUI Discovery: Devices section padding restored (removed an extra modal-body close tag).
+- WebUI: Information modal copy fields now keep labels left-aligned while values (IP/URL) are right-aligned.
+- CLI: `interheart self-test` now fails fast with a clear message when not run with `sudo`.
 
 ## v5.43.0-beta.5 – 2026-02-01
 

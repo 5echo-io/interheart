@@ -9,7 +9,7 @@
 # Last modified: 2026-02-01
 # =============================================================================
 
-from flask import Flask, request, jsonify, render_template, Response, send_file
+from flask import Flask, request, jsonify, render_template, Response, send_file, g
 import os
 import sys
 import subprocess
@@ -153,7 +153,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 DEBUG_DIR = STATE_DIR / "debug"
 
 def _utc_day_str() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
+    return datetime.datetime.utcnow().strftime("%Y-%m-%d")
 
 def _ensure_debug_dir():
     try:
@@ -182,10 +182,10 @@ def _cleanup_debug_dir(days: int = 7):
     """Remove debug log files older than N days (best effort)."""
     try:
         _ensure_debug_dir()
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
         for p in DEBUG_DIR.glob("*.log"):
             try:
-                if datetime.utcfromtimestamp(p.stat().st_mtime) < cutoff:
+                if datetime.datetime.utcfromtimestamp(p.stat().st_mtime) < cutoff:
                     p.unlink(missing_ok=True)
             except Exception:
                 continue
@@ -216,7 +216,7 @@ def _debug_req_end(resp):
             enabled = os.environ.get("INTERHEART_WEBUI_DEBUG", "0").lower() in ("1", "true", "yes")
             if enabled or resp.status_code >= 400 or (ms >= 1000 and ms != -1):
                 lvl = "WARN" if (resp.status_code >= 400 or (ms >= 1000 and ms != -1)) else "INFO"
-                line = f"[{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z] {lvl} api {resp.status_code} {request.method} {request.path} ms={ms}"
+                line = f"[{datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z] {lvl} api {resp.status_code} {request.method} {request.path} ms={ms}"
                 _append_debug_line(_webui_log_path(), line)
     except Exception:
         pass
@@ -232,7 +232,7 @@ def _handle_all_errors(err):
     try:
         if request and request.path and request.path.startswith("/api/"):
             try:
-                line = f"[{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z] ERROR api {request.method} {request.path} {type(err).__name__}: {str(err)}"
+                line = f"[{datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z] ERROR api {request.method} {request.path} {type(err).__name__}: {str(err)}"
                 _append_debug_line(_webui_log_path(), line)
             except Exception:
                 pass
@@ -359,6 +359,11 @@ def _append_discovery_event(obj: dict):
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
     except Exception:
         pass
+
+
+# Backwards compatible helper (some endpoints call append_discovery_event)
+def append_discovery_event(obj: dict):
+    _append_discovery_event(obj)
 
 
 def load_scan_meta() -> dict:
@@ -1038,7 +1043,7 @@ def api_client_log():
     except Exception:
         ctx_str = "{}"
 
-    line = f"[{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z] {level} {message} ctx={ctx_str}"
+    line = f"[{datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z] {level} {message} ctx={ctx_str}"
     _append_debug_line(_client_log_path(), line)
     return jsonify({"ok": True})
 
@@ -2664,7 +2669,7 @@ def api_discover_start():
     }
 
     try:
-        app.logger.info("DISCOVERY_START request from %s opts=%s", request.remote_addr, opts)
+        APP.logger.info("DISCOVERY_START request from %s opts=%s", request.remote_addr, opts)
     except Exception:
         pass
     meta = {'opts': opts, 'status':'starting', 'started':int(time.time()), 'finished':0, 'found':[], 'rc':0, 'error':''}
@@ -2703,7 +2708,7 @@ def api_discover_status():
     meta = load_discovery_meta()
     status = meta.get('status', 'idle')
     pid = int(meta.get('pid') or 0)
-    pid_alive = _pid_running(pid)
+    pid_alive = pid_is_running(pid)
 
     # Normalize statuses when the worker is no longer present.
     if status in ('running', 'cancelling', 'paused') and not pid_alive:

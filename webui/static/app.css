@@ -750,6 +750,10 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 .copy-ic{ opacity:0; transform:translateY(1px); transition:opacity .15s ease, transform .15s ease; cursor:pointer; }
 .copy-wrap:hover .copy-ic{ opacity:1; transform:translateY(0); }
 
+/* Right-aligned values (keep the label on the left in .kv rows) */
+.copy-wrap--right{ width:100%; margin-left:auto; justify-content:flex-end; }
+.copy-wrap--right code{ flex:1 1 auto; text-align:right; }
+
 .endpoint-wrap{ width:100%; }
 .endpoint-code{ display:inline-block; word-break:break-all; flex:1 1 auto; }
 

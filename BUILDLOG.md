@@ -25,3 +25,10 @@ Technical build notes intended for iterative zip handoffs.
   - Fix Stop/Resume flow: pause/resume uses correct PGID signalling; Stop now pauses with confirmation; Resume button works.
   - Fix discovery layout stability: ensure KPI row stays inline (Subnets/Found), keep controls aligned to the right; minor spacing cleanup.
   - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, webui/app.py
+
+- 2026-02-02 | dev | 5.43.0-beta.6+build.2 | bugfix
+  - Fix Discovery regressions: missing Flask g import, incorrect worker running check, missing append_discovery_event alias.
+  - Fix Discovery modal layout: removed an extra modal-body close tag so Devices padding is correct.
+  - Fix Information modal layout: keep IP/Endpoint labels left aligned, values right aligned.
+  - Fix CLI self-test usability: require sudo with clear error; list self-test commands in usage output.
+  - Files: webui/app.py, webui/templates/index.html, webui/static/app.css, interheart.sh
