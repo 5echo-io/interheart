@@ -40,7 +40,8 @@ APP = Flask(
 )
 
 # ---- config ----
-CLI = os.environ.get("INTERHEART_CLI", "/usr/local/bin/interheart")
+CLI_ENV = os.environ.get("INTERHEART_CLI", "").strip()
+CLI_DEFAULT = "/usr/local/bin/interheart"
 BIND_HOST = os.environ.get("WEBUI_BIND", "0.0.0.0")
 BIND_PORT = int(os.environ.get("WEBUI_PORT", "8088"))
 
@@ -243,8 +244,41 @@ def _handle_all_errors(err):
     # fall back to default Flask handler
     raise err
 
+_CLI_RESOLVED = None
+
+def resolve_cli_path() -> str:
+    """Resolve the interheart CLI/runner path.
+
+    Prefer explicit env, then default install path, then repo interheart.sh.
+    """
+    global _CLI_RESOLVED
+    if _CLI_RESOLVED:
+        return _CLI_RESOLVED
+
+    candidates = []
+    if CLI_ENV:
+        candidates.append(CLI_ENV)
+    candidates.append(CLI_DEFAULT)
+    candidates.append(str((BASE_DIR.parent / "interheart.sh").resolve()))
+
+    for c in candidates:
+        try:
+            if c and Path(c).exists():
+                _CLI_RESOLVED = c
+                return c
+        except Exception:
+            continue
+
+    # Fall back to configured default (for error reporting)
+    _CLI_RESOLVED = CLI_ENV or CLI_DEFAULT
+    return _CLI_RESOLVED
+
+
 def run_cmd(args):
-    cmd = [CLI] + args
+    cli_path = resolve_cli_path()
+    if not cli_path or not Path(cli_path).exists():
+        return 127, f"CLI not found: {cli_path}"
+    cmd = [cli_path] + args
     p = subprocess.run(cmd, capture_output=True, text=True)
     out = (p.stdout or "").strip()
     err = (p.stderr or "").strip()
@@ -1452,7 +1486,12 @@ def api_run_now():
     if existing_pid and pid_is_running(existing_pid):
         return jsonify({"ok": True, "message": "Already running", "pid": existing_pid})
 
-    cmd = [CLI, "run-now", "--force"]
+    cli_path = resolve_cli_path()
+    if not cli_path or not Path(cli_path).exists():
+        save_run_meta({"pid": 0, "started": 0, "finished": int(time.time()), "rc": 1})
+        return jsonify({"ok": False, "message": f"CLI not found: {cli_path}"})
+
+    cmd = [cli_path, "run-now", "--force"]
     try:
         # truncate output file
         RUN_OUT_FILE.write_text("", encoding="utf-8")
@@ -2590,16 +2629,25 @@ def _discover_worker():
                         flush_current()
                     host_up = False
                     ip = None
-                    mac = ""
-                    vendor = ""
+                    host = ""
 
                     rest = line.replace('Nmap scan report for ','').strip()
                     # rest can be IP or "name (ip)". With -n we normally get the raw IP.
                     if '(' in rest and rest.endswith(')'):
                         _name, _ip = rest.rsplit('(',1)
+                        host = _name.strip()
                         ip = _ip.strip(') ').strip()
                     else:
                         ip = rest
+                        host = ""
+
+                    cur = {
+                        'ip': ip or '',
+                        'host': host or '',
+                        'mac': '',
+                        'vendor': '',
+                        'type': '',
+                    }
 
                 elif 'Host is up' in line:
                     host_up = True
@@ -2609,8 +2657,12 @@ def _discover_worker():
                     try:
                         seg = line.split('MAC Address:',1)[1].strip()
                         mac = seg.split()[0].strip().lower()
+                        vendor = ''
                         if '(' in seg and seg.endswith(')'):
                             vendor = seg.split('(',1)[1].strip(') ').strip()
+                        # Update current host metadata
+                        cur['mac'] = mac
+                        cur['vendor'] = vendor
                     except Exception:
                         pass
 
