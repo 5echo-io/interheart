@@ -1964,7 +1964,15 @@ function attachMenuActions(){
     try{
       const r = await apiPostJson('/api/discover-pause', {});
       if (!r || !r.ok){
-        toast('Discovery', (r && r.error) ? r.error : 'Pause failed');
+        const err = (r && r.error) ? String(r.error) : 'Pause failed';
+        // If the worker is already gone, treat this as "stopped" and just refresh.
+        if (err.toLowerCase().includes('no worker') || err.toLowerCase().includes('worker not')){
+          toast('Discovery', err);
+          await loadDiscoverStatus();
+          renderDiscover();
+          return;
+        }
+        toast('Discovery', err);
         return;
       }
       discoverState.status = 'paused';

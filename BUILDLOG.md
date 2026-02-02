@@ -40,3 +40,10 @@ Technical build notes intended for iterative zip handoffs.
   - Fix CLI self-test reliability: always write selftest-latest.txt even when checks fail; print output path.
   - Files: webui/app.py, webui/static/app.css, interheart.sh
 
+- 2026-02-02 | dev | 5.43.0-beta.6+build.4 | bugfix
+  - Fix Discovery status endpoint stability: always include events_tail (avoid NameError when progress comes from meta).
+  - Fix Discovery start safety: avoid resetting events/meta if a scan is already running/starting; prevent accidental double-start.
+  - Fix Discovery Stop UX: treat "No worker running" as stopped and refresh UI state.
+  - Fix CLI self-test: restore missing require_root helper in the installed interheart.sh.
+  - Files: webui/app.py, webui/static/app.js, interheart.sh, VERSION
+

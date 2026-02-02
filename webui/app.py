@@ -2676,16 +2676,27 @@ def api_discover_start():
     except Exception:
         pass
 
+    # If a worker is already running (or still in the "starting" window),
+    # do NOT reset state/events. The UI will attach to the existing run.
+    meta = load_discovery_meta() or {}
+    status = (meta.get('status') or '').lower()
+    pid = int(meta.get('pid') or 0)
+    if status in ('running', 'starting') and pid and pid_is_running(pid):
+        return jsonify({'ok': False, 'message': 'Discovery already running'})
+    if status == 'starting' and not pid:
+        # When the UI double-clicks quickly, the pid might not be persisted yet.
+        # Treat a very recent "starting" as running to avoid trashing state.
+        try:
+            if int(time.time()) - int(meta.get('started') or 0) < 10:
+                return jsonify({'ok': False, 'message': 'Discovery already running'})
+        except Exception:
+            pass
+
     # Clear previous progress/events so a new scan starts cleanly
     try:
         (STATE_DIR / 'discovery_events.jsonl').write_text('')
     except Exception:
         pass
-
-
-    meta = load_discovery_meta() or {}
-    if meta.get('status') == 'running' and pid_is_running(int(meta.get('pid') or 0)):
-        return jsonify({'ok': False, 'message':'Discovery already running'})
 
     opts = {
         'scope': data.get('scope') or 'auto',
@@ -2751,28 +2762,44 @@ def api_discover_status():
         meta['status'] = status
         save_discovery_meta(meta)
 
-    # Build subnet-style progress from the event tail (fast + good enough)
-    events_tail = load_discovery_events_tail(limit=200)
-    subnet_started = 0
-    last_cidr = meta.get('scanning') or ''
-    for ev in events_tail:
+    # Always define this so the response schema is stable.
+    # (The UI uses this for the live feed tail.)
+    events_tail = []
+
+    # Prefer persisted progress from the worker.
+    current = 0
+    total = 0
+    last_cidr = ''
+    try:
+        prog = meta.get('progress') or {}
+        if isinstance(prog, dict):
+            current = int(prog.get('current') or 0)
+            total = int(prog.get('total') or 0)
+            last_cidr = str(prog.get('cidr') or '')
+    except Exception:
+        pass
+
+    # Fallback: derive progress from recent events.
+    if total <= 0 or current <= 0:
         try:
-            if isinstance(ev, dict) and ev.get('type') == 'subnet_start':
-                subnet_started += 1
-                if ev.get('cidr'):
-                    last_cidr = ev.get('cidr')
+            events_tail = load_discovery_events_tail(limit=200)
+            for ev in reversed(events_tail):
+                if isinstance(ev, dict) and isinstance(ev.get('progress'), dict):
+                    p = ev.get('progress')
+                    current = int(p.get('current') or current)
+                    total = int(p.get('total') or total)
+                    if p.get('cidr'):
+                        last_cidr = str(p.get('cidr'))
+                    break
         except Exception:
             pass
 
-    subnets_total = int(meta.get('subnets_total') or 0)
-    if not subnets_total:
+    # Final fallback: totals from meta.
+    if total <= 0:
         try:
-            subnets_total = int(meta.get('cidrs_total') or 0)
+            total = int(meta.get('subnets_total') or meta.get('cidrs_total') or 0)
         except Exception:
-            subnets_total = 0
-
-    current = int(subnet_started or 0)
-    total = int(subnets_total or 0)
+            total = 0
 
     percent = 0
     if total > 0:

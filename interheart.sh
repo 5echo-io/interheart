@@ -185,6 +185,13 @@ mkdir -p "${STATE_DIR}" >/dev/null 2>&1 || true
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+require_root() {
+  # Some commands need root because they write to system paths, systemd, or /var/lib.
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    die "ERROR: This command must be run as root (use sudo)."
+  fi
+}
+
 die() {
   echo "$*" >&2
   exit 1
