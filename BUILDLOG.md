@@ -81,3 +81,8 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery results: fallback polling to populate devices when SSE is blocked.
   - Discovery layout: move percent/status left, KPIs right; restart modal matches delete style.
   - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.6 | bugfix
+  - Discovery pause: stop running animation and keep Resume/Restart visible while paused.
+  - Discovery pause: prevent auto-resume during pause grace window.
+  - Files: webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION

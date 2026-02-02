@@ -26,6 +26,7 @@ This project follows Semantic Versioning (SemVer).
 - WebUI Discovery: Resume falls back to restarting when no worker exists.
 - WebUI Discovery: Devices list updates via fallback polling when SSE is blocked.
 - WebUI Discovery: Progress layout flipped (percent/status left, KPIs right).
+- WebUI Discovery: Pause keeps animations stopped and preserves Resume/Restart buttons.
 
 ## v5.44.0-beta.1 – 2026-02-02
 
