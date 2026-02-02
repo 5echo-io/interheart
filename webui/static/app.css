@@ -752,10 +752,10 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 
 /* Right-aligned values (keep the label on the left in .kv rows) */
 .copy-wrap--right{ width:100%; margin-left:auto; justify-content:flex-end; }
-.copy-wrap--right code{ flex:1 1 auto; text-align:right; }
+.copy-wrap--right code{ flex:1 1 auto; text-align:right; display:block; }
 
 .endpoint-wrap{ width:100%; }
-.endpoint-code{ display:inline-block; word-break:break-all; flex:1 1 auto; }
+.endpoint-code{ display:inline-block; word-break:break-all; flex:1 1 auto; text-align:right; }
 
 /* Uptime striped ticks */
 .bar{ overflow:hidden; }
@@ -875,12 +875,32 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 .discover-statuslines{ margin-top:10px; display:flex; flex-direction:column; gap:10px; }
 .discover-statuslines .muted{ opacity:0.75; }
 
-.discover-devices{ margin-top:12px; }
-.discover-devices .scan-list{ background: transparent; border:none; box-shadow:none; padding:0; }
-.discover-devices .scan-item{ background: transparent; border-bottom:1px solid rgba(255,255,255,0.08); border-radius:0; }
+.discover-devices{
+  margin-top:12px;
+  padding:0 14px 14px;
+}
+.discover-devices__head{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:8px;
+}
+.discover-devices__controls{ margin-bottom:10px; }
+
+/* Keep list flush, but respect modal padding */
+.discover-devices .scan-list{
+  background: transparent;
+  border:none;
+  box-shadow:none;
+  padding:0;
+}
+.discover-devices .scan-item{
+  background: transparent;
+  border-bottom:1px solid rgba(255,255,255,0.08);
+  border-radius:0;
+}
 .discover-devices .scan-item:hover{ background: rgba(255,255,255,0.03); }
-.discover-devices-head{ display:flex; align-items:flex-end; justify-content:space-between; gap:10px; margin-bottom:8px; }
-.discover-devices-head h3{ margin:0; font-size:14px; letter-spacing:0.2px; }
 .discover-count{ font-size:12px; opacity:0.65; }
 
 .discover-searchbox{ display:flex; gap:10px; align-items:center; justify-content:space-between; padding:8px 8px; border-radius:12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }

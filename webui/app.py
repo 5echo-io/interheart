@@ -365,6 +365,34 @@ def _append_discovery_event(obj: dict):
 def append_discovery_event(obj: dict):
     _append_discovery_event(obj)
 
+def load_discovery_events_tail(limit: int = 50):
+    """Return the last N discovery events from the JSONL file.
+
+    The UI uses this for a small debug tail. It must never raise.
+    """
+    try:
+        p = DISCOVERY_EVENTS_FILE
+        if not os.path.exists(p):
+            return []
+        # Keep it simple and safe: read at most the last ~256KB.
+        max_bytes = 256 * 1024
+        size = os.path.getsize(p)
+        with open(p, "rb") as f:
+            if size > max_bytes:
+                f.seek(-max_bytes, os.SEEK_END)
+            raw = f.read().decode("utf-8", errors="replace")
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        tail = lines[-int(limit or 50):]
+        out = []
+        for ln in tail:
+            try:
+                out.append(json.loads(ln))
+            except Exception:
+                out.append({"type": "raw", "message": ln})
+        return out
+    except Exception:
+        return []
+
 
 def load_scan_meta() -> dict:
     try:
@@ -2705,31 +2733,85 @@ def api_discover_start():
 
 @APP.get('/api/discover-status')
 def api_discover_status():
-    meta = load_discovery_meta()
-    status = meta.get('status', 'idle')
+    # The WebUI expects these keys:
+    #   status, message, scanning, cidrs, found, progress{current,total,percent,cidr}, error
+    meta = load_discovery_meta() or {}
+    status = (meta.get('status') or 'idle').lower()
     pid = int(meta.get('pid') or 0)
-    pid_alive = pid_is_running(pid)
+    pid_alive = bool(pid and pid_is_running(pid))
 
-    # Normalize statuses when the worker is no longer present.
+    # Normalize when the worker is gone
     if status in ('running', 'cancelling', 'paused') and not pid_alive:
         if status == 'cancelling':
             status = 'cancelled'
+        elif status == 'paused':
+            status = 'paused'
         else:
             status = 'done'
         meta['status'] = status
         save_discovery_meta(meta)
 
+    # Build subnet-style progress from the event tail (fast + good enough)
+    events_tail = load_discovery_events_tail(limit=200)
+    subnet_started = 0
+    last_cidr = meta.get('scanning') or ''
+    for ev in events_tail:
+        try:
+            if isinstance(ev, dict) and ev.get('type') == 'subnet_start':
+                subnet_started += 1
+                if ev.get('cidr'):
+                    last_cidr = ev.get('cidr')
+        except Exception:
+            pass
+
+    subnets_total = int(meta.get('subnets_total') or 0)
+    if not subnets_total:
+        try:
+            subnets_total = int(meta.get('cidrs_total') or 0)
+        except Exception:
+            subnets_total = 0
+
+    current = int(subnet_started or 0)
+    total = int(subnets_total or 0)
+
+    percent = 0
+    if total > 0:
+        percent = int(min(100, max(0, round((current / total) * 100))))
+
+    found_count = 0
+    try:
+        if isinstance(meta.get('found'), list):
+            found_count = len(meta.get('found') or [])
+        else:
+            found_count = int(meta.get('found') or 0)
+    except Exception:
+        found_count = 0
+
+    try:
+        found_count = int(meta.get('targets_found') or found_count)
+    except Exception:
+        pass
+
+    message = meta.get('message') or ''
+    error = meta.get('error') or ''
+
     return jsonify({
         'status': status,
         'worker_running': pid_alive,
-        'percent': float(meta.get('percent') or 0.0),
-        'current': meta.get('current') or '',
-        'targets_total': int(meta.get('targets_total') or 0),
-        'targets_done': int(meta.get('targets_done') or 0),
-        'subnets_total': int(meta.get('subnets_total') or 0),
-        'found': meta.get('found') or [],
-        'events_tail': load_discovery_events_tail(limit=50),
+        'message': message,
+        'error': error,
+        'scanning': last_cidr or '-',
+        'cidrs': total,
+        'found': found_count,
+        'progress': {
+            'current': current,
+            'total': total,
+            'percent': percent,
+            'cidr': last_cidr or '',
+        },
+        'events_tail': events_tail[-50:],
         'started': int(meta.get('started') or 0),
+        'updated': int(meta.get('updated') or 0),
     })
 
 @APP.post('/api/discover-debug')

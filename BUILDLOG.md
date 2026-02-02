@@ -32,3 +32,11 @@ Technical build notes intended for iterative zip handoffs.
   - Fix Information modal layout: keep IP/Endpoint labels left aligned, values right aligned.
   - Fix CLI self-test usability: require sudo with clear error; list self-test commands in usage output.
   - Files: webui/app.py, webui/templates/index.html, webui/static/app.css, interheart.sh
+
+- 2026-02-02 | dev | 5.43.0-beta.6+build.3 | bugfix
+  - Fix Discovery status endpoint: restore WebUI-compatible schema (status/message/progress/cidrs/found) and re-add missing load_discovery_events_tail helper to stop 500s.
+  - Fix Discovery Devices section padding: align CSS classnames and add container padding so list does not touch modal edges.
+  - Fix Information modal alignment: force copyable value blocks (IP/Endpoint) to right-align while keeping labels left.
+  - Fix CLI self-test reliability: always write selftest-latest.txt even when checks fail; print output path.
+  - Files: webui/app.py, webui/static/app.css, interheart.sh
+

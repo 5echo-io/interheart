@@ -797,76 +797,89 @@ cmd_run_now() {
 }
 
 
+
 cmd_self_test() {
-  [[ "${EUID}" -eq 0 ]] || die "ERROR: This command must be run as root. Use sudo."
-  ensure_exists
+  # Self-test should always create output, even if some checks fail.
+  require_root
+
+  # Ensure state exists, but don't fail hard here.
+  ensure_exists || true
   mkdir -p "$DEBUG_DIR" 2>/dev/null || true
 
-  local ts out latest
-  ts="$(date +%Y%m%d-%H%M%S)"
-  out="$DEBUG_DIR/selftest-${ts}.txt"
-  latest="$DEBUG_DIR/selftest-latest.txt"
-
-  local version
-  version="$(cat "${ROOT_DIR}/VERSION" 2>/dev/null || echo "unknown")"
-
-  local gw
-  gw="$(ip route show default 2>/dev/null | awk '{print $3}' | head -n1)"
+  local out="$DEBUG_DIR/selftest-latest.txt"
 
   {
-    echo "interheart_self_test"
-    echo "time=$(date -Is)"
-    echo "host=$(hostname)"
-    echo "version=$version"
-    echo "root_dir=${ROOT_DIR}"
-    echo "state_dir=$STATE_DIR"
-    echo "debug_dir=$DEBUG_DIR"
-    echo "default_gateway=${gw:-}";
-    echo "-"
+    echo "[interheart self-test] $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "host=$(hostname) user=$(whoami)"
+    echo "version=$VERSION"
+    echo
 
-    echo "binaries"
-    echo "curl=$(command -v curl 2>/dev/null || echo missing)"
-    echo "ping=$(command -v ping 2>/dev/null || echo missing)"
-    echo "nmap=$(command -v nmap 2>/dev/null || echo missing)"
-    if command -v nmap >/dev/null 2>&1; then
-      echo "nmap_version=$(nmap --version 2>/dev/null | head -n1)"
-    fi
-    echo "-"
-
-    echo "systemd"
-    if command -v systemctl >/dev/null 2>&1; then
-      echo "interheart.service=$(systemctl is-active interheart.service 2>/dev/null || true)"
-      echo "interheart.timer=$(systemctl is-active interheart.timer 2>/dev/null || true)"
-      echo "interheart-webui.service=$(systemctl is-active interheart-webui.service 2>/dev/null || true)"
+    echo "== Services =="
+    if have_cmd systemctl; then
+      systemctl is-active interheart-webui.service 2>/dev/null | sed 's/^/webui: /' || echo "webui: (unknown)"
+      systemctl is-active interheart.service 2>/dev/null | sed 's/^/core:  /' || true
+      systemctl is-active interheart.timer 2>/dev/null | sed 's/^/timer: /' || true
     else
-      echo "systemctl=missing"
+      echo "systemctl: not available"
     fi
-    echo "-"
 
-    echo "quick_checks"
-    if [ -n "${gw:-}" ] && command -v ping >/dev/null 2>&1; then
-      ping -c 1 -W 1 "$gw" >/dev/null 2>&1 && echo "ping_gateway=ok" || echo "ping_gateway=fail"
+    echo
+    echo "== WebUI health =="
+    if have_cmd curl; then
+      curl -fsS --max-time 2 http://127.0.0.1:8088/state 2>/dev/null | head -c 500 || echo "state: (no response)"
+      echo
+      curl -fsS --max-time 2 http://127.0.0.1:8088/api/discover-status 2>/dev/null | head -c 800 || echo "discover-status: (no response)"
+      echo
     else
-      echo "ping_gateway=skipped"
+      echo "curl: missing"
     fi
-    if command -v curl >/dev/null 2>&1; then
-      curl -fsS -m 2 http://127.0.0.1:8088/state >/dev/null 2>&1 && echo "webui_state=ok" || echo "webui_state=fail"
-    else
-      echo "webui_state=skipped"
-    fi
-    echo "-"
 
-    echo "discovery_meta"
-    if [ -f "$DISCOVERY_META_FILE" ]; then
-      sed -n '1,120p' "$DISCOVERY_META_FILE" || true
-    else
-      echo "(none)"
-    fi
-  } >"$out" 2>&1
+    echo "== Binaries =="
+    for b in ping ip nmap sqlite3; do
+      if have_cmd "$b"; then
+        echo "$b: OK ($(command -v "$b"))"
+      else
+        echo "$b: MISSING"
+      fi
+    done
 
-  cp -f "$out" "$latest" 2>/dev/null || true
-  echo "OK: wrote $out"
-  echo "OK: latest $latest"
+    echo
+    echo "== Network =="
+    if have_cmd ip; then
+      echo "default_route:"
+      ip route show default 2>/dev/null || true
+      echo
+      echo "addresses:"
+      ip -brief addr 2>/dev/null | sed 's/^/  /' || true
+    else
+      echo "ip: missing"
+    fi
+
+    echo
+    echo "== DB =="
+    if have_cmd sqlite3 && [ -f "$DB_PATH" ]; then
+      sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM targets;" 2>/dev/null | sed 's/^/targets: /' || echo "targets: (query failed)"
+    else
+      echo "db: missing (sqlite3 or $DB_PATH)"
+    fi
+
+    echo
+    echo "== Recent logs (webui) =="
+    local lf="$DEBUG_DIR/webui-$(date -u +%Y-%m-%d).log"
+    if [ -f "$lf" ]; then
+      tail -n 80 "$lf" || true
+    else
+      echo "(no webui debug log found at $lf)"
+    fi
+
+    echo
+    echo "== Result =="
+    echo "OK: self-test completed."
+    echo "output=$out"
+  } >"$out" 2>&1 || true
+
+  chmod 644 "$out" 2>/dev/null || true
+  echo "OK: wrote self-test output: $out"
 }
 
 cmd_self_test_output() {
