@@ -58,3 +58,9 @@ Technical build notes intended for iterative zip handoffs.
   - Progress bar: pulsing green fill + animated dotted remainder; update devices controls UX.
   - Run now: prevent duplicate completion toast.
   - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.2 | bugfix
+  - Discovery progress: keep running state during startup and align percent with status text.
+  - Discovery pause: handle missing worker by stopping cleanly without error spam.
+  - Discovery KPIs: tighten Subnets/Found spacing.
+  - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION

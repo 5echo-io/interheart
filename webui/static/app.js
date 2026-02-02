@@ -1603,6 +1603,7 @@ function attachMenuActions(){
   let discoverLastEventId = 0;
   let discoverUiTick = null;
   let discoverUiDirty = false;
+  let discoverLocalRunning = false;
 
   // Lightweight debug logger for Discovery.
   // Keeps last ~200 entries and renders them into the debug box.
@@ -1856,6 +1857,7 @@ function attachMenuActions(){
     discoverDevices = [];
     discoverDeviceMap = new Map();
     discoverSelected = null;
+    discoverLocalRunning = false;
     if (discoverAddCard) discoverAddCard.style.display = 'none';
     if (discoverError){ discoverError.style.display='none'; discoverError.textContent=''; }
     if (discoverBar) discoverBar.style.width = '0%';
@@ -1881,6 +1883,7 @@ function attachMenuActions(){
       if (discoverStartInFlight) { discoverDbg('Start ignored (already in flight)'); return; }
       discoverStartInFlight = true;
       resetDiscoverUI();
+      discoverLocalRunning = true;
       discoverDbg('Start clicked', {
         iface: discoverIface?.value || 'auto',
         scope: discoverScope?.value || 'auto',
@@ -1934,6 +1937,7 @@ function attachMenuActions(){
         if (discoverError){ discoverError.textContent = msg; discoverError.style.display='block'; }
         if (discoverStatus) discoverStatus.textContent = 'Error';
         if (btnDiscoverStart) btnDiscoverStart.disabled = false;
+        discoverLocalRunning = false;
         // auto open debug box so the user can copy logs
         openDiscoverDebug();
         discoverStartInFlight = false;
@@ -1953,6 +1957,7 @@ function attachMenuActions(){
       discoverStartInFlight = false;
     }catch(err){
       discoverStartInFlight = false;
+      discoverLocalRunning = false;
       // If anything throws before we update the UI, it can look like "Idle".
       try{
         discoverDbg('JS exception in startDiscovery', { message: String(err?.message || err), stack: String(err?.stack||'') });
@@ -1975,15 +1980,16 @@ function attachMenuActions(){
         const err = (r && r.error) ? String(r.error) : 'Pause failed';
         // If the worker is already gone, treat this as "stopped" and just refresh.
         if (err.toLowerCase().includes('no worker') || err.toLowerCase().includes('worker not')){
-          toast('Discovery', err);
-          await loadDiscoverStatus();
-          renderDiscover();
+          toast('Discovery', 'Scan already stopped');
+          discoverLocalRunning = false;
+          await pollDiscoveryFallback();
           return;
         }
         toast('Discovery', err);
         return;
       }
       discoverState.status = 'paused';
+      discoverLocalRunning = false;
       if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
       if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
       if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
@@ -2003,6 +2009,7 @@ function attachMenuActions(){
         return;
       }
       discoverState.status = 'running';
+      discoverLocalRunning = true;
       if (btnDiscoverResume) btnDiscoverResume.style.display='none';
       if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
       if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
@@ -2019,6 +2026,7 @@ async function cancelDiscovery(){
     try{ if (discoverES){ discoverES.close(); discoverES = null; } }catch(_){ }
     try{ if (typeof discoverFallbackPoll !== 'undefined' && discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; } }catch(_){ }
     try{ discoverGotSSE = false; }catch(_){ }
+    discoverLocalRunning = false;
     if (discoverStatus) discoverStatus.textContent = 'Cancelling…';
     // Fetch a fresh state shortly after (backend may transition to idle quickly if the worker is already gone)
     setTimeout(() => { try{ pollDiscoveryFallback(); }catch(_){ } }, 400);
@@ -2131,7 +2139,7 @@ async function cancelDiscovery(){
         const pctClamped = Math.min(100, Math.max(0, pct));
         discoverBar.style.width = `${pctClamped}%`;
         if (discoverProgressBar) discoverProgressBar.style.setProperty('--ih-pct', `${pctClamped}%`);
-        const isRunning = !!(st && (st.status === 'running' || st.status === 'starting'));
+        const isRunning = !!(st && (st.status === 'running' || st.status === 'starting')) || discoverLocalRunning;
         if (discoverBar) {
           if (isRunning) discoverBar.classList.add('running');
           else discoverBar.classList.remove('running');
@@ -2162,6 +2170,7 @@ async function cancelDiscovery(){
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
       }
       if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
+        discoverLocalRunning = false;
         if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
@@ -2208,6 +2217,7 @@ function connectDiscoveryStream(){
           discoverScanning.textContent = s ? String(s) : '-';
         }
         if (obj.status === 'running' || obj.status === 'starting' || obj.status === 'cancelling'){
+          discoverLocalRunning = true;
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
           if (btnDiscoverStart) btnDiscoverStart.style.display='none';
           if (btnDiscoverResume) btnDiscoverResume.style.display='none';
@@ -2215,12 +2225,14 @@ function connectDiscoveryStream(){
           if (discoverStatus && obj.status === 'cancelling') discoverStatus.textContent = obj.message || 'Cancelling…';
         }
         if (obj.status === 'paused'){
+          discoverLocalRunning = false;
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
           if (btnDiscoverStart) btnDiscoverStart.style.display='none';
           if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
           if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
         }
         if (obj.status === 'done' || obj.status === 'cancelled' || obj.status === 'error'){
+          discoverLocalRunning = false;
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
           if (btnDiscoverResume) btnDiscoverResume.style.display='none';
           if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
