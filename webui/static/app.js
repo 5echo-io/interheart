@@ -1422,6 +1422,7 @@ function attachMenuActions(){
 
   let runPoll = null;
   let runDueExpected = 0;
+  let runFinishNotified = false;
 
   function setBar(done, due){
     const pct = (!due || due <= 0) ? 0 : Math.max(0, Math.min(100, Math.round((done / due) * 100)));
@@ -1495,6 +1496,8 @@ function attachMenuActions(){
     }
 
     // finished
+    if (runFinishNotified) return;
+    runFinishNotified = true;
     clearInterval(runPoll);
     runPoll = null;
     runLive.style.display = "none";
@@ -1513,6 +1516,7 @@ function attachMenuActions(){
     btnRunNow.disabled = true;
     setRunInitial();
     show(runModal);
+    runFinishNotified = false;
     // Expected due count for progress (enabled targets).
     // NOTE: do not populate the "Checked" metric up-front; it should reflect actual work.
     try{
@@ -1551,7 +1555,7 @@ function attachMenuActions(){
   const btnDiscoverStart = $("#btnDiscoverStart");
   const btnDiscoverCancel = $("#btnDiscoverCancel");
   const btnDiscoverResume = $("#btnDiscoverResume");
-  const btnDiscoverAgain = $("#btnDiscoverAgain");
+  const btnDiscoverRestart = $("#btnDiscoverRestart");
   const btnDiscoverReset = $("#btnDiscoverReset");
   const btnDiscoverDebug = $("#btnDiscoverDebug");
   const discoverDebugCard = $("#discoverDebugCard");
@@ -1860,7 +1864,7 @@ function attachMenuActions(){
     if (discoverSubnets) discoverSubnets.textContent = '-';
     if (discoverFound) discoverFound.textContent = '0';
     try{ if (discoverOnlyNew) discoverOnlyNew.checked = true; }catch(_){ }
-    if (btnDiscoverAgain) btnDiscoverAgain.style.display = 'none';
+    if (btnDiscoverRestart) btnDiscoverRestart.style.display = 'none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display = 'none';
     if (btnDiscoverResume) btnDiscoverResume.style.display = 'none';
     if (btnDiscoverStart) btnDiscoverStart.style.display = 'inline-flex';
@@ -1982,6 +1986,7 @@ function attachMenuActions(){
       discoverState.status = 'paused';
       if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
       if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
+      if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
       if (btnDiscoverStart) btnDiscoverStart.style.display='none';
       if (btnDiscoverReset) btnDiscoverReset.style.display='inline-flex';
       renderDiscover();
@@ -1999,6 +2004,7 @@ function attachMenuActions(){
       }
       discoverState.status = 'running';
       if (btnDiscoverResume) btnDiscoverResume.style.display='none';
+      if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
       if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
       if (btnDiscoverStart) btnDiscoverStart.style.display='none';
       renderDiscover();
@@ -2016,6 +2022,16 @@ async function cancelDiscovery(){
     if (discoverStatus) discoverStatus.textContent = 'Cancelling…';
     // Fetch a fresh state shortly after (backend may transition to idle quickly if the worker is already gone)
     setTimeout(() => { try{ pollDiscoveryFallback(); }catch(_){ } }, 400);
+  }
+
+  async function restartDiscovery(){
+    const ok = window.confirm('Restart the scan? This will discard current progress.');
+    if (!ok) return;
+    try{
+      await apiPostJson('/api/discover-cancel', {});
+      await resetDiscoveryBackend();
+    }catch(_){ }
+    await startDiscovery();
   }
 
   async function runDiscoveryDebug(){
@@ -2046,12 +2062,12 @@ async function cancelDiscovery(){
   window.__ihDiscoveryDebug = runDiscoveryDebug;
 
   btnDiscoverStart?.addEventListener('click', startDiscovery);
-  btnDiscoverAgain?.addEventListener('click', startDiscovery);
+  btnDiscoverRestart?.addEventListener('click', restartDiscovery);
   btnDiscoverCancel?.addEventListener('click', () => {
     // Simple safety net: it is easy to misclick Stop when scanning.
-    const ok = window.confirm('Stop the scan? This will cancel the run.');
+    const ok = window.confirm('Pause the scan? You can resume or restart later.');
     if (!ok) return;
-    cancelDiscovery();
+    pauseDiscovery();
   });
 
   btnDiscoverResume?.addEventListener('click', () => {
@@ -2114,6 +2130,7 @@ async function cancelDiscovery(){
           : "0";
         const pctClamped = Math.min(100, Math.max(0, pct));
         discoverBar.style.width = `${pctClamped}%`;
+        if (discoverProgressBar) discoverProgressBar.style.setProperty('--ih-pct', `${pctClamped}%`);
         const isRunning = !!(st && (st.status === 'running' || st.status === 'starting'));
         if (discoverBar) {
           if (isRunning) discoverBar.classList.add('running');
@@ -2133,14 +2150,22 @@ async function cancelDiscovery(){
       }
       if (st && (st.status === 'running' || st.status === 'starting' || st.status === 'cancelling')){
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
-        if (btnDiscoverAgain) btnDiscoverAgain.style.display='none';
+        if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
+        if (btnDiscoverResume) btnDiscoverResume.style.display='none';
         if (btnDiscoverStart) btnDiscoverStart.style.display='none';
         if (discoverStatus && st.status === 'cancelling') discoverStatus.textContent = st.message || 'Cancelling…';
+      }
+      if (st && st.status === 'paused'){
+        if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+        if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+        if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
+        if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
       }
       if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
         if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-        if (btnDiscoverAgain) btnDiscoverAgain.style.display='none';
+        if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
+        if (btnDiscoverResume) btnDiscoverResume.style.display='none';
         if (btnDiscoverStart){ btnDiscoverStart.style.display='inline-flex'; btnDiscoverStart.disabled=false; }
       }
     }catch(e){ /* ignore */ }
@@ -2185,10 +2210,20 @@ function connectDiscoveryStream(){
         if (obj.status === 'running' || obj.status === 'starting' || obj.status === 'cancelling'){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
           if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+          if (btnDiscoverResume) btnDiscoverResume.style.display='none';
+          if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
           if (discoverStatus && obj.status === 'cancelling') discoverStatus.textContent = obj.message || 'Cancelling…';
+        }
+        if (obj.status === 'paused'){
+          if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+          if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+          if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
+          if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
         }
         if (obj.status === 'done' || obj.status === 'cancelled' || obj.status === 'error'){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+          if (btnDiscoverResume) btnDiscoverResume.style.display='none';
+          if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
           if (btnDiscoverStart){ btnDiscoverStart.style.display='inline-flex'; btnDiscoverStart.disabled=false; }
         }
       }catch(e){}

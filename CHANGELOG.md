@@ -8,9 +8,27 @@ This project follows Semantic Versioning (SemVer).
 
 ## [Unreleased]
 
+### Added
+- 
+
+### Changed
+- 
+
 ### Fixed
-- WebUI Discovery: progress section is visible immediately after starting a scan.
-- WebUI Discovery: Stop now cancels the scan to avoid "no worker running" errors.
+- 
+
+## v5.44.0-beta.1 – 2026-02-02
+
+### Added
+- WebUI Discovery: Pause/Resume/Restart scan controls.
+
+### Changed
+- WebUI Discovery: Progress layout stabilized (percent/status column) and Subnets/Found spacing tightened.
+- WebUI Discovery: Progress bar visuals improved (pulsing green fill + animated dotted remainder).
+- WebUI Discovery: Devices list controls redesigned for cleaner search/toggle UX.
+
+### Fixed
+- WebUI Run now: remove duplicate completion toast.
 
 ## v5.43.0-beta.6 – 2026-02-01
 

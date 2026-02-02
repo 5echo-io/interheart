@@ -520,8 +520,9 @@ Last modified: 2026-02-01
 
 	          <div class="discover-actions__right">
             <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button">Scan now</button>
-            <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
-            <button class="btn btn-outline btn-mini" id="btnDiscoverResume" type="button" style="display:none;">Resume</button>
+            <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Pause</button>
+            <button class="btn btn-outline btn-mini" id="btnDiscoverResume" type="button" style="display:none;">Resume scan</button>
+            <button class="btn btn-outline btn-mini" id="btnDiscoverRestart" type="button" style="display:none;">Restart scan</button>
             <button class="btn btn-ghost btn-mini" id="btnDiscoverReset" type="button" style="display:none;">Reset</button>
             <button class="btn btn-outline btn-mini" id="btnDiscoverDebug" type="button" style="display:none;">Debug</button>
 	          </div>
@@ -532,22 +533,26 @@ Last modified: 2026-02-01
         <!-- Progress -->
         <div class="discover-progress" id="discoverProgressWrap">
           <div class="discover-progress__kpis">
-            <div class="kpi">
-              <div class="kpi-label">Subnets</div>
-              <div class="kpi-value" id="discoverSubnets">-</div>
+            <div class="discover-kpi-group">
+              <div class="kpi">
+                <div class="kpi-label">Subnets</div>
+                <div class="kpi-value" id="discoverSubnets">-</div>
+              </div>
+              <div class="kpi">
+                <div class="kpi-label">Found</div>
+                <div class="kpi-value" id="discoverFound">0</div>
+              </div>
             </div>
-            <div class="kpi">
-              <div class="kpi-label">Found</div>
-              <div class="kpi-value" id="discoverFound">0</div>
+            <div class="discover-progress-meta">
+              <div class="discover-progress__meta" id="discoverPercent">0%</div>
+              <div class="discover-progress__statusInline">
+                <div class="hint" id="discoverStatus">Idle</div>
+                <div class="hint" id="discoverScanning">-</div>
+              </div>
             </div>
-            <div class="discover-progress__meta" id="discoverPercent">0%</div>
-	            <div class="discover-progress__statusInline">
-	              <div class="hint" id="discoverStatus">Idle</div>
-	              <div class="hint" id="discoverScanning">-</div>
-	            </div>
           </div>
 
-          <div class="progress discover-progressbar">
+          <div class="progress discover-progressbar" id="discoverProgressBar">
             <div class="progress-bar" id="discoverBar" style="width:0%"></div>
             <div class="discover-progressbar__dots" aria-hidden="true"></div>
           </div>
@@ -578,11 +583,14 @@ Last modified: 2026-02-01
 
         <div class="discover-devices__controls">
           <div class="discover-searchbox">
-            <div class="input-with-clear" style="flex:1;">
-              <input id="discoverFilter" class="input" placeholder="Filter devices…">
-              <button class="btn-clear is-hidden" type="button" data-clear-for="discoverFilter" aria-label="Clear filter">×</button>
+            <div class="discover-searchleft">
+              <span class="hint">Filter</span>
+              <div class="input-with-clear">
+                <input id="discoverFilter" class="input" placeholder="Search devices…">
+                <button class="btn-clear is-hidden" type="button" data-clear-for="discoverFilter" aria-label="Clear filter">×</button>
+              </div>
             </div>
-            <label class="toggle" title="Show only devices that are not already added" style="white-space:nowrap;">
+            <label class="toggle discover-toggle" title="Show only devices that are not already added">
               <input type="checkbox" id="discoverOnlyNew" checked />
               <span>New devices</span>
             </label>

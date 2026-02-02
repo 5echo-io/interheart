@@ -51,3 +51,10 @@ Technical build notes intended for iterative zip handoffs.
   - Fix Discovery progress visibility: progress block shows immediately on start and during fallback polling.
   - Fix Discovery Stop action: Stop cancels the scan to prevent pause errors when no worker is running.
   - Files: webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.1 | ui-build
+  - Discovery UI polish: stabilize KPI layout, tighten Subnets/Found spacing, add percent/status column.
+  - Discovery controls: Stop now pauses; add Resume and Restart actions with proper state transitions.
+  - Progress bar: pulsing green fill + animated dotted remainder; update devices controls UX.
+  - Run now: prevent duplicate completion toast.
+  - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
