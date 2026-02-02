@@ -18,6 +18,7 @@ This project follows Semantic Versioning (SemVer).
 - WebUI Discovery: keep progress bar in running state during startup.
 - WebUI Discovery: Pause handles missing worker without error spam.
 - WebUI Discovery: KPI spacing tightened and percent aligned with status text.
+- WebUI Discovery: Pause now succeeds when status is running but worker PID is missing.
 
 ## v5.44.0-beta.1 – 2026-02-02
 

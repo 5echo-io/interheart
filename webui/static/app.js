@@ -1629,6 +1629,17 @@ function attachMenuActions(){
     if (discoverDebugCard) discoverDebugCard.style.display = 'none';
   }
 
+  function setDiscoverRunning(isRunning){
+    if (discoverBar) {
+      if (isRunning) discoverBar.classList.add('running');
+      else discoverBar.classList.remove('running');
+    }
+    if (discoverProgressBar) {
+      if (isRunning) discoverProgressBar.classList.add('is-running');
+      else discoverProgressBar.classList.remove('is-running');
+    }
+  }
+
   async function resetDiscoveryBackend(){
     try{
       await fetch('/api/discover-reset', {method:'POST'});
@@ -1896,6 +1907,7 @@ function attachMenuActions(){
         discoverProgressWrap.style.display = 'block';
         discoverProgressWrap.style.opacity = '1';
       }
+      setDiscoverRunning(true);
 
     const scope = (discoverScope?.value || 'auto');
     const custom = (discoverCustom?.value || '').trim();
@@ -2130,6 +2142,8 @@ async function cancelDiscovery(){
         discoverProgressWrap.style.display = show ? 'block' : 'none';
         discoverProgressWrap.style.opacity = show ? '1' : '0';
       }
+      const isRunning = !!(st && (st.status === 'running' || st.status === 'starting')) || discoverLocalRunning;
+      setDiscoverRunning(isRunning);
       if (discoverBar && st.progress){
         const cur = Number(st.progress.current||0); const tot = Number(st.progress.total||0);
         const pct = tot ? ((cur/tot)*100) : 0;
@@ -2139,15 +2153,6 @@ async function cancelDiscovery(){
         const pctClamped = Math.min(100, Math.max(0, pct));
         discoverBar.style.width = `${pctClamped}%`;
         if (discoverProgressBar) discoverProgressBar.style.setProperty('--ih-pct', `${pctClamped}%`);
-        const isRunning = !!(st && (st.status === 'running' || st.status === 'starting')) || discoverLocalRunning;
-        if (discoverBar) {
-          if (isRunning) discoverBar.classList.add('running');
-          else discoverBar.classList.remove('running');
-        }
-        if (discoverProgressBar) {
-          if (isRunning) discoverProgressBar.classList.add('is-running');
-          else discoverProgressBar.classList.remove('is-running');
-        }
         if (discoverPercent) discoverPercent.textContent = `${pctStr}%`;
       }
 
@@ -2215,6 +2220,9 @@ function connectDiscoveryStream(){
         if (discoverScanning){
           const s = (obj.scanning || (obj.progress && obj.progress.cidr) || '')
           discoverScanning.textContent = s ? String(s) : '-';
+        }
+        if (obj.status){
+          setDiscoverRunning(obj.status === 'running' || obj.status === 'starting');
         }
         if (obj.status === 'running' || obj.status === 'starting' || obj.status === 'cancelling'){
           discoverLocalRunning = true;

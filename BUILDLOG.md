@@ -64,3 +64,8 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery pause: handle missing worker by stopping cleanly without error spam.
   - Discovery KPIs: tighten Subnets/Found spacing.
   - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.3 | bugfix
+  - Discovery pause: treat missing PID as paused when status is running/starting.
+  - Discovery progress: keep running animation independent of progress events.
+  - Files: webui/app.py, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION

@@ -3065,7 +3065,18 @@ def api_discover_pause():
     meta = load_discovery_meta()
     pid = int(meta.get('pid') or 0)
     pgid = int(meta.get('pgid') or 0)
+    status = (meta.get('status') or '').lower()
     if pid <= 0:
+        # If status says running/starting but we lost the PID, treat as paused
+        # so the UI can present Resume/Restart instead of looping on errors.
+        if status in ('running', 'starting'):
+            meta['status'] = 'paused'
+            meta['paused_at'] = int(time.time())
+            meta['message'] = 'Discovery paused'
+            meta['updated'] = int(time.time())
+            save_discovery_meta(meta)
+            append_discovery_event({'type': 'status', 'status': 'paused', 'message': 'Discovery paused'})
+            return jsonify({'ok': True, 'status': 'paused', 'note': 'worker missing'}), 200
         return jsonify({'ok': False, 'error': 'No worker running'}), 409
 
     if meta.get('status') == 'paused':
