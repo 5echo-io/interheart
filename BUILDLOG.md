@@ -51,4 +51,3 @@ Technical build notes intended for iterative zip handoffs.
   - Fix Discovery progress visibility: progress block shows immediately on start and during fallback polling.
   - Fix Discovery Stop action: Stop cancels the scan to prevent pause errors when no worker is running.
   - Files: webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
-
