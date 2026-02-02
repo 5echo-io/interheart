@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Copyright (c) 2026 5echo.io
+# Project: interheart
+# File: interheart
+# Purpose: Interheart CLI entrypoint wrapper.
+# Intended path: /usr/local/bin/interheart
+# Created: 2026-02-01
+# Last modified: 2026-02-01
+# =============================================================================
+
+set -euo pipefail
+
+# interheart CLI (entrypoint from repo)
+# install.sh vil senere kopiere denne til /usr/local/bin/interheart
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SELF_DIR}/lib"
+
+# shellcheck source=/dev/null
+source "${LIB_DIR}/core.sh"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/db.sh"
+# shellcheck source=/dev/null
+source "${LIB_DIR}/commands.sh"
+
+main "$@"

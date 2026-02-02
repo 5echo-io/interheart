@@ -1,0 +1,646 @@
+<!--
+=============================================================================
+Copyright (c) 2026 5echo.io
+Project: interheart
+Purpose: WebUI main template.
+Path: /webui/templates/index.html
+Created: 2026-02-01
+Last modified: 2026-02-01
+=============================================================================
+-->
+
+<!--
+  =============================================================================
+  Copyright (c) 2026 5echo.io
+  Project: interheart
+  Purpose: WebUI main HTML template.
+  Path: /opt/interheart/webui/templates/index.html
+  Created: 2026-02-01
+  Last modified: 2026-02-01
+  =============================================================================
+-->
+
+<!--
+  Copyright (c) 5echo.io
+  Project: interheart
+  File: Main WebUI template (includes Discovery modal)
+  Path: /opt/interheart/webui/templates/index.html
+  Created: 2025-01-01
+  Last modified: 2026-02-01
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>interheart</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ ui_version }}">
+</head>
+
+<body data-poll-seconds="{{ poll_seconds }}">
+  <div class="toasts" id="toasts"></div>
+
+  <!-- Logs modal -->
+  <div class="modal" id="logModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Logs">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Logs</b>
+          <span>Last <span id="logLinesLbl">{{ log_lines }}</span> lines</span>
+        </div>
+        <div class="modal-actions">
+          <div class="chips" id="logChips">
+            <button class="chip-btn" data-level="all" type="button">All</button>
+            <button class="chip-btn" data-level="info" type="button">INFO</button>
+            <button class="chip-btn" data-level="warn" type="button">WARN</button>
+            <button class="chip-btn" data-level="error" type="button">ERROR</button>
+          </div>
+          <div class="input-with-clear input-with-clear--sm">
+            <input id="logFilter" class="input input--sm" placeholder="Filter… (e.g. anl-0161)">
+            <button class="btn-clear" type="button" data-clear-for="logFilter" aria-label="Clear filter">×</button>
+          </div>
+          <button class="btn btn-ghost btn-mini" id="btnReloadLogs" type="button">Reload</button>
+          <button class="btn btn-ghost btn-mini" id="btnCopyLogs" type="button">Copy</button>
+          <div class="menu" id="logDlMenu">
+            <button class="btn btn-ghost btn-mini menu-btn" id="btnLogDownload" type="button" aria-label="Download">Download ▾</button>
+            <div class="menu-dd" role="menu">
+              <button class="menu-item" data-dlfmt="csv" type="button"><span>CSV</span></button>
+              <button class="menu-item" data-dlfmt="xlsx" type="button"><span>XLSX</span></button>
+              <button class="menu-item" data-dlfmt="pdf" type="button"><span>PDF</span></button>
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-mini" id="btnCloseLogs" type="button">Close</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="logbox" id="logBox">Loading logs…</div>
+        <div class="hint" id="logMeta">-</div>
+      </div>
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Run modal -->
+  <div class="modal" id="runModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Run summary">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Run</b>
+          <span id="runTitleMeta">-</span>
+        </div>
+        <div class="modal-actions">
+          <div class="run-live" id="runLive" style="display:none;">
+            <span class="pulse"></span>
+            <span id="runLiveText">Running…</span>
+          </div>
+          <button class="btn btn-ghost btn-mini" id="btnCloseRun" type="button">Close</button>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="summary-wrap">
+          <div class="metric"><b>Total</b><div class="v" id="mTotal">-</div></div>
+          <div class="metric"><b>Checked</b><div class="v" id="mDue">-</div></div>
+          <div class="metric"><b>Skipped</b><div class="v" id="mSkipped">-</div></div>
+          <div class="metric"><b>Ping OK</b><div class="v" id="mOk">-</div></div>
+          <div class="metric"><b>Ping failed</b><div class="v" id="mFail">-</div></div>
+        </div>
+
+        <div class="metric">
+          <b>Progress</b>
+          <div class="bar"><div id="runBar"></div></div>
+          <div class="summary-sub">
+            <span id="runNowLine">Idle</span>
+            <span id="runDoneLine">done: 0 / 0</span>
+          </div>
+        </div>
+
+        <div class="metric">
+          <b>Endpoint</b>
+          <div class="summary-sub" style="margin-top:0;">
+            <span>Responses</span><span id="mSent">-</span>
+          </div>
+          <div class="summary-sub" style="margin-top:4px;">
+            <span>Endpoint failures</span><span id="mCurlFail">-</span>
+          </div>
+        </div>
+
+<!-- Details removed: live details feed was unreliable and confusing. -->
+
+      </div>
+
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add modal -->
+  <div class="modal" id="addModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Add target</b>
+          <span>Ping target, then call endpoint on success</span>
+        </div>
+        <div class="modal-actions"></div>
+      </div>
+
+      <div class="modal-body">
+        <form id="addForm">
+          <div class="grid3">
+            <div class="field">
+              <label>Name</label>
+              <input class="input" name="name" placeholder="e.g. anl-0161-core-gw" required>
+            </div>
+            <div class="field">
+              <label>IP address</label>
+              <input class="input" name="ip" placeholder="e.g. 10.5.0.1" required>
+            </div>
+            <div class="field">
+              <label>Interval (sec)</label>
+              <input class="input" name="interval" type="number" min="10" max="86400" step="1" placeholder="60" required>
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:12px;">
+            <label>Endpoint URL</label>
+            <input class="input" name="endpoint" placeholder="https://..." required>
+          </div>
+
+          <div class="modal-foot-actions">
+            <button class="btn btn-primary" type="submit" id="btnAddSubmit">Add target</button>
+            <button class="btn btn-ghost" type="button" id="btnAddCancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm delete modal -->
+  <div class="modal" id="confirmModal" aria-hidden="true">
+    <div class="modal-card small" role="dialog" aria-modal="true" aria-label="Confirm delete">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Confirm delete</b>
+          <span>This cannot be undone</span>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="danger-box">
+          You are about to delete:
+          <div style="margin-top:8px;">
+            <code id="confirmName" class="mono"></code>
+          </div>
+        </div>
+
+        <div class="modal-foot-actions" style="margin-top:14px;">
+          <button class="btn btn-danger" id="btnConfirmRemove" type="button">Delete</button>
+          <button class="btn btn-ghost" id="btnCancelRemove" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Info modal -->
+  <div class="modal" id="infoModal" aria-hidden="true">
+    <div class="modal-card modal-card--info" role="dialog" aria-modal="true" aria-label="Target information">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Target information</b>
+          <span id="infoTitle">-</span>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost btn-mini" id="btnCloseInfo" type="button">Close</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="info-grid">
+          <div class="metric">
+            <b>Basics</b>
+            <div class="kv"><span>Name</span><code id="infoName">-</code></div>
+            <div class="kv"><span>IP</span>
+              <div class="copy-wrap copy-wrap--right" title="Click to copy">
+                <code id="infoIp" class="copyable" tabindex="0" role="button" aria-label="Copy IP address">-</code>
+                <span class="copy-ic" id="copyIpIcon" aria-hidden="true">⧉</span>
+              </div>
+            </div>
+            <div class="kv"><span>Enabled</span><code id="infoEnabled">-</code></div>
+            <div class="kv"><span>Interval</span><code id="infoInterval">-</code></div>
+          </div>
+
+          <div class="metric">
+            <b>Live status</b>
+            <div class="kv"><span>Status</span><code id="infoStatus">-</code></div>
+            <div class="kv"><span>Last ping</span><code id="infoLastPing">-</code></div>
+            <div class="kv"><span>Last response</span><code id="infoLastResp">-</code></div>
+            <div class="kv"><span>Latency</span><code id="infoLatency">-</code></div>
+          </div>
+
+          <div class="metric info-span2">
+            <b>Endpoint</b>
+            <div class="kv endpoint-kv"><span>URL</span>
+              <div class="copy-wrap endpoint-wrap copy-wrap--right" title="Click to copy">
+                <code id="infoEndpoint" class="endpoint-code copyable" tabindex="0" role="button" aria-label="Copy endpoint URL">-</code>
+                <span class="copy-ic" id="copyEndpointIcon" aria-hidden="true">⧉</span>
+              </div>
+            </div>
+            </div>
+        </div>
+
+        <div class="metric info-span2">
+          <div class="uptime-head"><b>Uptime (history samples)</b><div id="uptimeSpark" class="sparkline" aria-hidden="true"></div></div>
+          <div class="uptime-wrap" id="uptimeWrap">
+            <div class="uptime-row"><span>24h</span><div class="bar"><div id="u24"></div></div><code id="u24t">-</code></div>
+            <div class="uptime-row"><span>7d</span><div class="bar"><div id="u7"></div></div><code id="u7t">-</code></div>
+            <div class="uptime-row"><span>30d</span><div class="bar"><div id="u30"></div></div><code id="u30t">-</code></div>
+            <div class="uptime-row"><span>90d</span><div class="bar"><div id="u90"></div></div><code id="u90t">-</code></div>
+          </div>
+          <div class="hint" style="margin-top:10px;">Uptime is calculated from samples recorded when interheart runs or when you click Test.</div>
+        </div>
+      </div>
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit modal -->
+  <div class="modal" id="editModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Edit target">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Edit target</b>
+          <span id="editTitle">-</span>
+        </div>
+        <div class="modal-actions">
+          <!-- Close removed: Cancel is enough -->
+        </div>
+      </div>
+      <div class="modal-body">
+        <form id="editForm">
+          <input type="hidden" name="old_name" id="editOldName">
+          <input type="hidden" name="enabled" id="editEnabled" value="1">
+          <div class="grid3">
+            <div class="field">
+              <label>Name</label>
+              <input class="input" name="new_name" id="editName" required>
+            </div>
+            <div class="field">
+              <label>IP address</label>
+              <input class="input" name="ip" id="editIp" required>
+            </div>
+            <div class="field">
+              <label>Interval (sec)</label>
+              <input class="input" name="interval" id="editInterval" type="number" min="10" max="86400" step="1" required>
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:12px;">
+            <label>Endpoint URL</label>
+            <input class="input" name="endpoint" id="editEndpoint" required>
+          </div>
+
+          <div class="modal-foot-actions modal-foot-actions--split">
+            <div class="left">
+              <button class="btn btn-ghost" type="button" id="btnEditEnable">Enable</button>
+              <button class="btn btn-ghost" type="button" id="btnEditDisable">Disable</button>
+            </div>
+            <div class="right">
+              <button class="btn btn-primary" type="submit" id="btnEditSubmit">Save</button>
+              <button class="btn btn-ghost" type="button" id="btnEditCancel">Cancel</button>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">
+        <div class="title">interheart <span class="badge">targets</span></div>
+        <div class="subtitle">Powered by <a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a></div>
+      </div>
+
+      <div class="right-actions">
+        <div class="input-with-clear input-with-clear--sm">
+          <input id="filterInput" class="input input--sm" placeholder="Filter targets… (name / ip / status)">
+          <button class="btn-clear" type="button" data-clear-for="filterInput" aria-label="Clear filter">×</button>
+        </div>
+        <button class="btn btn-ghost btn-mini" id="openAdd" type="button">Add target</button>
+        <button class="btn btn-ghost btn-mini" id="btnDiscover" type="button">Discover</button>
+        <button class="btn btn-primary btn-mini" id="btnRunNow" type="button">Run now</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="hint">“Last ping” / “Last response” updates live ({{ poll_seconds }}s refresh)</div>
+      <div class="sep"></div>
+
+      <div class="bulkbar is-hidden" id="bulkBar">
+        <div class="bulkbar-left">
+          <b id="bulkCount">0 selected</b>
+        </div>
+        <div class="bulkbar-actions">
+          <button class="btn btn-ghost btn-mini" id="bulkEnable" type="button">Enable</button>
+          <button class="btn btn-ghost btn-mini" id="bulkDisable" type="button">Disable</button>
+          <button class="btn btn-ghost btn-mini" id="bulkTest" type="button">Test</button>
+          <button class="btn btn-danger btn-mini" id="bulkRemove" type="button">Delete</button>
+          <button class="btn btn-ghost btn-mini" id="bulkClear" type="button">Clear</button>
+        </div>
+      </div>
+
+
+      <div class="content-grid">
+        <div class="table-wrap">
+          <table id="targetsTable">
+        <thead>
+          <tr>
+            <th style="width: 260px;" class="th-sort sortable name-th" data-sort="name" role="button" tabindex="0" onclick="window.__IH_SORT && window.__IH_SORT('name')"><span>Name</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 160px;" class="th-sort sortable" data-sort="ip" role="button" tabindex="0" onclick="window.__IH_SORT && window.__IH_SORT('ip')"><span>IP</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 150px;" class="th-sort sortable" data-sort="status" role="button" tabindex="0" onclick="window.__IH_SORT && window.__IH_SORT('status')"><span>Status</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 170px;" class="th-sort sortable" data-sort="interval" role="button" tabindex="0" onclick="window.__IH_SORT && window.__IH_SORT('interval')"><span>Interval</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 220px;" class="th-sort sortable" data-sort="last_ping" role="button" tabindex="0" onclick="window.__IH_SORT && window.__IH_SORT('last_ping')"><span>Last ping</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 220px;" class="th-sort sortable" data-sort="last_resp" role="button" tabindex="0" onclick="window.__IH_SORT && window.__IH_SORT('last_resp')"><span>Last response</span><span class="sort-ind" aria-hidden="true"></span></th>
+            <th style="width: 120px; text-align:right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for t in targets %}
+          <tr data-name="{{ t.name }}" data-ip="{{ t.ip }}" data-status="{{ t.status }}" data-enabled="{{ t.enabled }}"
+              data-last-ping="{{ t.last_ping_epoch }}" data-last-resp="{{ t.last_response_epoch }}">
+            <td class="name-cell">
+              <div class="name-cell-inner">
+                <span class="gutter" aria-hidden="true">
+                  <input class="row-check" type="checkbox" aria-label="Select row">
+                  <span class="gutter-flash" aria-hidden="true"></span>
+                </span>
+                <code class="name-code" title="{{ t.name }}">{{ t.name }}</code>
+              </div>
+            </td>
+            <td><code>{{ t.ip }}</code></td>
+            <td>
+              <span class="chip status-chip {% if t.enabled == 0 %}status-disabled{% elif t.status == 'up' %}status-up{% elif t.status == 'down' %}status-down{% else %}status-unknown{% endif %}">
+                <span class="dot"></span>
+                <span class="status-flex">
+                  <span class="status-text">{% if t.enabled == 0 %}DISABLED{% elif t.status == 'up' %}OK{% elif t.status == 'down' %}NOT RESPONDING{% else %}{{ t.status|upper }}{% endif %}</span>
+                  <span class="snapshots" aria-hidden="true">
+                    {%- if t.snapshots -%}
+                      {%- for s in t.snapshots[:3] -%}
+                        <span class="snap-dot {{ s.state|default('unknown') }}" title="{{ s.label|default(s.state|default('unknown')) }}"></span>
+                      {%- endfor -%}
+                    {%- endif -%}
+                  </span>
+                </span>
+              </span>
+            </td>
+            <td>
+              <div class="interval-wrap">
+                <input class="interval-input" data-interval="{{ t.interval }}" value="{{ t.interval }}" inputmode="numeric" />
+                <span class="interval-suffix">s</span>
+              </div>
+            </td>
+            <td><code class="last-ping">{{ t.last_ping_human }}</code></td>
+            <td><code class="last-resp">{{ t.last_response_human }}</code></td>
+            <td style="text-align:right;">
+              <div class="menu">
+                <button class="btn btn-ghost btn-mini menu-btn" type="button" aria-label="Actions">⋯</button>
+                <div class="menu-dd" role="menu">
+                  <button class="menu-item" data-action="info" type="button">
+                    <span class="mi-ic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                    </span>
+                    <span>Information</span>
+                  </button>
+                  <button class="menu-item" data-action="test" type="button">
+                    <span class="mi-ic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    </span>
+                    <span>Test</span>
+                  </button>
+                  <button class="menu-item" data-action="edit" type="button">
+                    <span class="mi-ic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                    </span>
+                    <span>Edit</span>
+                  </button>
+                  <div class="menu-sep"></div>
+                  <button class="menu-item" data-action="enable" type="button">
+                    <span class="mi-ic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    </span>
+                    <span>Enable</span>
+                  </button>
+                  <button class="menu-item" data-action="disable" type="button">
+                    <span class="mi-ic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>
+                    </span>
+                    <span>Disable</span>
+                  </button>
+                  <div class="menu-sep"></div>
+                  <button class="menu-item danger" data-action="remove" type="button">
+                    <span class="mi-ic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                    </span>
+                    <span>Delete</span>
+                  </button>
+                </div>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="footer">
+        <div class="hint">WebUI: <code>{{ bind_host }}:{{ bind_port }}</code> • interheart <code>{{ ui_version }}</code> • <a href="#" id="openLogsFooter">Logs</a></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
+      </div>
+    </div>
+  </div>
+
+
+  
+
+  <!-- Network discovery (modal) -->
+  <div class="modal" id="discoverModal" aria-hidden="true">
+    <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-label="Network discovery">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Network discovery</b>
+          <span class="hint" id="discoverMeta">nmap • search network devices</span>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost btn-mini" id="btnCloseDiscover" type="button">Close</button>
+        </div>
+      </div>
+
+      <div class="modal-body">
+
+      <!-- Settings + actions -->
+      <div class="discover-actions" id="discoverActions">
+        <div class="discover-actions__row">
+          <div class="discover-actions__left">
+            <select class="input input--sm" id="discoverIface" aria-label="Interface">
+              <option value="auto" selected>Interface: Auto</option>
+            </select>
+            <select class="input input--sm" id="discoverScope" aria-label="Scope">
+              <option value="auto" selected>Auto (gateway first)</option>
+              <option value="10">RFC1918: 10.x.x.x</option>
+              <option value="172">RFC1918: 172.16-31.x.x</option>
+              <option value="192">RFC1918: 192.168.x.x</option>
+              <option value="all">RFC1918: All (slow)</option>
+              <option value="custom">Custom CIDR</option>
+            </select>
+            <!-- Profile selector removed: safe scan only -->
+            <input class="input input--sm" id="discoverCustom" placeholder="e.g. 10.5.0.0/16, 192.168.1.0/24" style="display:none; min-width: 240px;" />
+          </div>
+
+	          <div class="discover-actions__right">
+            <button class="btn btn-primary btn-mini" id="btnDiscoverStart" type="button">Scan now</button>
+            <button class="btn btn-ghost btn-mini" id="btnDiscoverCancel" type="button" style="display:none;">Stop</button>
+            <button class="btn btn-outline btn-mini" id="btnDiscoverResume" type="button" style="display:none;">Resume</button>
+            <button class="btn btn-ghost btn-mini" id="btnDiscoverReset" type="button" style="display:none;">Reset</button>
+            <button class="btn btn-outline btn-mini" id="btnDiscoverDebug" type="button" style="display:none;">Debug</button>
+	          </div>
+
+        </div>
+      </div>
+
+        <!-- Progress -->
+        <div class="discover-progress" id="discoverProgressWrap">
+          <div class="discover-progress__kpis">
+            <div class="kpi">
+              <div class="kpi-label">Subnets</div>
+              <div class="kpi-value" id="discoverSubnets">-</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Found</div>
+              <div class="kpi-value" id="discoverFound">0</div>
+            </div>
+            <div class="discover-progress__meta" id="discoverPercent">0%</div>
+	            <div class="discover-progress__statusInline">
+	              <div class="hint" id="discoverStatus">Idle</div>
+	              <div class="hint" id="discoverScanning">-</div>
+	            </div>
+          </div>
+
+          <div class="progress discover-progressbar">
+            <div class="progress-bar" id="discoverBar" style="width:0%"></div>
+            <div class="discover-progressbar__dots" aria-hidden="true"></div>
+          </div>
+
+          
+        </div>
+
+        <div class="alert alert--error" id="discoverError" style="display:none;"></div>
+        <div class="card card--soft" id="discoverDebugCard" style="display:none; margin-top:10px;">
+          <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <b>Discovery debug</b>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn btn-ghost btn-mini" id="btnDiscoverDebugCopy" type="button">Copy</button>
+              <button class="btn btn-ghost btn-mini" id="btnDiscoverDebugClose" type="button">Close</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <pre class="pre" id="discoverDebugOut" style="white-space:pre-wrap; word-break:break-word; max-height: 240px; overflow:auto; margin:0;">(no debug output yet)</pre>
+          </div>
+        </div>
+
+      <!-- Devices -->
+      <div class="discover-devices">
+        <div class="discover-devices__head">
+          <b>Devices</b>
+          <span class="hint" id="discoverCountHint">0 shown</span>
+        </div>
+
+        <div class="discover-devices__controls">
+          <div class="discover-searchbox">
+            <div class="input-with-clear" style="flex:1;">
+              <input id="discoverFilter" class="input" placeholder="Filter devices…">
+              <button class="btn-clear is-hidden" type="button" data-clear-for="discoverFilter" aria-label="Clear filter">×</button>
+            </div>
+            <label class="toggle" title="Show only devices that are not already added" style="white-space:nowrap;">
+              <input type="checkbox" id="discoverOnlyNew" checked />
+              <span>New devices</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="scan-list" id="discoverListEmpty">No devices</div>
+        <div class="scan-list" id="discoverList"></div>
+      </div>
+
+      <div class="card" id="discoverAddCard" style="display:none;">
+        <div class="card-head">
+          <b>Add target</b>
+          <span class="hint" id="discoverAddHint">-</span>
+        </div>
+        <div class="card-body">
+          <form id="discoverAddForm">
+            <div class="grid3">
+              <div class="field">
+                <label>Name</label>
+                <input class="input" name="name" id="discoverAddName" required>
+              </div>
+              <div class="field">
+                <label>IP address</label>
+                <input class="input" name="ip" id="discoverAddIp" required readonly>
+              </div>
+              <div class="field">
+                <label>Interval (sec)</label>
+                <input class="input" name="interval" id="discoverAddInterval" type="number" min="10" max="86400" step="1" value="60" required>
+              </div>
+            </div>
+
+            <div class="field" style="margin-top:12px;">
+              <label>Endpoint URL</label>
+              <input class="input" name="endpoint" id="discoverAddEndpoint" placeholder="https://…" required>
+              <div class="hint" id="discoverEndpointHint" style="margin-top:6px;">Tip: use http(s)://IP:port/path</div>
+            </div>
+
+            <div class="modal-foot-actions" style="margin-top:12px;">
+              <button class="btn btn-primary" type="submit" id="btnDiscoverAdd">Add target</button>
+              <button class="btn btn-ghost" type="button" id="btnDiscoverAddKeep">Add & keep open</button>
+              <button class="btn btn-ghost" type="button" id="btnDiscoverAddCancel">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="logbox logbox--compact" id="discoverLog" style="display:none;"></div>
+
+      </div>
+      </div>
+    </div>
+  </div>
+<script>
+    // Seed the UI with the server-rendered targets. This prevents the table
+    // from flashing empty before the first /state poll returns.
+    window.__INITIAL_TARGETS__ = {{ targets|tojson }};
+  </script>
+  <script src="/static/app.js?v={{ ui_version }}"></script>
+</body>
+</html>

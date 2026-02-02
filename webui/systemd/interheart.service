@@ -1,0 +1,26 @@
+# /opt/interheart/webui/systemd/interheart.service
+[Unit]
+Description=5echo interheart runner (scheduled)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Viktig:
+# CLI-en støtter IKKE `run`
+# Den støtter `run-now`
+ExecStart=/usr/local/bin/interheart run-now
+
+# Kjør som root slik at:
+# - /var/lib/interheart kan skrives
+# - ping/curl fungerer
+User=root
+Group=root
+
+# Logger til journalctl -t interheart
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

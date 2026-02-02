@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# venv
+webui/.venv/
+
+# Local state/log
+*.log
+*.tmp
