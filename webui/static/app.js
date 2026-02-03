@@ -1846,6 +1846,13 @@ function attachMenuActions(){
     return `http://${ip}`;
   }
 
+  function suggestName(dev){
+    if (!dev) return '';
+    const lbl = computeDeviceLabel(dev);
+    // Prefer hostname, then IP
+    return lbl.host || lbl.ip || '';
+  }
+
   function computeDeviceLabel(dev){
     const ip = dev.ip || '';
     const host = dev.host || '';
@@ -2128,7 +2135,7 @@ function attachMenuActions(){
   window.__ihStartDiscovery = startDiscovery;
 
   function applyPausedDiscoveryUI(){
-    discoverState.status = 'paused';
+    // discoverState was removed - UI state is managed via discoverLocalRunning/discoverLocalPaused
     discoverLocalRunning = false;
     discoverLocalPaused = true;
     discoverPauseRetries = 0;
@@ -2145,7 +2152,7 @@ function attachMenuActions(){
   }
 
   function applyRunningDiscoveryUI(){
-    discoverState.status = 'running';
+    // discoverState was removed - UI state is managed via discoverLocalRunning/discoverLocalPaused
     discoverLocalRunning = true;
     discoverLocalPaused = false;
     discoverPauseGraceUntil = 0;
@@ -2794,14 +2801,32 @@ function connectDiscoveryStream(){
     // #endregion
 
     if (ipEl) ipEl.value = ip;
-    if (nameEl) nameEl.value = suggestName(dev);
+    try{
+      if (nameEl) {
+        nameEl.value = suggestName(dev);
+      }
+    }catch(e_name){
+      // #region agent log
+      console.error('suggestName error:', e_name);
+      debugLog('app.js:2797', 'suggestName exception', {error:String(e_name)}, 'F');
+      // #endregion
+      if (nameEl) nameEl.value = ip || '';
+    }
     if (endpointEl) endpointEl.value = suggestEndpoint(ip);   
     if (intervalEl) intervalEl.value = '60';
 
     // #region agent log
-    debugLog('app.js:2621', 'calling show() on modal', {modalEl:!!modalEl,hasShowClassBefore:modalEl?.classList?.contains('show')}, 'F');
+    debugLog('app.js:2802', 'calling show() on modal', {modalEl:!!modalEl,hasShowClassBefore:modalEl?.classList?.contains('show')}, 'F');
     // #endregion
-    show(modalEl);
+    try{
+      show(modalEl);
+    }catch(e_show){
+      // #region agent log
+      console.error('show() error:', e_show);
+      debugLog('app.js:2804', 'show() exception', {error:String(e_show),modalEl:!!modalEl}, 'F');
+      // #endregion
+      throw e_show;
+    }
     // #region agent log
     debugLog('app.js:2623', 'after show() call', {hasShowClass:modalEl?.classList?.contains('show'),ariaHidden:modalEl?.getAttribute('aria-hidden')}, 'F');
     // #endregion
