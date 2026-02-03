@@ -1879,7 +1879,6 @@ function attachMenuActions(){
       shown += 1;
       const el = document.createElement('div');
       el.className = 'scan-item' + (addedNow ? ' is-added' : '') + (already ? ' is-disabled' : '');
-      el.dataset.ip = ip;
 
       const lbl = computeDeviceLabel(dev);
       const chipTxt = addedNow ? 'Added now' : (already ? 'Already added' : 'New');
@@ -1934,6 +1933,7 @@ function attachMenuActions(){
       openDiscoverAddModal(dev);
     });
   }
+
   function toggleClearButtons(){
     document.querySelectorAll('.btn-clear[data-clear-for]').forEach(btn => {
       const id = btn.getAttribute('data-clear-for');
@@ -2391,9 +2391,16 @@ async function cancelDiscovery(){
         if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
       } else if (resumeGrace && (stStatus === 'paused' || stStatus === '')){
-        // During resume grace period, ignore paused status from backend
+        // During resume grace period, ignore paused status from backend and ensure UI shows running
+        discoverLocalPaused = false;
+        discoverLocalRunning = true;
         if (discoverStatus) discoverStatus.textContent = 'Running…';
         if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
+        if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
+        if (btnDiscoverResume) btnDiscoverResume.style.display='none';
+        if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
+        if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+        setDiscoverRunning(true);
       } else {
         if (discoverStatus) discoverStatus.textContent = st.message || st.status || 'Running…';
         if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
