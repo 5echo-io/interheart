@@ -120,3 +120,12 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery pause: improve error handling to check final status before showing error toast (prevents false error messages).
   - Discovery devices: ensure click handler properly opens add modal when clicking on any part of a device item.
   - Files: webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-03 | dev | 5.45.0-beta.1+build.8 | bugfix + UI improvements
+  - Discovery: Resume button now hides Reset button when active.
+  - Discovery: Reset button properly cancels and kills running/paused workers via new /api/discover-reset endpoint, allowing fresh scans to start.
+  - Discovery: Add device modal redesigned with distinct visual styling (green accent colors) to differentiate from manual add modal.
+  - Discovery: IP address field in add modal is visually locked with lock icon indicator and readonly styling.
+  - Discovery: Removed "Restart scan" button and restart modal (Reset button provides the correct functionality).
+  - Discovery: Removed unnecessary tip text from endpoint URL field in add modal.
+  - Files: webui/app.py, webui/templates/index.html, webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION

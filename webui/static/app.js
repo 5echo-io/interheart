@@ -1613,7 +1613,6 @@ function attachMenuActions(){
   const btnDiscoverStart = $("#btnDiscoverStart");
   const btnDiscoverCancel = $("#btnDiscoverCancel");
   const btnDiscoverResume = $("#btnDiscoverResume");
-  const btnDiscoverRestart = $("#btnDiscoverRestart");
   const btnDiscoverReset = $("#btnDiscoverReset");
   const btnDiscoverDebug = $("#btnDiscoverDebug");
   const discoverDebugCard = $("#discoverDebugCard");
@@ -1642,9 +1641,6 @@ function attachMenuActions(){
   const discoverError = $("#discoverError");
   const discoverCountHint = $("#discoverCountHint");
 
-  const restartModal = $("#restartModal");
-  const btnRestartConfirm = $("#btnRestartConfirm");
-  const btnRestartCancel = $("#btnRestartCancel");
 
   const discoverAddCard = $("#discoverAddCard");
   const discoverAddForm = $("#discoverAddForm");
@@ -1718,13 +1714,6 @@ function attachMenuActions(){
     }
   }
 
-  function openRestartModal(){
-    if (restartModal) show(restartModal);
-  }
-
-  function closeRestartModal(){
-    if (restartModal) hide(restartModal);
-  }
 
   async function resetDiscoveryBackend(){
     try{
@@ -2025,7 +2014,6 @@ function attachMenuActions(){
     if (discoverSubnets) discoverSubnets.textContent = '-';
     if (discoverFound) discoverFound.textContent = '0';
     try{ if (discoverOnlyNew) discoverOnlyNew.checked = true; }catch(_){ }
-    if (btnDiscoverRestart) btnDiscoverRestart.style.display = 'none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display = 'none';
     if (btnDiscoverResume) btnDiscoverResume.style.display = 'none';
     if (btnDiscoverStart) btnDiscoverStart.style.display = 'inline-flex';
@@ -2142,7 +2130,6 @@ function attachMenuActions(){
     discoverPauseGraceUntil = Date.now() + 8000;
     if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
     if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
-    if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
     if (btnDiscoverStart) btnDiscoverStart.style.display='none';
     if (btnDiscoverReset) btnDiscoverReset.style.display='inline-flex';
     if (discoverStatus) discoverStatus.textContent = 'Paused';
@@ -2158,7 +2145,6 @@ function attachMenuActions(){
     discoverPauseGraceUntil = 0;
     discoverResumeGraceUntil = Date.now() + 8000;
     if (btnDiscoverResume) btnDiscoverResume.style.display='none';
-    if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
     if (btnDiscoverStart) btnDiscoverStart.style.display='none';
     if (btnDiscoverReset) btnDiscoverReset.style.display='none'; // Hide reset when running/resuming
@@ -2455,19 +2441,6 @@ async function cancelDiscovery(){
     setTimeout(() => { try{ pollDiscoveryFallback(); }catch(_){ } }, 400);
   }
 
-  async function restartDiscovery(){
-    closeRestartModal();
-    discoverPauseGraceUntil = 0;
-    try{
-      await apiPostJson('/api/discover-cancel', {});
-      await resetDiscoveryBackend();
-    }catch(_){ }
-    discoverResultsLastTs = 0;
-    discoverGotSSE = false;
-    discoverLastEventId = 0;
-    try{ if (discoverES){ discoverES.close(); discoverES = null; } }catch(_){ }
-    await startDiscovery();
-  }
 
   async function runDiscoveryDebug(){
     try{
@@ -2497,7 +2470,6 @@ async function cancelDiscovery(){
   window.__ihDiscoveryDebug = runDiscoveryDebug;
 
   btnDiscoverStart?.addEventListener('click', startDiscovery);
-  btnDiscoverRestart?.addEventListener('click', openRestartModal);
   btnDiscoverCancel?.addEventListener('click', () => {
     pauseDiscovery();
   });
@@ -2530,9 +2502,6 @@ async function cancelDiscovery(){
       await apiGet('/api/discover-status');
     } catch (_) {}
   });
-  btnRestartConfirm?.addEventListener('click', restartDiscovery);
-  btnRestartCancel?.addEventListener('click', closeRestartModal);
-  restartModal?.addEventListener('click', (e) => { if (e.target === restartModal) closeRestartModal(); });
   btnDiscoverDebug?.addEventListener('click', runDiscoveryDebug);
   btnDiscoverDebugClose?.addEventListener('click', closeDiscoverDebug);
   btnDiscoverDebugCopy?.addEventListener('click', async () => {
@@ -2576,7 +2545,6 @@ async function cancelDiscovery(){
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
         if (btnDiscoverStart) btnDiscoverStart.style.display='none';
         if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
-        if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
       } else if (resumeGrace && (stStatus === 'paused' || stStatus === '')){
         // During resume grace period, ignore paused status from backend
         if (discoverStatus) discoverStatus.textContent = 'Running…';
@@ -2638,7 +2606,6 @@ async function cancelDiscovery(){
       if (st && (st.status === 'running' || st.status === 'starting' || st.status === 'cancelling')){
         if (discoverLocalPaused) return;
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
-        if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
         if (btnDiscoverResume) btnDiscoverResume.style.display='none';
         if (btnDiscoverStart) btnDiscoverStart.style.display='none';
         if (discoverStatus && st.status === 'cancelling') discoverStatus.textContent = st.message || 'Cancelling…';
@@ -2651,7 +2618,6 @@ async function cancelDiscovery(){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
           if (btnDiscoverStart) btnDiscoverStart.style.display='none';
           if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
-          if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
           setDiscoverRunning(false);
         }
       }
@@ -2662,7 +2628,6 @@ async function cancelDiscovery(){
         discoverResumeGraceUntil = 0;
         if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-        if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
         if (btnDiscoverResume) btnDiscoverResume.style.display='none';
         if (btnDiscoverStart){ btnDiscoverStart.style.display='inline-flex'; btnDiscoverStart.disabled=false; }
       }
@@ -2713,7 +2678,6 @@ function connectDiscoveryStream(){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
           if (btnDiscoverStart) btnDiscoverStart.style.display='none';
           if (btnDiscoverResume) btnDiscoverResume.style.display='none';
-          if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
           if (discoverStatus && obj.status === 'cancelling') discoverStatus.textContent = obj.message || 'Cancelling…';
         }
         if (obj.status === 'paused'){
@@ -2721,13 +2685,11 @@ function connectDiscoveryStream(){
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
           if (btnDiscoverStart) btnDiscoverStart.style.display='none';
           if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
-          if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
         }
         if (obj.status === 'done' || obj.status === 'cancelled' || obj.status === 'error'){
           discoverLocalRunning = false;
           if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
           if (btnDiscoverResume) btnDiscoverResume.style.display='none';
-          if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
           if (btnDiscoverStart){ btnDiscoverStart.style.display='inline-flex'; btnDiscoverStart.disabled=false; }
         }
       }catch(e){}
@@ -2859,7 +2821,7 @@ function connectDiscoveryStream(){
     debugLog('app.js:2623', 'after show() call', {hasShowClass:modalEl?.classList?.contains('show'),ariaHidden:modalEl?.getAttribute('aria-hidden')}, 'F');
     // #endregion
     setTimeout(() => {
-      try{ if (endpointEl) endpointEl.focus(); }catch(_){}    
+      try{ if (nameEl) nameEl.focus(); }catch(_){}    
     }, 100);
   }
 

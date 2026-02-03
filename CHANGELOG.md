@@ -48,6 +48,11 @@ This project follows Semantic Versioning (SemVer).
 - WebUI Discovery: increased spacing between Subnets and Found KPIs for better readability.
 - WebUI Discovery: Pause no longer shows "Pause failed" toast when worker is already stopped or when status is idle/done/cancelled.
 - WebUI Discovery: Click handler for discovered devices now properly opens the add modal when clicking on any part of a device item.
+- WebUI Discovery: Resume button now hides Reset button when active.
+- WebUI Discovery: Reset button properly cancels and kills running/paused workers, allowing fresh scans to start.
+- WebUI Discovery: Add device modal redesigned with distinct visual styling (green accent) to differentiate from manual add modal.
+- WebUI Discovery: IP address field in add modal is visually locked with lock icon indicator.
+- WebUI Discovery: Removed "Restart scan" button (Reset button provides the correct functionality).
 
 ## v5.44.0-beta.1 – 2026-02-02
 
