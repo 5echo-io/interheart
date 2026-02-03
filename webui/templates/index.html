@@ -226,7 +226,7 @@ Last modified: 2026-02-02
           <span class="hint" id="changelogMeta">Changelog</span>
         </div>
         <div class="modal-actions">
-          <a class="btn btn-ghost btn-mini" id="btnOpenFullChangelog" href="https://github.com/5echo-io/interheart/blob/dev/CHANGELOG.md" target="_blank" rel="noreferrer">Full changelog</a>
+          <a class="btn btn-ghost btn-mini btn-no-underline" id="btnOpenFullChangelog" href="https://github.com/5echo-io/interheart/blob/dev/CHANGELOG.md" target="_blank" rel="noreferrer">Full changelog</a>
           <button class="btn btn-ghost btn-mini" id="btnCloseChangelog" type="button">Close</button>
         </div>
       </div>
@@ -258,7 +258,7 @@ Last modified: 2026-02-02
             <b>Basics</b>
             <div class="kv"><span>Name</span><code id="infoName">-</code></div>
             <div class="kv"><span>IP</span>
-              <div class="copy-wrap copy-wrap--left" title="Click to copy">
+              <div class="copy-wrap copy-wrap--right" title="Click to copy">
                 <span class="copy-ic" id="copyIpIcon" aria-hidden="true">⧉</span>
                 <code id="infoIp" class="copyable" tabindex="0" role="button" aria-label="Copy IP address">-</code>
               </div>
@@ -278,7 +278,7 @@ Last modified: 2026-02-02
           <div class="metric info-span2">
             <b>Endpoint</b>
             <div class="kv endpoint-kv"><span>URL</span>
-              <div class="copy-wrap endpoint-wrap copy-wrap--left" title="Click to copy">
+              <div class="copy-wrap endpoint-wrap copy-wrap--right" title="Click to copy">
                 <span class="copy-ic" id="copyEndpointIcon" aria-hidden="true">⧉</span>
                 <code id="infoEndpoint" class="endpoint-code copyable" tabindex="0" role="button" aria-label="Copy endpoint URL">-</code>
               </div>
@@ -664,6 +664,56 @@ Last modified: 2026-02-02
       <div class="logbox logbox--compact" id="discoverLog" style="display:none;"></div>
 
       </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add device from discovery modal -->
+  <div class="modal" id="discoverAddModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target from discovery">
+      <div class="modal-head">
+        <div class="modal-title">
+          <b>Add target</b>
+          <span>Ping target, then call endpoint on success</span>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost btn-mini" id="btnCloseDiscoverAdd" type="button">Close</button>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <form id="discoverAddModalForm">
+          <div class="grid3">
+            <div class="field">
+              <label>Name</label>
+              <input class="input" name="name" id="discoverAddModalName" required>
+            </div>
+            <div class="field">
+              <label>IP address</label>
+              <input class="input" name="ip" id="discoverAddModalIp" required readonly>
+            </div>
+            <div class="field">
+              <label>Interval (sec)</label>
+              <input class="input" name="interval" id="discoverAddModalInterval" type="number" min="10" max="86400" step="1" value="60" required>
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:12px;">
+            <label>Endpoint URL</label>
+            <input class="input" name="endpoint" id="discoverAddModalEndpoint" placeholder="https://…" required>
+            <div class="hint" style="margin-top:6px;">Tip: use http(s)://IP:port/path</div>
+          </div>
+
+          <div class="modal-foot-actions">
+            <button class="btn btn-primary" type="submit" id="btnDiscoverAddModalSubmit">Add target</button>
+            <button class="btn btn-ghost" type="button" id="btnDiscoverAddModalCancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="footer footer--modal">
+        <div class="hint">interheart <code>{{ ui_version }}</code></div>
+        <div><a href="https://5echo.io" target="_blank" rel="noreferrer">5echo.io</a> © {{ copyright_year }} All rights reserved</div>
       </div>
     </div>
   </div>

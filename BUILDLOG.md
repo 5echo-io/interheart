@@ -98,3 +98,13 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery UI: stabilize pause/resume toasts and reset streaming state on restart.
   - Info modal: move copy icons left; Found counter uses total devices on toggle.
   - Files: webui/app.py, webui/templates/index.html, webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.45.0-beta.1+build.2 | bugfix
+  - Discovery resume: prevent auto-pause after resume (grace period + backend status check).
+  - Discovery pause/resume: error toasts only show when status check confirms failure.
+  - Discovery UI: modal popup for adding found devices (replaces bottom card form).
+  - Discovery UI: show target name for already-added devices.
+  - Info modal: right-align IP address and Endpoint URL values.
+  - UI: dark mode scrollbar styling (webkit + Firefox).
+  - Changelog: remove underline from "Full changelog" button.
+  - Files: webui/app.py, webui/templates/index.html, webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION

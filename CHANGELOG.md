@@ -11,12 +11,19 @@ This project follows Semantic Versioning (SemVer).
 ### Added
 - WebUI: Changelog button in footer with modal preview.
 - WebUI: API endpoint for changelog preview in the UI.
+- WebUI Discovery: modal popup for adding found devices (replaces bottom card form).
 
 ### Changed
 - WebUI: Information modal copy icons moved to the left.
 - WebUI Discovery: restart now resets streaming/polling state for fresh results.
+- WebUI Discovery: IP address and Endpoint URL right-aligned in Information modal.
+- WebUI: scrollbar styling updated to follow dark mode theme.
+- WebUI: "Full changelog" button no longer shows underline.
 
 ### Fixed
+- WebUI Discovery: resume no longer auto-pauses after successful resume (added grace period).
+- WebUI Discovery: pause/resume error toasts only show when status check confirms failure.
+- WebUI Discovery: backend prevents auto-pause immediately after resume operation.
 - WebUI Discovery: avoid false pause/resume failure toasts when backend state is correct.
 - WebUI Discovery: Found counter no longer resets when toggling New devices.
 - WebUI Discovery: restart repopulates device list during the next scan.
@@ -35,6 +42,7 @@ This project follows Semantic Versioning (SemVer).
 - WebUI Discovery: orphaned discovery workers are cleaned up on WebUI start.
 - WebUI Discovery: status reattaches to running or paused workers even when meta is stale.
 - WebUI Discovery: workers no longer reset discovery state on import.
+- WebUI Discovery: already-added devices now display their target name for easier identification.
 
 ## v5.44.0-beta.1 – 2026-02-02
 

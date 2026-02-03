@@ -2968,6 +2968,7 @@ def api_discover_status():
                 except Exception:
                     meta['pgid'] = 0
                 # If all workers are stopped, treat as paused.
+                # But don't override status if it was just set to 'running' (e.g., after resume)
                 all_stopped = True
                 for w in workers:
                     stat = str(w.get("stat") or "")
@@ -2975,7 +2976,16 @@ def api_discover_status():
                         all_stopped = False
                         break
                 if status != "cancelling":
-                    meta['status'] = 'paused' if all_stopped else 'running'
+                    # Only auto-set paused if status wasn't explicitly set to running recently
+                    # Check if status was set to running within last 2 seconds (resume grace period)
+                    last_updated = int(meta.get('updated') or 0)
+                    now_ts = int(time.time())
+                    if all_stopped and status != 'running':
+                        meta['status'] = 'paused'
+                    elif not all_stopped and status == 'paused' and (now_ts - last_updated) > 2:
+                        # Only change paused->running if it's been paused for more than 2 seconds
+                        # This prevents immediate re-pause after resume
+                        meta['status'] = 'running'
                 save_discovery_meta(meta)
                 pid_alive = True
             except Exception:
@@ -3294,6 +3304,7 @@ def api_discover_pause():
 
     meta['status'] = 'paused'
     meta['paused_at'] = int(time.time())
+    meta['updated'] = int(time.time())
     save_discovery_meta(meta)
     append_discovery_event({'type': 'status', 'status': 'paused', 'message': 'Discovery paused'})
     return jsonify({'ok': True, 'status': 'paused'})
@@ -3340,6 +3351,7 @@ def api_discover_resume():
         return jsonify({'ok': False, 'error': 'Worker not found'}), 409
 
     meta['status'] = 'running'
+    meta['updated'] = int(time.time())
     meta.pop('paused_at', None)
     save_discovery_meta(meta)
     append_discovery_event({'type': 'status', 'status': 'running', 'message': 'Discovery resumed'})

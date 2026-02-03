@@ -1638,6 +1638,16 @@ function attachMenuActions(){
   const btnDiscoverAddKeep = $("#btnDiscoverAddKeep");
   const btnDiscoverAddCancel = $("#btnDiscoverAddCancel");
 
+  const discoverAddModal = $("#discoverAddModal");
+  const discoverAddModalForm = $("#discoverAddModalForm");
+  const discoverAddModalName = $("#discoverAddModalName");
+  const discoverAddModalIp = $("#discoverAddModalIp");
+  const discoverAddModalEndpoint = $("#discoverAddModalEndpoint");
+  const discoverAddModalInterval = $("#discoverAddModalInterval");
+  const btnDiscoverAddModalSubmit = $("#btnDiscoverAddModalSubmit");
+  const btnDiscoverAddModalCancel = $("#btnDiscoverAddModalCancel");
+  const btnCloseDiscoverAdd = $("#btnCloseDiscoverAdd");
+
   let discoverES = null;
   let discoverDevices = [];
   let discoverDeviceMap = new Map(); // key: ip
@@ -1654,6 +1664,7 @@ function attachMenuActions(){
   let discoverPauseRetryTimer = null;
   let discoverResultsLastTs = 0;
   let discoverPauseGraceUntil = 0;
+  let discoverResumeGraceUntil = 0;
 
   // Lightweight debug logger for Discovery.
   // Keeps last ~200 entries and renders them into the debug box.
@@ -1844,6 +1855,11 @@ function attachMenuActions(){
 
     // Use lastTargets (kept in sync with /state) to avoid ReferenceError in Discovery.
     const existingIps = new Set((lastTargets||[]).map(t => String(t.ip||'')).filter(Boolean));
+    const targetMapByIp = new Map();
+    (lastTargets||[]).forEach(t => {
+      const ip = String(t.ip||'').trim();
+      if (ip) targetMapByIp.set(ip, t);
+    });
 
     discoverList.innerHTML = '';
     let shown = 0;
@@ -1862,16 +1878,22 @@ function attachMenuActions(){
 
       shown += 1;
       const el = document.createElement('div');
-      el.className = 'scan-item' + (addedNow ? ' is-added' : '') + (already ? ' is-disabled' : '') + ((discoverSelected && String(discoverSelected.ip||'')===ip) ? ' is-selected' : '');
+      el.className = 'scan-item' + (addedNow ? ' is-added' : '') + (already ? ' is-disabled' : '');
 
       const lbl = computeDeviceLabel(dev);
       const chipTxt = addedNow ? 'Added now' : (already ? 'Already added' : 'New');
       const chipCls = addedNow ? 'chip chip--muted' : (already ? 'chip' : 'chip chip--ok');
+      
+      // Get target name if already added
+      const existingTarget = targetMapByIp.get(ip);
+      const targetName = existingTarget ? String(existingTarget.name||'') : '';
+      const displayName = targetName ? `${targetName} (${lbl.host || ip})` : (lbl.host || ip);
+      const displayMeta = targetName ? `${escapeHtml(ip)}${lbl.meta ? ' • ' + escapeHtml(lbl.meta) : ''}` : `${escapeHtml(ip)}${lbl.meta ? ' • ' + escapeHtml(lbl.meta) : ''}`;
 
       el.innerHTML = `
         <div class="scan-item-left">
-          <b>${escapeHtml(lbl.host || ip)}</b>
-          <div class="hint">${escapeHtml(ip)}${lbl.meta ? ' • ' + escapeHtml(lbl.meta) : ''}</div>
+          <b>${escapeHtml(displayName)}</b>
+          <div class="hint">${displayMeta}</div>
         </div>
         <div class="scan-item-right">
           <span class="${chipCls}">${chipTxt}</span>
@@ -1883,21 +1905,8 @@ function attachMenuActions(){
           toast('Network discovery', 'Already added');
           return;
         }
-        // Toggle select/deselect
-        if (discoverSelected && String(discoverSelected.ip||'') === ip){
-          discoverSelected = null;
-          if (discoverAddCard) discoverAddCard.style.display = 'none';
-          scheduleDiscoverRender();
-          return;
-        }
-        discoverSelected = dev;
-        if (discoverAddCard) discoverAddCard.style.display = 'block';
-        if (discoverAddHint) discoverAddHint.textContent = ip;
-        if (discoverAddIp) discoverAddIp.value = ip;
-        if (discoverAddName) discoverAddName.value = suggestName(dev);
-        if (discoverAddEndpoint) discoverAddEndpoint.value = suggestEndpoint(ip);
-        try{ discoverAddEndpoint?.focus(); }catch(_){}
-        scheduleDiscoverRender();
+        // Open modal instead of showing card
+        openDiscoverAddModal(dev);
       });
 
       discoverList.appendChild(el);
@@ -1929,6 +1938,7 @@ function attachMenuActions(){
     discoverLocalRunning = false;
     discoverLocalPaused = false;
     discoverPauseGraceUntil = 0;
+    discoverResumeGraceUntil = 0;
     discoverPauseRetries = 0;
     discoverResultsLastTs = 0;
     discoverGotSSE = false;
@@ -2075,6 +2085,7 @@ function attachMenuActions(){
     discoverLocalRunning = true;
     discoverLocalPaused = false;
     discoverPauseGraceUntil = 0;
+    discoverResumeGraceUntil = Date.now() + 5000;
     if (btnDiscoverResume) btnDiscoverResume.style.display='none';
     if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
@@ -2110,6 +2121,7 @@ function attachMenuActions(){
             return;
           }
         }catch(_){ }
+        // Only show error if status check confirms it's not paused
         toast('Discovery', err);
         return;
       }
@@ -2123,6 +2135,7 @@ function attachMenuActions(){
           return;
         }
       }catch(_){ }
+      // Only show error if status check confirms it's not paused
       toast('Discovery', 'Pause failed');
     }
   }
@@ -2279,6 +2292,7 @@ async function cancelDiscovery(){
       if (discoverFound && st && st.found != null) discoverFound.textContent = String(st.found);
       const stStatus = (st && st.status) ? String(st.status).toLowerCase() : '';
       const pauseGrace = discoverPauseGraceUntil && Date.now() < discoverPauseGraceUntil;
+      const resumeGrace = discoverResumeGraceUntil && Date.now() < discoverResumeGraceUntil;
       if (discoverLocalPaused && (pauseGrace || stStatus === 'running' || stStatus === 'starting')){
         if (discoverStatus) discoverStatus.textContent = 'Paused';
         if (discoverScanning) discoverScanning.textContent = '-';
@@ -2287,6 +2301,10 @@ async function cancelDiscovery(){
         if (btnDiscoverStart) btnDiscoverStart.style.display='none';
         if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
+      } else if (resumeGrace && (stStatus === 'paused' || stStatus === '')){
+        // During resume grace period, ignore paused status from backend
+        if (discoverStatus) discoverStatus.textContent = 'Running…';
+        if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
       } else {
         if (discoverStatus) discoverStatus.textContent = st.message || st.status || 'Running…';
         if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
@@ -2350,18 +2368,22 @@ async function cancelDiscovery(){
         if (discoverStatus && st.status === 'cancelling') discoverStatus.textContent = st.message || 'Cancelling…';
       }
       if (st && st.status === 'paused'){
-        discoverLocalPaused = true;
-        discoverPauseGraceUntil = Date.now() + 8000;
-        if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-        if (btnDiscoverStart) btnDiscoverStart.style.display='none';
-        if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
-        if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
-        setDiscoverRunning(false);
+        // Don't override if we're in a resume grace period
+        if (!(discoverResumeGraceUntil && Date.now() < discoverResumeGraceUntil)){
+          discoverLocalPaused = true;
+          discoverPauseGraceUntil = Date.now() + 8000;
+          if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+          if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+          if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
+          if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
+          setDiscoverRunning(false);
+        }
       }
       if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
         discoverLocalRunning = false;
         discoverLocalPaused = false;
         discoverPauseGraceUntil = 0;
+        discoverResumeGraceUntil = 0;
         if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; }
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
@@ -2475,6 +2497,52 @@ function connectDiscoveryStream(){
   btnDiscoverAddCancel?.addEventListener('click', () => {
     discoverSelected = null;
     if (discoverAddCard) discoverAddCard.style.display='none';
+  });
+
+  function openDiscoverAddModal(dev){
+    if (!dev || !discoverAddModal) return;
+    const ip = String(dev.ip||'');
+    if (!ip) return;
+    if (discoverAddModalIp) discoverAddModalIp.value = ip;
+    if (discoverAddModalName) discoverAddModalName.value = suggestName(dev);
+    if (discoverAddModalEndpoint) discoverAddModalEndpoint.value = suggestEndpoint(ip);
+    if (discoverAddModalInterval) discoverAddModalInterval.value = '60';
+    show(discoverAddModal);
+    try{ discoverAddModalEndpoint?.focus(); }catch(_){}
+  }
+
+  function closeDiscoverAddModal(){
+    if (discoverAddModal) hide(discoverAddModal);
+  }
+
+  btnCloseDiscoverAdd?.addEventListener('click', closeDiscoverAddModal);
+  btnDiscoverAddModalCancel?.addEventListener('click', closeDiscoverAddModal);
+  discoverAddModal?.addEventListener('click', (e) => { if (e.target === discoverAddModal) closeDiscoverAddModal(); });
+
+  discoverAddModalForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!discoverAddModalForm) return;
+    const fd = new FormData(discoverAddModalForm);
+    const endpoint = String(fd.get('endpoint')||'').trim();
+    if (!endpointLooksValid(endpoint)){
+      toast('Add target', 'Endpoint URL must be http:// or https://');
+      discoverAddModalEndpoint?.focus();
+      return;
+    }
+    const r = await apiPost('/api/add', fd);
+    if (!r.ok){
+      toast('Add target', r.message || 'Failed');
+      return;
+    }
+    await refreshTargets();
+    const ip = String(fd.get('ip')||'').trim();
+    if (ip){
+      const dev = discoverDeviceMap.get(ip);
+      if (dev) dev.added_now = true;
+    }
+    renderDiscoverList();
+    toast('Add target', 'Added');
+    closeDiscoverAddModal();
   });
 
   function endpointLooksValid(u){

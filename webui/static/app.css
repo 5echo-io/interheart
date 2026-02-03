@@ -119,6 +119,8 @@ code, .mono{font-family:var(--mono);font-size:12px;color:rgba(255,255,255,.88)}
 .btn-primary{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.06)}
 .btn-danger{ border-color:rgba(255,59,92,.28); background:rgba(255,59,92,.10); }
 .btn-danger:hover{ border-color:rgba(255,59,92,.40); background:rgba(255,59,92,.14); }
+.btn-no-underline{ text-decoration:none; }
+.btn-no-underline:hover{ text-decoration:none; }
 
 .right-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
@@ -776,6 +778,14 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 .copy-wrap--left code{ flex:1 1 auto; text-align:left; display:block; }
 .copy-wrap--right{ width:100%; margin-left:auto; justify-content:flex-end; }
 .copy-wrap--right code{ flex:1 1 auto; text-align:right; display:block; }
+
+/* Dark mode scrollbars */
+::-webkit-scrollbar{ width:10px; height:10px; }
+::-webkit-scrollbar-track{ background:rgba(255,255,255,.03); border-radius:5px; }
+::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.15); border-radius:5px; }
+::-webkit-scrollbar-thumb:hover{ background:rgba(255,255,255,.25); }
+/* Firefox */
+*{ scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.15) rgba(255,255,255,.03); }
 
 .endpoint-wrap{ width:100%; }
 .endpoint-code{ display:inline-block; word-break:break-all; flex:1 1 auto; text-align:left; }
