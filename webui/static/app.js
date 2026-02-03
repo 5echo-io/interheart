@@ -2148,7 +2148,7 @@ function attachMenuActions(){
     if (discoverStatus) discoverStatus.textContent = 'Paused';
     if (discoverScanning) discoverScanning.textContent = '-';
     setDiscoverRunning(false);
-    renderDiscover();
+    scheduleDiscoverRender();
   }
 
   function applyRunningDiscoveryUI(){
@@ -2163,7 +2163,7 @@ function attachMenuActions(){
     if (btnDiscoverStart) btnDiscoverStart.style.display='none';
     if (discoverStatus) discoverStatus.textContent = 'Running…';
     setDiscoverRunning(true);
-    renderDiscover();
+    scheduleDiscoverRender();
   }
 
   async function pauseDiscovery(){
@@ -2512,6 +2512,12 @@ async function cancelDiscovery(){
       // ignore; UI will still reset locally
     }
     resetDiscoverUI();
+    // Ensure start button is enabled after reset
+    if (btnDiscoverStart) {
+      btnDiscoverStart.disabled = false;
+      btnDiscoverStart.style.display = 'inline-flex';
+    }
+    discoverStartInFlight = false; // Reset the flag so start can work again
   });
   btnRestartConfirm?.addEventListener('click', restartDiscovery);
   btnRestartCancel?.addEventListener('click', closeRestartModal);
@@ -2801,18 +2807,26 @@ function connectDiscoveryStream(){
     // #endregion
 
     if (ipEl) ipEl.value = ip;
+    // Set name placeholder to IP, but leave value empty so user can type
     try{
       if (nameEl) {
-        nameEl.value = suggestName(dev);
+        const suggestedName = suggestName(dev) || ip;
+        nameEl.placeholder = suggestedName;
+        nameEl.value = ''; // Empty so user can type, placeholder will show IP
+        // If user clicks and starts typing, use their input; otherwise placeholder shows
       }
     }catch(e_name){
       // #region agent log
       console.error('suggestName error:', e_name);
       debugLog('app.js:2797', 'suggestName exception', {error:String(e_name)}, 'F');
       // #endregion
-      if (nameEl) nameEl.value = ip || '';
+      if (nameEl) {
+        nameEl.placeholder = ip || '';
+        nameEl.value = '';
+      }
     }
-    if (endpointEl) endpointEl.value = suggestEndpoint(ip);   
+    // Don't prefill endpoint - user must provide it
+    if (endpointEl) endpointEl.value = '';   
     if (intervalEl) intervalEl.value = '60';
 
     // #region agent log
@@ -2847,6 +2861,12 @@ function connectDiscoveryStream(){
     e.preventDefault();
     if (!discoverAddModalForm) return;
     const fd = new FormData(discoverAddModalForm);
+    // If name is empty, use placeholder (which contains the suggested name/IP)
+    const nameInput = discoverAddModalName;
+    const nameValue = String(fd.get('name')||'').trim();
+    if (!nameValue && nameInput && nameInput.placeholder){
+      fd.set('name', nameInput.placeholder);
+    }
     const endpoint = String(fd.get('endpoint')||'').trim();
     if (!endpointLooksValid(endpoint)){
       toast('Add target', 'Endpoint URL must be http:// or https://');
