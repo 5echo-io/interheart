@@ -114,3 +114,9 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery pause/resume: add optimistic UI updates to prevent false "failed" toasts; delay error toasts until status check confirms failure.
   - Discovery UI: increase spacing between Subnets and Found KPIs (gap: 6px → 16px).
   - Files: webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-03 | dev | 5.45.0-beta.1+build.7 | bugfix
+  - Discovery pause: fix "Pause failed" toast appearing when worker is already stopped or status is idle/done/cancelled.
+  - Discovery pause: improve error handling to check final status before showing error toast (prevents false error messages).
+  - Discovery devices: ensure click handler properly opens add modal when clicking on any part of a device item.
+  - Files: webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION

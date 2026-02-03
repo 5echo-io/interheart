@@ -2130,8 +2130,8 @@ function attachMenuActions(){
 
       if (!r || !r.ok){
         const err = (r && r.error) ? String(r.error) : 'Pause failed';
-        // If nothing is running (idle), don't show a failure toast
-        if (stStatus === 'idle' || stStatus === ''){
+        // If nothing is running (idle/done), don't show a failure toast
+        if (stStatus === 'idle' || stStatus === '' || stStatus === 'done' || stStatus === 'cancelled'){
           return;
         }
         // If status shows paused, treat as success
@@ -2152,11 +2152,13 @@ function attachMenuActions(){
           await pollDiscoveryFallback();
           return;
         }
-        // Only show error if status check confirms it's not paused
+        // Only show error if status check confirms it's not paused (after delay to allow status to update)
         setTimeout(async () => {
           try{
             const st2 = await apiGet('/api/discover-status'); 
-            if (String(st2?.status || '').toLowerCase() !== 'paused'){
+            const finalStatus = String(st2?.status || '').toLowerCase();
+            // Don't show error if status is paused, idle, done, or cancelled
+            if (finalStatus !== 'paused' && finalStatus !== 'idle' && finalStatus !== 'done' && finalStatus !== 'cancelled'){
               toast('Discovery', err);
             }
           }catch(_){ }
@@ -2187,7 +2189,9 @@ function attachMenuActions(){
       setTimeout(async () => {
         try{
           const st2 = await apiGet('/api/discover-status');   
-          if (String(st2?.status || '').toLowerCase() !== 'paused'){
+          const finalStatus = String(st2?.status || '').toLowerCase();
+          // Don't show error if status is paused, idle, done, or cancelled
+          if (finalStatus !== 'paused' && finalStatus !== 'idle' && finalStatus !== 'done' && finalStatus !== 'cancelled'){
             toast('Discovery', 'Pause failed');
           }
         }catch(_){ }

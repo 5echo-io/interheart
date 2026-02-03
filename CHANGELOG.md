@@ -46,6 +46,8 @@ This project follows Semantic Versioning (SemVer).
 - WebUI Discovery: modal popup now opens correctly when clicking discovered devices (fixed delegated click handler).
 - WebUI Discovery: pause/resume no longer shows false "failed" messages (optimistic UI updates with delayed error toasts).
 - WebUI Discovery: increased spacing between Subnets and Found KPIs for better readability.
+- WebUI Discovery: Pause no longer shows "Pause failed" toast when worker is already stopped or when status is idle/done/cancelled.
+- WebUI Discovery: Click handler for discovered devices now properly opens the add modal when clicking on any part of a device item.
 
 ## v5.44.0-beta.1 – 2026-02-02
 
