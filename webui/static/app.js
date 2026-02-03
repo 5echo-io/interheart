@@ -2161,6 +2161,7 @@ function attachMenuActions(){
     if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
     if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
     if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+    if (btnDiscoverReset) btnDiscoverReset.style.display='none'; // Hide reset when running/resuming
     if (discoverStatus) discoverStatus.textContent = 'Running…';
     setDiscoverRunning(true);
     scheduleDiscoverRender();
@@ -2507,10 +2508,16 @@ async function cancelDiscovery(){
 
   btnDiscoverReset?.addEventListener('click', async () => {
     try {
-      await fetch('/api/discover-reset', { method: 'POST' });
+      const r = await fetch('/api/discover-reset', { method: 'POST' });
+      if (!r.ok) {
+        console.warn('Reset API call failed, but continuing with local reset');
+      }
     } catch (e) {
       // ignore; UI will still reset locally
+      console.warn('Reset API call error:', e);
     }
+    // Wait a bit for workers to be killed before resetting UI
+    await new Promise(resolve => setTimeout(resolve, 300));
     resetDiscoverUI();
     // Ensure start button is enabled after reset
     if (btnDiscoverStart) {
@@ -2518,6 +2525,10 @@ async function cancelDiscovery(){
       btnDiscoverStart.style.display = 'inline-flex';
     }
     discoverStartInFlight = false; // Reset the flag so start can work again
+    // Force a status check to ensure backend state is synced
+    try {
+      await apiGet('/api/discover-status');
+    } catch (_) {}
   });
   btnRestartConfirm?.addEventListener('click', restartDiscovery);
   btnRestartCancel?.addEventListener('click', closeRestartModal);
@@ -2806,7 +2817,10 @@ function connectDiscoveryStream(){
     debugLog('app.js:2614', 'form elements check', {nameEl:!!nameEl,ipEl:!!ipEl,endpointEl:!!endpointEl,intervalEl:!!intervalEl,modalEl:!!modalEl}, 'F');
     // #endregion
 
-    if (ipEl) ipEl.value = ip;
+    if (ipEl) {
+      ipEl.value = ip;
+      ipEl.classList.add('input--locked'); // Add locked styling
+    }
     // Set name placeholder to IP, but leave value empty so user can type
     try{
       if (nameEl) {
@@ -2818,7 +2832,7 @@ function connectDiscoveryStream(){
     }catch(e_name){
       // #region agent log
       console.error('suggestName error:', e_name);
-      debugLog('app.js:2797', 'suggestName exception', {error:String(e_name)}, 'F');
+      debugLog('app.js:2812', 'suggestName exception', {error:String(e_name)}, 'F');
       // #endregion
       if (nameEl) {
         nameEl.placeholder = ip || '';
@@ -2851,6 +2865,9 @@ function connectDiscoveryStream(){
 
   function closeDiscoverAddModal(){
     if (discoverAddModal) hide(discoverAddModal);
+    // Remove locked styling when closing
+    const ipEl = discoverAddModalIp || document.getElementById('discoverAddModalIp');
+    if (ipEl) ipEl.classList.remove('input--locked');
   }
 
   btnCloseDiscoverAdd?.addEventListener('click', closeDiscoverAddModal);

@@ -383,6 +383,44 @@ tr.flash-down{ animation: rowFail 1s ease; }
 
 .modal-card--wide{ width:min(980px, calc(100vw - 24px)); }
 
+/* Discovery modal styling - visually distinct */
+.modal-card--discovery{
+  border-color: rgba(53,211,159,.25);
+  background: linear-gradient(180deg, rgba(53,211,159,.08), rgba(10,16,28,.94));
+}
+.modal-head--discovery{
+  background: rgba(53,211,159,.05);
+  border-bottom-color: rgba(53,211,159,.20);
+}
+.modal-head--discovery .modal-title b{
+  color: rgba(53,211,159,.95);
+}
+
+/* Locked input field styling */
+.input--locked{
+  background: rgba(255,255,255,.02) !important;
+  border-color: rgba(255,255,255,.08) !important;
+  color: rgba(255,255,255,.70) !important;
+  cursor: not-allowed;
+  position: relative;
+  padding-right: 36px;
+}
+.input--locked::after{
+  content: '🔒';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.5;
+  pointer-events: none;
+  font-size: 14px;
+}
+.input--locked:focus{
+  border-color: rgba(255,255,255,.08) !important;
+  filter: none !important;
+  background: rgba(255,255,255,.02) !important;
+}
+
 .modal-foot-actions--split{
   display:flex;
   align-items:center;

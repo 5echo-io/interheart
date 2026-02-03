@@ -670,11 +670,11 @@ Last modified: 2026-02-02
 
   <!-- Add device from discovery modal -->
   <div class="modal" id="discoverAddModal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add target from discovery">
-      <div class="modal-head">
+    <div class="modal-card modal-card--discovery" role="dialog" aria-modal="true" aria-label="Add target from discovery">
+      <div class="modal-head modal-head--discovery">
         <div class="modal-title">
-          <b>Add target from Discovery</b>
-          <span>Add discovered device as a monitoring target</span>
+          <b>Add discovered device</b>
+          <span>From Network Discovery</span>
         </div>
         <div class="modal-actions">
           <button class="btn btn-ghost btn-mini" id="btnCloseDiscoverAdd" type="button">Close</button>
@@ -690,7 +690,7 @@ Last modified: 2026-02-02
             </div>
             <div class="field">
               <label>IP address</label>
-              <input class="input" name="ip" id="discoverAddModalIp" required readonly>
+              <input class="input input--locked" name="ip" id="discoverAddModalIp" required readonly>
             </div>
             <div class="field">
               <label>Interval (sec)</label>
@@ -701,7 +701,6 @@ Last modified: 2026-02-02
           <div class="field" style="margin-top:12px;">
             <label>Endpoint URL</label>
             <input class="input" name="endpoint" id="discoverAddModalEndpoint" placeholder="https://…" required>
-            <div class="hint" style="margin-top:6px;">Tip: use http(s)://IP:port/path</div>
           </div>
 
           <div class="modal-foot-actions">

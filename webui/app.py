@@ -3382,6 +3382,65 @@ def api_discover_resume():
     append_discovery_event({'type': 'status', 'status': 'running', 'message': 'Discovery resumed'})
     return jsonify({'ok': True, 'status': 'running'})
 
+
+@APP.post('/api/discover-reset')
+def api_discover_reset():
+    """Reset discovery state and cancel any running/paused workers."""
+    # Set cancel flag first
+    try:
+        (STATE_DIR / 'discovery_cancel').write_text('1', encoding='utf-8')
+    except Exception:
+        pass
+    
+    # Cancel any running workers
+    try:
+        meta = load_discovery_meta() or {}
+        pid = int(meta.get('pid') or 0)
+        pgid = int(meta.get('pgid') or 0)
+        worker_pids = _find_discovery_worker_pids()
+        
+        # Kill any running workers
+        target_pgids = set()
+        if pid > 0:
+            try:
+                target_pgids.add(int(pgid or os.getpgid(pid)))
+            except Exception:
+                pass
+        for wp in worker_pids:
+            try:
+                target_pgids.add(int(os.getpgid(int(wp))))
+            except Exception:
+                continue
+        
+        for g in target_pgids:
+            try:
+                os.killpg(g, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+        # Wait a bit, then force kill if still running
+        time.sleep(0.6)
+        # Re-check for any remaining workers
+        remaining_workers = _find_discovery_worker_pids()
+        if remaining_workers:
+            for g in target_pgids:
+                try:
+                    os.killpg(g, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+    except Exception:
+        pass
+    
+    # Clean up cancel flag
+    try:
+        (STATE_DIR / 'discovery_cancel').unlink(missing_ok=True)
+    except Exception:
+        pass
+    
+    # Reset state
+    reset_discovery_state("user_reset")
+    return jsonify({'ok': True, 'message': 'Discovery reset'})
+
+
 @APP.get('/api/netifs')
 def api_netifs():
     """Return a list of local network interfaces.
