@@ -52,6 +52,17 @@
 
   // ---- Client debug reporting ----
   let _clientLogLast = 0;
+  // Debug logging helper for agent instrumentation
+  function debugLog(location, message, data, hypothesisId){
+    try{
+      const logData = {location, message, data, timestamp:Date.now(), sessionId:'debug-session', runId:'run1', hypothesisId:hypothesisId||'X'};
+      console.log('[DEBUG]', logData);
+      reportClientLog('INFO', `[DEBUG] ${location}: ${message}`, logData);
+    }catch(e){
+      console.error('debugLog error:', e);
+    }
+  }
+
   function reportClientLog(level, message, context){
     try{
       const now = Date.now();
@@ -1921,35 +1932,35 @@ function attachMenuActions(){
     discoverList.dataset.bound = '1';
     discoverList.addEventListener('click', (e) => {
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:1922',message:'click event on discoverList',data:{targetTag:e.target?.tagName,targetClass:e.target?.className,targetId:e.target?.id,discoverListExists:!!discoverList},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      debugLog('app.js:1922', 'click event on discoverList', {targetTag:e.target?.tagName,targetClass:e.target?.className,targetId:e.target?.id,discoverListExists:!!discoverList}, 'E');
       // #endregion
       const item = e.target?.closest?.('.scan-item');
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:1924',message:'scan-item closest check',data:{itemFound:!!item,itemIp:item?.dataset?.ip,itemClass:item?.className},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      debugLog('app.js:1924', 'scan-item closest check', {itemFound:!!item,itemIp:item?.dataset?.ip,itemClass:item?.className}, 'E');
       // #endregion
       if (!item) return;
       e.stopPropagation();
       e.preventDefault();
       const ip = String(item.dataset.ip || '').trim();        
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:1929',message:'extracted IP from item',data:{ip,ipLength:ip.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      debugLog('app.js:1929', 'extracted IP from item', {ip,ipLength:ip.length}, 'E');
       // #endregion
       if (!ip) return;
       const dev = discoverDeviceMap.get(ip);
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:1932',message:'device lookup from map',data:{ip,devFound:!!dev,devIp:dev?.ip,mapSize:discoverDeviceMap.size},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      debugLog('app.js:1932', 'device lookup from map', {ip,devFound:!!dev,devIp:dev?.ip,mapSize:discoverDeviceMap.size}, 'E');
       // #endregion
       if (!dev) return;
       const alreadyAdded = isAlreadyAddedDevice(dev);
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:1935',message:'already added check',data:{ip,alreadyAdded},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      debugLog('app.js:1935', 'already added check', {ip,alreadyAdded}, 'E');
       // #endregion
       if (alreadyAdded){
         toast('Network discovery', 'Already added');
         return;
       }
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:1940',message:'calling openDiscoverAddModal',data:{ip,devIp:dev?.ip},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      debugLog('app.js:1940', 'calling openDiscoverAddModal', {ip,devIp:dev?.ip}, 'E');
       // #endregion
       openDiscoverAddModal(dev);
     });
@@ -2137,17 +2148,17 @@ function attachMenuActions(){
 
   async function pauseDiscovery(){
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2131',message:'pauseDiscovery START',data:{discoverLocalRunning,discoverLocalPaused,discoverPauseRetries},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    debugLog('app.js:2131', 'pauseDiscovery START', {discoverLocalRunning,discoverLocalPaused,discoverPauseRetries}, 'A');
     // #endregion
     try{
       // Optimistic UI: show paused immediately
       applyPausedDiscoveryUI();
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2135',message:'calling apiPostJson pause',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      debugLog('app.js:2135', 'calling apiPostJson pause', {}, 'A');
       // #endregion
       const r = await apiPostJson('/api/discover-pause', {}); 
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2137',message:'pause API response',data:{ok:r?.ok,error:r?.error,status:r?.status,note:r?.note},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      debugLog('app.js:2137', 'pause API response', {ok:r?.ok,error:r?.error,status:r?.status,note:r?.note}, 'A');
       // #endregion
       // Always check status after API call, regardless of response
       let st = null;
@@ -2155,30 +2166,30 @@ function attachMenuActions(){
         st = await apiGet('/api/discover-status');
       }catch(e){
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2143',message:'status check exception',data:{error:String(e)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        debugLog('app.js:2143', 'status check exception', {error:String(e)}, 'A');
         // #endregion
       }
       const stStatus = st ? String(st?.status || '').toLowerCase() : '';
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2147',message:'immediate status check',data:{stStatus,apiOk:r?.ok,apiError:r?.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      debugLog('app.js:2147', 'immediate status check', {stStatus,apiOk:r?.ok,apiError:r?.error}, 'A');
       // #endregion
 
       if (!r || !r.ok){
         const err = (r && r.error) ? String(r.error) : 'Pause failed';
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2151',message:'API returned !ok',data:{err,stStatus,willReturnEarly:['idle','','done','cancelled'].includes(stStatus)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        debugLog('app.js:2151', 'API returned !ok', {err,stStatus,willReturnEarly:['idle','','done','cancelled'].includes(stStatus)}, 'B');
         // #endregion
         // If nothing is running (idle/done), don't show a failure toast
         if (stStatus === 'idle' || stStatus === '' || stStatus === 'done' || stStatus === 'cancelled'){
           // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2154',message:'returning early - idle/done/cancelled',data:{stStatus},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          debugLog('app.js:2154', 'returning early - idle/done/cancelled', {stStatus}, 'B');
           // #endregion
           return;
         }
         // If status shows paused, treat as success
         if (stStatus === 'paused'){
           // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2159',message:'status is paused - treating as success',data:{stStatus},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          debugLog('app.js:2159', 'status is paused - treating as success', {stStatus}, 'B');
           // #endregion
           applyPausedDiscoveryUI();
           return;
@@ -2186,7 +2197,7 @@ function attachMenuActions(){
         // If the worker is already gone, treat this as "stopped" and just refresh.
         if (err.toLowerCase().includes('no worker') || err.toLowerCase().includes('worker not')){
           // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2165',message:'worker not found - handling',data:{err,discoverLocalRunning,discoverPauseRetries,willRetry:discoverLocalRunning && discoverPauseRetries < 3},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          debugLog('app.js:2165', 'worker not found - handling', {err,discoverLocalRunning,discoverPauseRetries,willRetry:discoverLocalRunning && discoverPauseRetries < 3}, 'B');
           // #endregion
           if (discoverLocalRunning && discoverPauseRetries < 3){
             discoverPauseRetries += 1;
@@ -2201,25 +2212,25 @@ function attachMenuActions(){
         }
         // Only show error if status check confirms it's not paused (after delay to allow status to update)
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2177',message:'scheduling delayed status check',data:{err,stStatus},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        debugLog('app.js:2177', 'scheduling delayed status check', {err,stStatus}, 'C');
         // #endregion
         setTimeout(async () => {
           try{
             const st2 = await apiGet('/api/discover-status'); 
             const finalStatus = String(st2?.status || '').toLowerCase();
             // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2181',message:'delayed status check result',data:{finalStatus,willShowToast:finalStatus !== 'paused' && finalStatus !== 'idle' && finalStatus !== 'done' && finalStatus !== 'cancelled',err},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+            debugLog('app.js:2181', 'delayed status check result', {finalStatus,willShowToast:finalStatus !== 'paused' && finalStatus !== 'idle' && finalStatus !== 'done' && finalStatus !== 'cancelled',err}, 'C');
             // #endregion
             // Don't show error if status is paused, idle, done, or cancelled
             if (finalStatus !== 'paused' && finalStatus !== 'idle' && finalStatus !== 'done' && finalStatus !== 'cancelled'){
               // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2185',message:'SHOWING ERROR TOAST',data:{finalStatus,err},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+              debugLog('app.js:2185', 'SHOWING ERROR TOAST', {finalStatus,err}, 'C');
               // #endregion
               toast('Discovery', err);
             }
           }catch(e){
             // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2189',message:'delayed status check exception',data:{error:String(e)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+            debugLog('app.js:2189', 'delayed status check exception', {error:String(e)}, 'C');
             // #endregion
           }
         }, 600);
@@ -2228,7 +2239,7 @@ function attachMenuActions(){
       // If API says ok but status check shows not paused, check status again after short delay
       if (stStatus !== 'paused'){
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2195',message:'API ok but status not paused - scheduling recheck',data:{stStatus},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        debugLog('app.js:2195', 'API ok but status not paused - scheduling recheck', {stStatus}, 'A');
         // #endregion
         setTimeout(async () => {
           try{
@@ -2240,18 +2251,18 @@ function attachMenuActions(){
         }, 300);
       }
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2203',message:'pauseDiscovery SUCCESS path',data:{stStatus},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      debugLog('app.js:2203', 'pauseDiscovery SUCCESS path', {stStatus}, 'A');
       // #endregion
       applyPausedDiscoveryUI();
     }catch(e){
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2206',message:'pauseDiscovery EXCEPTION',data:{error:String(e),stack:e?.stack},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      debugLog('app.js:2206', 'pauseDiscovery EXCEPTION', {error:String(e),stack:e?.stack}, 'D');
       // #endregion
       try{
         const st = await apiGet('/api/discover-status');      
         const stStatus = String(st?.status || '').toLowerCase();
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2209',message:'exception handler status check',data:{stStatus},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        debugLog('app.js:2209', 'exception handler status check', {stStatus}, 'D');
         // #endregion
         if (stStatus === 'paused'){
           applyPausedDiscoveryUI();
@@ -2259,7 +2270,7 @@ function attachMenuActions(){
         }
       }catch(e2){
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2214',message:'exception handler status check failed',data:{error:String(e2)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        debugLog('app.js:2214', 'exception handler status check failed', {error:String(e2)}, 'D');
         // #endregion
       }
       setTimeout(async () => {
@@ -2267,12 +2278,12 @@ function attachMenuActions(){
           const st2 = await apiGet('/api/discover-status');   
           const finalStatus = String(st2?.status || '').toLowerCase();
           // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2219',message:'exception delayed status check',data:{finalStatus,willShowToast:finalStatus !== 'paused' && finalStatus !== 'idle' && finalStatus !== 'done' && finalStatus !== 'cancelled'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+          debugLog('app.js:2219', 'exception delayed status check', {finalStatus,willShowToast:finalStatus !== 'paused' && finalStatus !== 'idle' && finalStatus !== 'done' && finalStatus !== 'cancelled'}, 'D');
           // #endregion
           // Don't show error if status is paused, idle, done, or cancelled
           if (finalStatus !== 'paused' && finalStatus !== 'idle' && finalStatus !== 'done' && finalStatus !== 'cancelled'){
             // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2223',message:'SHOWING ERROR TOAST from exception',data:{finalStatus},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+            debugLog('app.js:2223', 'SHOWING ERROR TOAST from exception', {finalStatus}, 'D');
             // #endregion
             toast('Discovery', 'Pause failed');
           }
@@ -2678,30 +2689,30 @@ function connectDiscoveryStream(){
 
   function openDiscoverAddModal(dev){
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2593',message:'openDiscoverAddModal START',data:{dev:!!dev,ip:dev?.ip},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+    debugLog('app.js:2593', 'openDiscoverAddModal START', {dev:!!dev,ip:dev?.ip}, 'F');
     // #endregion
     if (!dev) {
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2595',message:'openDiscoverAddModal - no dev',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      debugLog('app.js:2595', 'openDiscoverAddModal - no dev', {}, 'F');
       // #endregion
       return;
     }
     const ip = String(dev.ip||'');
     if (!ip) {
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2599',message:'openDiscoverAddModal - no ip',data:{dev},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      debugLog('app.js:2599', 'openDiscoverAddModal - no ip', {dev}, 'F');
       // #endregion
       return;
     }
     // Ensure modal element exists - try to find it if not already bound
     let modalEl = discoverAddModal;
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2603',message:'checking modal element',data:{discoverAddModalExists:!!discoverAddModal},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+    debugLog('app.js:2603', 'checking modal element', {discoverAddModalExists:!!discoverAddModal}, 'F');
     // #endregion
     if (!modalEl){
       modalEl = document.getElementById('discoverAddModal');  
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2606',message:'looked up modal by ID',data:{found:!!modalEl},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      debugLog('app.js:2606', 'looked up modal by ID', {found:!!modalEl}, 'F');
       // #endregion
       if (!modalEl){
         console.error('discoverAddModal element not found');  
@@ -2715,7 +2726,7 @@ function connectDiscoveryStream(){
     const endpointEl = discoverAddModalEndpoint || document.getElementById('discoverAddModalEndpoint');
     const intervalEl = discoverAddModalInterval || document.getElementById('discoverAddModalInterval');
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2614',message:'form elements check',data:{nameEl:!!nameEl,ipEl:!!ipEl,endpointEl:!!endpointEl,intervalEl:!!intervalEl,modalEl:!!modalEl},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+    debugLog('app.js:2614', 'form elements check', {nameEl:!!nameEl,ipEl:!!ipEl,endpointEl:!!endpointEl,intervalEl:!!intervalEl,modalEl:!!modalEl}, 'F');
     // #endregion
 
     if (ipEl) ipEl.value = ip;
@@ -2724,11 +2735,11 @@ function connectDiscoveryStream(){
     if (intervalEl) intervalEl.value = '60';
 
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2621',message:'calling show() on modal',data:{modalEl:!!modalEl,hasShowClassBefore:modalEl?.classList?.contains('show')},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+    debugLog('app.js:2621', 'calling show() on modal', {modalEl:!!modalEl,hasShowClassBefore:modalEl?.classList?.contains('show')}, 'F');
     // #endregion
     show(modalEl);
     // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f5058679-9c53-4b0f-953b-4c441a9a4c8f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app.js:2623',message:'after show() call',data:{hasShowClass:modalEl?.classList?.contains('show'),ariaHidden:modalEl?.getAttribute('aria-hidden')},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+    debugLog('app.js:2623', 'after show() call', {hasShowClass:modalEl?.classList?.contains('show'),ariaHidden:modalEl?.getAttribute('aria-hidden')}, 'F');
     // #endregion
     setTimeout(() => {
       try{ if (endpointEl) endpointEl.focus(); }catch(_){}    
