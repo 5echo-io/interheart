@@ -6,6 +6,57 @@ This project follows Semantic Versioning (SemVer).
 
 ---
 
+## [Unreleased]
+
+### Added
+- WebUI: Changelog button in footer with modal preview.
+- WebUI: API endpoint for changelog preview in the UI.
+- WebUI Discovery: modal popup for adding found devices (replaces bottom card form).
+
+### Changed
+- WebUI: Information modal copy icons moved to the left.
+- WebUI Discovery: restart now resets streaming/polling state for fresh results.
+- WebUI Discovery: IP address and Endpoint URL right-aligned in Information modal.
+- WebUI: scrollbar styling updated to follow dark mode theme.
+- WebUI: "Full changelog" button no longer shows underline.
+
+### Fixed
+- WebUI Discovery: resume no longer auto-pauses after successful resume (added grace period).
+- WebUI Discovery: pause/resume error toasts only show when status check confirms failure.
+- WebUI Discovery: backend prevents auto-pause immediately after resume operation.
+- WebUI Discovery: avoid false pause/resume failure toasts when backend state is correct.
+- WebUI Discovery: Found counter no longer resets when toggling New devices.
+- WebUI Discovery: restart repopulates device list during the next scan.
+- WebUI Discovery: keep progress bar in running state during startup.
+- WebUI Discovery: Pause handles missing worker without error spam.
+- WebUI Discovery: KPI spacing tightened and percent aligned with status text.
+- WebUI Discovery: Pause now succeeds when status is running but worker PID is missing.
+- WebUI Discovery: Pause no longer reports "already stopped" during active scans.
+- WebUI Discovery: Restart confirmation uses a modal instead of a browser prompt.
+- WebUI Discovery: Paused state no longer flips back to running automatically.
+- WebUI Discovery: Pause waits for worker PID before marking paused.
+- WebUI Discovery: Resume falls back to restarting when no worker exists.
+- WebUI Discovery: Devices list updates via fallback polling when SSE is blocked.
+- WebUI Discovery: Progress layout flipped (percent/status left, KPIs right).
+- WebUI Discovery: Pause keeps animations stopped and preserves Resume/Restart buttons.
+- WebUI Discovery: orphaned discovery workers are cleaned up on WebUI start.
+- WebUI Discovery: status reattaches to running or paused workers even when meta is stale.
+- WebUI Discovery: workers no longer reset discovery state on import.
+- WebUI Discovery: already-added devices now display their target name for easier identification.
+
+## v5.44.0-beta.1 – 2026-02-02
+
+### Added
+- WebUI Discovery: Pause/Resume/Restart scan controls.
+
+### Changed
+- WebUI Discovery: Progress layout stabilized (percent/status column) and Subnets/Found spacing tightened.
+- WebUI Discovery: Progress bar visuals improved (pulsing green fill + animated dotted remainder).
+- WebUI Discovery: Devices list controls redesigned for cleaner search/toggle UX.
+
+### Fixed
+- WebUI Run now: remove duplicate completion toast.
+
 ## v5.43.0-beta.6 – 2026-02-01
 
 ### Added

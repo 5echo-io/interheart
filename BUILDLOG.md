@@ -47,3 +47,64 @@ Technical build notes intended for iterative zip handoffs.
   - Fix CLI self-test: restore missing require_root helper in the installed interheart.sh.
   - Files: webui/app.py, webui/static/app.js, interheart.sh, VERSION
 
+- 2026-02-02 | dev | 5.43.0-beta.6+build.5 | bugfix
+  - Fix Discovery progress visibility: progress block shows immediately on start and during fallback polling.
+  - Fix Discovery Stop action: Stop cancels the scan to prevent pause errors when no worker is running.
+  - Files: webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.1 | ui-build
+  - Discovery UI polish: stabilize KPI layout, tighten Subnets/Found spacing, add percent/status column.
+  - Discovery controls: Stop now pauses; add Resume and Restart actions with proper state transitions.
+  - Progress bar: pulsing green fill + animated dotted remainder; update devices controls UX.
+  - Run now: prevent duplicate completion toast.
+  - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.2 | bugfix
+  - Discovery progress: keep running state during startup and align percent with status text.
+  - Discovery pause: handle missing worker by stopping cleanly without error spam.
+  - Discovery KPIs: tighten Subnets/Found spacing.
+  - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.3 | bugfix
+  - Discovery pause: treat missing PID as paused when status is running/starting.
+  - Discovery progress: keep running animation independent of progress events.
+  - Files: webui/app.py, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.4 | bugfix
+  - Discovery pause: avoid false "already stopped" toast and preserve paused UI state.
+  - Discovery restart: move confirmation to modal and remove pause warning.
+  - Files: webui/templates/index.html, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.5 | bugfix
+  - Discovery pause: retry until worker PID appears; preserve paused state.
+  - Discovery resume: restart scan when no worker exists.
+  - Discovery results: fallback polling to populate devices when SSE is blocked.
+  - Discovery layout: move percent/status left, KPIs right; restart modal matches delete style.
+  - Files: webui/templates/index.html, webui/static/app.css, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.6 | bugfix
+  - Discovery pause: stop running animation and keep Resume/Restart visible while paused.
+  - Discovery pause: prevent auto-resume during pause grace window.
+  - Files: webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.7 | bugfix
+  - Discovery workers: clean up orphaned workers/nmap on WebUI start to avoid stale scans.
+  - Discovery status: reattach to real workers (paused/running) when meta PID is missing.
+  - Discovery workers: avoid resetting discovery state inside worker imports.
+  - Files: webui/app.py, webui/discovery_worker.py, webui/scan_worker.py, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.45.0-beta.1+build.1 | ui-build
+  - Changelog modal + footer link; backend endpoint to load recent changes.
+  - Discovery UI: stabilize pause/resume toasts and reset streaming state on restart.
+  - Info modal: move copy icons left; Found counter uses total devices on toggle.
+  - Files: webui/app.py, webui/templates/index.html, webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.45.0-beta.1+build.2 | bugfix
+  - Discovery resume: prevent auto-pause after resume (grace period + backend status check).
+  - Discovery pause/resume: error toasts only show when status check confirms failure.
+  - Discovery UI: modal popup for adding found devices (replaces bottom card form).
+  - Discovery UI: show target name for already-added devices.
+  - Info modal: right-align IP address and Endpoint URL values.
+  - UI: dark mode scrollbar styling (webkit + Firefox).
+  - Changelog: remove underline from "Full changelog" button.
+  - Files: webui/app.py, webui/templates/index.html, webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION
