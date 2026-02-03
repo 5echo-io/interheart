@@ -21,12 +21,6 @@ This project follows Semantic Versioning (SemVer).
 - WebUI: "Full changelog" button no longer shows underline.
 
 ### Fixed
-- WebUI Discovery: pause/resume uses optimistic UI and delayed toasts to avoid false failures.
-- WebUI Discovery: pause/resume now handles non-posix systems by updating status without signals.
-- WebUI Discovery: device click handler uses delegated binding for reliable modal opening.
-- WebUI Discovery: pause/resume now properly maintains UI state during grace periods (prevents flickering).
-- WebUI Discovery: resume grace period properly maintains running state and prevents auto-pause.
-- WebUI Discovery: add device modal now properly opens when clicking found devices (improved element lookup).
 - WebUI Discovery: resume no longer auto-pauses after successful resume (added grace period).
 - WebUI Discovery: pause/resume error toasts only show when status check confirms failure.
 - WebUI Discovery: backend prevents auto-pause immediately after resume operation.
@@ -49,6 +43,9 @@ This project follows Semantic Versioning (SemVer).
 - WebUI Discovery: status reattaches to running or paused workers even when meta is stale.
 - WebUI Discovery: workers no longer reset discovery state on import.
 - WebUI Discovery: already-added devices now display their target name for easier identification.
+- WebUI Discovery: modal popup now opens correctly when clicking discovered devices (fixed delegated click handler).
+- WebUI Discovery: pause/resume no longer shows false "failed" messages (optimistic UI updates with delayed error toasts).
+- WebUI Discovery: increased spacing between Subnets and Found KPIs for better readability.
 
 ## v5.44.0-beta.1 – 2026-02-02
 

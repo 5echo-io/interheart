@@ -109,23 +109,8 @@ Technical build notes intended for iterative zip handoffs.
   - Changelog: remove underline from "Full changelog" button.
   - Files: webui/app.py, webui/templates/index.html, webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION
 
-- 2026-02-02 | dev | 5.45.0-beta.1+build.3 | bugfix
-  - Discovery pause: check status BEFORE showing error toast to prevent false "Pause failed" messages.
-  - Discovery resume: check status BEFORE showing error toast to prevent false "Resume failed" messages.
-  - Discovery resume: increase grace period to 8 seconds and improve backend logic to respect grace period.
-  - Discovery UI: fix device click handler to properly open add modal (add stopPropagation).
-  - Discovery UI: add fallback check for modal element if not found during initialization.
-  - Files: webui/app.py, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
-
-- 2026-02-02 | dev | 5.45.0-beta.1+build.4 | bugfix
-  - Discovery pause/resume: improve grace period handling in pollDiscoveryFallback to prevent UI flickering.
-  - Discovery resume: ensure running state is maintained during resume grace period even if backend shows paused.
-  - Discovery UI: improve add modal element lookup with fallback to getElementById and better error handling.
-  - Discovery UI: add preventDefault to device click handler and cursor pointer styling to ensure modal opens properly.
+- 2026-02-03 | dev | 5.45.0-beta.1+build.6 | bugfix
+  - Discovery modal: fix delegated click handler setup to prevent modal from not opening when clicking devices.
+  - Discovery pause/resume: add optimistic UI updates to prevent false "failed" toasts; delay error toasts until status check confirms failure.
+  - Discovery UI: increase spacing between Subnets and Found KPIs (gap: 6px → 16px).
   - Files: webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION
-
-- 2026-02-02 | dev | 5.45.0-beta.1+build.5 | bugfix
-  - Discovery pause/resume: optimistic UI with delayed error toasts to avoid false failures.
-  - Discovery pause/resume: allow non-posix systems to update status without signals.
-  - Discovery UI: delegated click handler on devices list for reliable modal opening.
-  - Files: webui/app.py, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
