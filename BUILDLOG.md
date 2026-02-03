@@ -92,3 +92,9 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery status: reattach to real workers (paused/running) when meta PID is missing.
   - Discovery workers: avoid resetting discovery state inside worker imports.
   - Files: webui/app.py, webui/discovery_worker.py, webui/scan_worker.py, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.45.0-beta.1+build.1 | ui-build
+  - Changelog modal + footer link; backend endpoint to load recent changes.
+  - Discovery UI: stabilize pause/resume toasts and reset streaming state on restart.
+  - Info modal: move copy icons left; Found counter uses total devices on toggle.
+  - Files: webui/app.py, webui/templates/index.html, webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION

@@ -5,7 +5,7 @@
  * Purpose: WebUI styling.
  * Path: /webui/static/app.css
  * Created: 2026-02-01
- * Last modified: 2026-02-01
+ * Last modified: 2026-02-02
  * =============================================================================
  */
 
@@ -16,7 +16,7 @@
  * Purpose: WebUI styling.
  * Path: /opt/interheart/webui/static/app.css
  * Created: 2026-02-01
- * Last modified: 2026-02-01
+ * Last modified: 2026-02-02
  * =============================================================================
  */
 
@@ -752,6 +752,18 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 .run-details{ margin-top:10px; }
 
 .modal-card--info{ width:min(880px, calc(100vw - 40px)); }
+.changelog-body{
+  margin:0;
+  padding:12px;
+  border-radius:10px;
+  background: rgba(18, 22, 28, .55);
+  border:1px solid rgba(255,255,255,.08);
+  max-height: 420px;
+  overflow:auto;
+  white-space:pre-wrap;
+  line-height:1.45;
+  font-size:12.5px;
+}
 
 /* Copy-on-click (fade in icon on hover) */
 .copy-wrap{ position:relative; display:flex; align-items:center; gap:8px; width:100%; }
@@ -760,11 +772,13 @@ tr.is-focused{ outline: 1px solid rgba(76,165,255,.35); outline-offset:-1px; }
 .copy-wrap:hover .copy-ic{ opacity:1; transform:translateY(0); }
 
 /* Right-aligned values (keep the label on the left in .kv rows) */
+.copy-wrap--left{ width:100%; justify-content:flex-start; }
+.copy-wrap--left code{ flex:1 1 auto; text-align:left; display:block; }
 .copy-wrap--right{ width:100%; margin-left:auto; justify-content:flex-end; }
 .copy-wrap--right code{ flex:1 1 auto; text-align:right; display:block; }
 
 .endpoint-wrap{ width:100%; }
-.endpoint-code{ display:inline-block; word-break:break-all; flex:1 1 auto; text-align:right; }
+.endpoint-code{ display:inline-block; word-break:break-all; flex:1 1 auto; text-align:left; }
 
 /* Uptime striped ticks */
 .bar{ overflow:hidden; }

@@ -5,7 +5,7 @@
  * Purpose: WebUI client-side logic.
  * Path: /webui/static/app.js
  * Created: 2026-02-01
- * Last modified: 2026-02-01
+ * Last modified: 2026-02-02
  * =============================================================================
  */
 
@@ -16,7 +16,7 @@
  * Purpose: WebUI client-side logic (table rendering, modals, discovery UI, API calls).
  * Path: /opt/interheart/webui/static/app.js
  * Created: 2026-02-01
- * Last modified: 2026-02-01
+ * Last modified: 2026-02-02
  * =============================================================================
  */
 
@@ -266,6 +266,47 @@
   });
   logFilter?.addEventListener("input", applyLogFilter);
   logModal?.addEventListener("click", (e) => { if (e.target === logModal) hide(logModal); });
+
+  // ---- Changelog modal ----
+  const changelogModal = $("#changelogModal");
+  const openChangelog = $("#openChangelogFooter");
+  const closeChangelog = $("#btnCloseChangelog");
+  const changelogBox = $("#changelogBox");
+  const changelogMeta = $("#changelogMeta");
+  const openFullChangelog = $("#btnOpenFullChangelog");
+
+  async function loadChangelog(){
+    try{
+      const data = await apiGet("/api/changelog");
+      if (openFullChangelog && data.full_url){
+        openFullChangelog.setAttribute("href", data.full_url);
+      }
+      const parts = [];
+      if (data.current){
+        parts.push(data.current);
+      }
+      if (data.unreleased){
+        parts.push(data.unreleased);
+      }
+      const txt = parts.join("\n\n").trim() || "No changelog data available.";
+      if (changelogBox) changelogBox.textContent = txt;
+      if (changelogMeta){
+        const v = data.current_version || "";
+        changelogMeta.textContent = v ? `Current release: ${v}` : "Changelog";
+      }
+    }catch(e){
+      if (changelogBox) changelogBox.textContent = "Failed to fetch changelog.";
+      if (changelogMeta) changelogMeta.textContent = "error";
+    }
+  }
+
+  openChangelog?.addEventListener("click", async (e) => {
+    try{ e?.preventDefault?.(); }catch(_){ }
+    show(changelogModal);
+    await loadChangelog();
+  });
+  closeChangelog?.addEventListener("click", () => hide(changelogModal));
+  changelogModal?.addEventListener("click", (e) => { if (e.target === changelogModal) hide(changelogModal); });
 
   // ---- Filter targets ----
   const filterInput = $("#filterInput");
@@ -1809,7 +1850,7 @@ function attachMenuActions(){
 
     // Always render a deduped view (keyed by IP)
     const list = Array.from(discoverDeviceMap.values());
-    if (discoverFound) discoverFound.textContent = String(list.length);
+    if (discoverFound) discoverFound.textContent = String(discoverDeviceMap.size);
 
     list.forEach(dev => {
       const ip = String(dev.ip||'');
@@ -1889,6 +1930,11 @@ function attachMenuActions(){
     discoverLocalPaused = false;
     discoverPauseGraceUntil = 0;
     discoverPauseRetries = 0;
+    discoverResultsLastTs = 0;
+    discoverGotSSE = false;
+    discoverLastEventId = 0;
+    try{ if (discoverES){ discoverES.close(); discoverES = null; } }catch(_){ }
+    try{ if (discoverFallbackPoll){ clearInterval(discoverFallbackPoll); discoverFallbackPoll = null; } }catch(_){ }
     if (discoverPauseRetryTimer){ clearTimeout(discoverPauseRetryTimer); discoverPauseRetryTimer = null; }
     if (discoverAddCard) discoverAddCard.style.display = 'none';
     if (discoverError){ discoverError.style.display='none'; discoverError.textContent=''; }
@@ -2007,6 +2053,37 @@ function attachMenuActions(){
   // This avoids situations where a browser/extension interferes with event binding.
   window.__ihStartDiscovery = startDiscovery;
 
+  function applyPausedDiscoveryUI(){
+    discoverState.status = 'paused';
+    discoverLocalRunning = false;
+    discoverLocalPaused = true;
+    discoverPauseRetries = 0;
+    discoverPauseGraceUntil = Date.now() + 8000;
+    if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+    if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
+    if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
+    if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+    if (btnDiscoverReset) btnDiscoverReset.style.display='inline-flex';
+    if (discoverStatus) discoverStatus.textContent = 'Paused';
+    if (discoverScanning) discoverScanning.textContent = '-';
+    setDiscoverRunning(false);
+    renderDiscover();
+  }
+
+  function applyRunningDiscoveryUI(){
+    discoverState.status = 'running';
+    discoverLocalRunning = true;
+    discoverLocalPaused = false;
+    discoverPauseGraceUntil = 0;
+    if (btnDiscoverResume) btnDiscoverResume.style.display='none';
+    if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
+    if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
+    if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+    if (discoverStatus) discoverStatus.textContent = 'Running…';
+    setDiscoverRunning(true);
+    renderDiscover();
+  }
+
   async function pauseDiscovery(){
     try{
       const r = await apiPostJson('/api/discover-pause', {});
@@ -2025,24 +2102,27 @@ function attachMenuActions(){
           await pollDiscoveryFallback();
           return;
         }
+        try{
+          const st = await apiGet('/api/discover-status');
+          const stStatus = String(st?.status || '').toLowerCase();
+          if (stStatus === 'paused'){
+            applyPausedDiscoveryUI();
+            return;
+          }
+        }catch(_){ }
         toast('Discovery', err);
         return;
       }
-      discoverState.status = 'paused';
-      discoverLocalRunning = false;
-      discoverLocalPaused = true;
-      discoverPauseRetries = 0;
-      discoverPauseGraceUntil = Date.now() + 8000;
-      if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-      if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
-      if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
-      if (btnDiscoverStart) btnDiscoverStart.style.display='none';
-      if (btnDiscoverReset) btnDiscoverReset.style.display='inline-flex';
-      if (discoverStatus) discoverStatus.textContent = 'Paused';
-      if (discoverScanning) discoverScanning.textContent = '-';
-      setDiscoverRunning(false);
-      renderDiscover();
+      applyPausedDiscoveryUI();
     }catch(e){
+      try{
+        const st = await apiGet('/api/discover-status');
+        const stStatus = String(st?.status || '').toLowerCase();
+        if (stStatus === 'paused'){
+          applyPausedDiscoveryUI();
+          return;
+        }
+      }catch(_){ }
       toast('Discovery', 'Pause failed');
     }
   }
@@ -2056,21 +2136,35 @@ function attachMenuActions(){
           await startDiscovery();
           return;
         }
+        try{
+          const st = await apiGet('/api/discover-status');
+          const stStatus = String(st?.status || '').toLowerCase();
+          if (stStatus === 'running' || stStatus === 'starting'){
+            applyRunningDiscoveryUI();
+            return;
+          }
+          if (stStatus === 'paused'){
+            applyPausedDiscoveryUI();
+            return;
+          }
+        }catch(_){ }
         toast('Discovery', err);
         return;
       }
-      discoverState.status = 'running';
-      discoverLocalRunning = true;
-      discoverLocalPaused = false;
-      discoverPauseGraceUntil = 0;
-      if (btnDiscoverResume) btnDiscoverResume.style.display='none';
-      if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
-      if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
-      if (btnDiscoverStart) btnDiscoverStart.style.display='none';
-      if (discoverStatus) discoverStatus.textContent = 'Running…';
-      setDiscoverRunning(true);
-      renderDiscover();
+      applyRunningDiscoveryUI();
     }catch(e){
+      try{
+        const st = await apiGet('/api/discover-status');
+        const stStatus = String(st?.status || '').toLowerCase();
+        if (stStatus === 'running' || stStatus === 'starting'){
+          applyRunningDiscoveryUI();
+          return;
+        }
+        if (stStatus === 'paused'){
+          applyPausedDiscoveryUI();
+          return;
+        }
+      }catch(_){ }
       toast('Discovery', 'Resume failed');
     }
   }
@@ -2095,6 +2189,10 @@ async function cancelDiscovery(){
       await apiPostJson('/api/discover-cancel', {});
       await resetDiscoveryBackend();
     }catch(_){ }
+    discoverResultsLastTs = 0;
+    discoverGotSSE = false;
+    discoverLastEventId = 0;
+    try{ if (discoverES){ discoverES.close(); discoverES = null; } }catch(_){ }
     await startDiscovery();
   }
 

@@ -303,6 +303,30 @@ def _cleanup_debug_dir(days: int = 7):
     except Exception:
         pass
 
+
+def _load_changelog_sections() -> dict:
+    changelog_path = (BASE_DIR.parent / "CHANGELOG.md")
+    try:
+        raw = changelog_path.read_text(encoding="utf-8")
+    except Exception:
+        return {}
+
+    sections: dict[str, str] = {}
+    current_title = None
+    buf: list[str] = []
+    for line in raw.splitlines():
+        if line.startswith("## "):
+            if current_title and buf:
+                sections[current_title] = "\n".join(buf).strip()
+            current_title = line.replace("## ", "").strip()
+            buf = [line]
+            continue
+        if current_title is not None:
+            buf.append(line)
+    if current_title and buf:
+        sections[current_title] = "\n".join(buf).strip()
+    return sections
+
 @APP.before_request
 def _debug_req_start():
     try:
@@ -3439,6 +3463,30 @@ def api_discover_stream():
 def api_discover_result():
     meta = load_discovery_meta() or {}
     return jsonify({'ok': True, 'meta': meta, 'found': meta.get('found') or []})
+
+
+@APP.get('/api/changelog')
+def api_changelog():
+    sections = _load_changelog_sections()
+    target_version = (UI_VERSION.split("+", 1)[0] or "").strip()
+    if target_version and not target_version.startswith("v"):
+        target_version = f"v{target_version}"
+
+    unreleased = ""
+    current = ""
+    for title, body in sections.items():
+        if title.strip().lower().startswith("[unreleased]"):
+            unreleased = body
+        if target_version and title.startswith(target_version):
+            current = body
+
+    return jsonify({
+        "ok": True,
+        "current_version": target_version,
+        "unreleased": unreleased,
+        "current": current,
+        "full_url": "https://github.com/5echo-io/interheart/blob/dev/CHANGELOG.md",
+    })
 
 if __name__ == "__main__":
     APP.run(host=BIND_HOST, port=BIND_PORT, threaded=True)

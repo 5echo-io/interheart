@@ -9,12 +9,17 @@ This project follows Semantic Versioning (SemVer).
 ## [Unreleased]
 
 ### Added
-- 
+- WebUI: Changelog button in footer with modal preview.
+- WebUI: API endpoint for changelog preview in the UI.
 
 ### Changed
-- 
+- WebUI: Information modal copy icons moved to the left.
+- WebUI Discovery: restart now resets streaming/polling state for fresh results.
 
 ### Fixed
+- WebUI Discovery: avoid false pause/resume failure toasts when backend state is correct.
+- WebUI Discovery: Found counter no longer resets when toggling New devices.
+- WebUI Discovery: restart repopulates device list during the next scan.
 - WebUI Discovery: keep progress bar in running state during startup.
 - WebUI Discovery: Pause handles missing worker without error spam.
 - WebUI Discovery: KPI spacing tightened and percent aligned with status text.
