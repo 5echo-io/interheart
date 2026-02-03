@@ -1848,14 +1848,6 @@ function attachMenuActions(){
     return (l.ip||'').toLowerCase().includes(q) || (l.host||'').toLowerCase().includes(q) || (l.vendor||'').toLowerCase().includes(q) || (l.mac||'').toLowerCase().includes(q);
   }
 
-  function isAlreadyAddedDevice(dev){
-    const ip = String(dev?.ip || '').trim();
-    if (!ip) return false;
-    if (dev?.added_now) return false;
-    if (dev?.already_added) return true;
-    return (lastTargets||[]).some(t => String(t?.ip || '').trim() === ip);
-  }
-
   function renderDiscoverList(){
     if (!discoverList || !discoverListEmpty) return;
     const q = (discoverFilter?.value || '').trim();
@@ -1916,6 +1908,14 @@ function attachMenuActions(){
     if (discoverCountHint) discoverCountHint.textContent = `${shown} shown`;
   }
 
+  function isAlreadyAddedDevice(dev){
+    if (!dev) return false;
+    const ip = String(dev.ip||'').trim();
+    if (!ip) return false;
+    const existingIps = new Set((lastTargets||[]).map(t => String(t.ip||'')).filter(Boolean));
+    return !!dev.already_added || existingIps.has(ip);
+  }
+
   if (discoverList && !discoverList.dataset.bound){
     discoverList.dataset.bound = '1';
     discoverList.addEventListener('click', (e) => {
@@ -1923,7 +1923,7 @@ function attachMenuActions(){
       if (!item) return;
       e.stopPropagation();
       e.preventDefault();
-      const ip = String(item.dataset.ip || '').trim();
+      const ip = String(item.dataset.ip || '').trim();        
       if (!ip) return;
       const dev = discoverDeviceMap.get(ip);
       if (!dev) return;
@@ -2118,16 +2118,20 @@ function attachMenuActions(){
     try{
       // Optimistic UI: show paused immediately
       applyPausedDiscoveryUI();
-      const r = await apiPostJson('/api/discover-pause', {});
+      const r = await apiPostJson('/api/discover-pause', {}); 
       // Always check status after API call, regardless of response
       let st = null;
       try{
         st = await apiGet('/api/discover-status');
       }catch(_){ }
       const stStatus = st ? String(st?.status || '').toLowerCase() : '';
-      
+
       if (!r || !r.ok){
         const err = (r && r.error) ? String(r.error) : 'Pause failed';
+        // If nothing is running (idle), don't show a failure toast
+        if (stStatus === 'idle' || stStatus === ''){
+          return;
+        }
         // If status shows paused, treat as success
         if (stStatus === 'paused'){
           applyPausedDiscoveryUI();
@@ -2149,7 +2153,7 @@ function attachMenuActions(){
         // Only show error if status check confirms it's not paused
         setTimeout(async () => {
           try{
-            const st2 = await apiGet('/api/discover-status');
+            const st2 = await apiGet('/api/discover-status'); 
             if (String(st2?.status || '').toLowerCase() !== 'paused'){
               toast('Discovery', err);
             }
@@ -2161,7 +2165,7 @@ function attachMenuActions(){
       if (stStatus !== 'paused'){
         setTimeout(async () => {
           try{
-            const st2 = await apiGet('/api/discover-status');
+            const st2 = await apiGet('/api/discover-status'); 
             if (String(st2?.status || '').toLowerCase() === 'paused'){
               applyPausedDiscoveryUI();
             }
@@ -2171,7 +2175,7 @@ function attachMenuActions(){
       applyPausedDiscoveryUI();
     }catch(e){
       try{
-        const st = await apiGet('/api/discover-status');
+        const st = await apiGet('/api/discover-status');      
         const stStatus = String(st?.status || '').toLowerCase();
         if (stStatus === 'paused'){
           applyPausedDiscoveryUI();
@@ -2180,7 +2184,7 @@ function attachMenuActions(){
       }catch(_){ }
       setTimeout(async () => {
         try{
-          const st2 = await apiGet('/api/discover-status');
+          const st2 = await apiGet('/api/discover-status');   
           if (String(st2?.status || '').toLowerCase() !== 'paused'){
             toast('Discovery', 'Pause failed');
           }
@@ -2200,10 +2204,15 @@ function attachMenuActions(){
         st = await apiGet('/api/discover-status');
       }catch(_){ }
       const stStatus = st ? String(st?.status || '').toLowerCase() : '';
-      
+
       if (!r || !r.ok){
         const err = (r && r.error) ? String(r.error) : 'Resume failed';
-        // If status shows running/starting, treat as success
+        // If nothing is running (idle), don't show a failure toast
+        if (stStatus === 'idle' || stStatus === ''){
+          applyPausedDiscoveryUI();
+          return;
+        }
+        // If status shows running/starting, treat as success 
         if (stStatus === 'running' || stStatus === 'starting'){
           applyRunningDiscoveryUI();
           return;
@@ -2218,9 +2227,8 @@ function attachMenuActions(){
         }
         setTimeout(async () => {
           try{
-            const st2 = await apiGet('/api/discover-status');
-            const s = String(st2?.status || '').toLowerCase();
-            if (s !== 'running' && s !== 'starting'){
+            const st2 = await apiGet('/api/discover-status'); 
+            if (String(st2?.status || '').toLowerCase() !== 'running' && String(st2?.status || '').toLowerCase() !== 'starting'){
               toast('Discovery', err);
             }
           }catch(_){ }
@@ -2231,12 +2239,9 @@ function attachMenuActions(){
       if (stStatus !== 'running' && stStatus !== 'starting'){
         setTimeout(async () => {
           try{
-            const st2 = await apiGet('/api/discover-status');
-            const stStatus2 = String(st2?.status || '').toLowerCase();
-            if (stStatus2 === 'running' || stStatus2 === 'starting'){
+            const st2 = await apiGet('/api/discover-status'); 
+            if (String(st2?.status || '').toLowerCase() === 'running' || String(st2?.status || '').toLowerCase() === 'starting'){
               applyRunningDiscoveryUI();
-            } else if (stStatus2 === 'paused'){
-              applyPausedDiscoveryUI();
             }
           }catch(_){ }
         }, 300);
@@ -2244,7 +2249,7 @@ function attachMenuActions(){
       applyRunningDiscoveryUI();
     }catch(e){
       try{
-        const st = await apiGet('/api/discover-status');
+        const st = await apiGet('/api/discover-status');      
         const stStatus = String(st?.status || '').toLowerCase();
         if (stStatus === 'running' || stStatus === 'starting'){
           applyRunningDiscoveryUI();
@@ -2257,9 +2262,8 @@ function attachMenuActions(){
       }catch(_){ }
       setTimeout(async () => {
         try{
-          const st2 = await apiGet('/api/discover-status');
-          const s = String(st2?.status || '').toLowerCase();
-          if (s !== 'running' && s !== 'starting'){
+          const st2 = await apiGet('/api/discover-status');   
+          if (String(st2?.status || '').toLowerCase() !== 'running' && String(st2?.status || '').toLowerCase() !== 'starting'){
             toast('Discovery', 'Resume failed');
           }
         }catch(_){ }
@@ -2386,17 +2390,10 @@ async function cancelDiscovery(){
         if (btnDiscoverStart) btnDiscoverStart.style.display='none';
         if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
-      } else if (resumeGrace && (stStatus === 'paused' || stStatus === '' || stStatus === 'running' || stStatus === 'starting')){
-        // During resume grace period, maintain running state and ignore paused status from backend
-        discoverLocalPaused = false;
-        discoverLocalRunning = true;
+      } else if (resumeGrace && (stStatus === 'paused' || stStatus === '')){
+        // During resume grace period, ignore paused status from backend
         if (discoverStatus) discoverStatus.textContent = 'Running…';
         if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
-        if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
-        if (btnDiscoverResume) btnDiscoverResume.style.display='none';
-        if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
-        if (btnDiscoverStart) btnDiscoverStart.style.display='none';
-        setDiscoverRunning(true);
       } else {
         if (discoverStatus) discoverStatus.textContent = st.message || st.status || 'Running…';
         if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
@@ -2452,17 +2449,6 @@ async function cancelDiscovery(){
         btnDiscoverDebug.style.display = needsDebug ? 'inline-flex' : 'none';
       }
       if (st && (st.status === 'running' || st.status === 'starting' || st.status === 'cancelling')){
-        // Don't override if we're in a pause grace period
-        if (discoverLocalPaused && (discoverPauseGraceUntil && Date.now() < discoverPauseGraceUntil)) return;
-        // Don't override if we're in a resume grace period (let it complete)
-        if (discoverResumeGraceUntil && Date.now() < discoverResumeGraceUntil){
-          // During resume grace, ensure UI shows running state
-          if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
-          if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
-          if (btnDiscoverResume) btnDiscoverResume.style.display='none';
-          if (btnDiscoverStart) btnDiscoverStart.style.display='none';
-          return;
-        }
         if (discoverLocalPaused) return;
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
@@ -2473,16 +2459,13 @@ async function cancelDiscovery(){
       if (st && st.status === 'paused'){
         // Don't override if we're in a resume grace period
         if (!(discoverResumeGraceUntil && Date.now() < discoverResumeGraceUntil)){
-          // Only update UI if we're not already in a pause grace period (to avoid flickering)
-          if (!(discoverPauseGraceUntil && Date.now() < discoverPauseGraceUntil)){
-            discoverLocalPaused = true;
-            discoverPauseGraceUntil = Date.now() + 8000;
-            if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-            if (btnDiscoverStart) btnDiscoverStart.style.display='none';
-            if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
-            if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
-            setDiscoverRunning(false);
-          }
+          discoverLocalPaused = true;
+          discoverPauseGraceUntil = Date.now() + 8000;
+          if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+          if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+          if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
+          if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
+          setDiscoverRunning(false);
         }
       }
       if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
@@ -2612,9 +2595,9 @@ function connectDiscoveryStream(){
     // Ensure modal element exists - try to find it if not already bound
     let modalEl = discoverAddModal;
     if (!modalEl){
-      modalEl = document.getElementById('discoverAddModal');
+      modalEl = document.getElementById('discoverAddModal');  
       if (!modalEl){
-        console.error('discoverAddModal element not found');
+        console.error('discoverAddModal element not found');  
         toast('Error', 'Add modal not found');
         return;
       }
@@ -2624,15 +2607,15 @@ function connectDiscoveryStream(){
     const ipEl = discoverAddModalIp || document.getElementById('discoverAddModalIp');
     const endpointEl = discoverAddModalEndpoint || document.getElementById('discoverAddModalEndpoint');
     const intervalEl = discoverAddModalInterval || document.getElementById('discoverAddModalInterval');
-    
+
     if (ipEl) ipEl.value = ip;
     if (nameEl) nameEl.value = suggestName(dev);
-    if (endpointEl) endpointEl.value = suggestEndpoint(ip);
+    if (endpointEl) endpointEl.value = suggestEndpoint(ip);   
     if (intervalEl) intervalEl.value = '60';
-    
+
     show(modalEl);
     setTimeout(() => {
-      try{ if (endpointEl) endpointEl.focus(); }catch(_){}
+      try{ if (endpointEl) endpointEl.focus(); }catch(_){}    
     }, 100);
   }
 
