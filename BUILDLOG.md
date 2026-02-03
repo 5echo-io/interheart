@@ -108,3 +108,18 @@ Technical build notes intended for iterative zip handoffs.
   - UI: dark mode scrollbar styling (webkit + Firefox).
   - Changelog: remove underline from "Full changelog" button.
   - Files: webui/app.py, webui/templates/index.html, webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.45.0-beta.1+build.3 | bugfix
+  - Discovery pause: check status BEFORE showing error toast to prevent false "Pause failed" messages.
+  - Discovery resume: check status BEFORE showing error toast to prevent false "Resume failed" messages.
+  - Discovery resume: increase grace period to 8 seconds and improve backend logic to respect grace period.
+  - Discovery UI: fix device click handler to properly open add modal (add stopPropagation).
+  - Discovery UI: add fallback check for modal element if not found during initialization.
+  - Files: webui/app.py, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.45.0-beta.1+build.4 | bugfix
+  - Discovery pause/resume: improve grace period handling in pollDiscoveryFallback to prevent UI flickering.
+  - Discovery resume: ensure running state is maintained during resume grace period even if backend shows paused.
+  - Discovery UI: improve add modal element lookup with fallback to getElementById and better error handling.
+  - Discovery UI: add preventDefault to device click handler and cursor pointer styling to ensure modal opens properly.
+  - Files: webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION

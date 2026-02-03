@@ -1902,11 +1902,13 @@ function attachMenuActions(){
 
       el.addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault();
         if (already && !addedNow){
           toast('Network discovery', 'Already added');
           return;
         }
         // Open modal instead of showing card
+        console.log('Opening add modal for device:', dev);
         openDiscoverAddModal(dev);
       });
 
@@ -2334,10 +2336,17 @@ async function cancelDiscovery(){
         if (btnDiscoverStart) btnDiscoverStart.style.display='none';
         if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
-      } else if (resumeGrace && (stStatus === 'paused' || stStatus === '')){
-        // During resume grace period, ignore paused status from backend
+      } else if (resumeGrace && (stStatus === 'paused' || stStatus === '' || stStatus === 'running' || stStatus === 'starting')){
+        // During resume grace period, maintain running state and ignore paused status from backend
+        discoverLocalPaused = false;
+        discoverLocalRunning = true;
         if (discoverStatus) discoverStatus.textContent = 'Running…';
         if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
+        if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
+        if (btnDiscoverResume) btnDiscoverResume.style.display='none';
+        if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
+        if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+        setDiscoverRunning(true);
       } else {
         if (discoverStatus) discoverStatus.textContent = st.message || st.status || 'Running…';
         if (discoverScanning) discoverScanning.textContent = st.scanning || st.cidr || '-';
@@ -2393,6 +2402,17 @@ async function cancelDiscovery(){
         btnDiscoverDebug.style.display = needsDebug ? 'inline-flex' : 'none';
       }
       if (st && (st.status === 'running' || st.status === 'starting' || st.status === 'cancelling')){
+        // Don't override if we're in a pause grace period
+        if (discoverLocalPaused && (discoverPauseGraceUntil && Date.now() < discoverPauseGraceUntil)) return;
+        // Don't override if we're in a resume grace period (let it complete)
+        if (discoverResumeGraceUntil && Date.now() < discoverResumeGraceUntil){
+          // During resume grace, ensure UI shows running state
+          if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
+          if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
+          if (btnDiscoverResume) btnDiscoverResume.style.display='none';
+          if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+          return;
+        }
         if (discoverLocalPaused) return;
         if (btnDiscoverCancel) btnDiscoverCancel.style.display='inline-flex';
         if (btnDiscoverRestart) btnDiscoverRestart.style.display='none';
@@ -2403,13 +2423,16 @@ async function cancelDiscovery(){
       if (st && st.status === 'paused'){
         // Don't override if we're in a resume grace period
         if (!(discoverResumeGraceUntil && Date.now() < discoverResumeGraceUntil)){
-          discoverLocalPaused = true;
-          discoverPauseGraceUntil = Date.now() + 8000;
-          if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
-          if (btnDiscoverStart) btnDiscoverStart.style.display='none';
-          if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
-          if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
-          setDiscoverRunning(false);
+          // Only update UI if we're not already in a pause grace period (to avoid flickering)
+          if (!(discoverPauseGraceUntil && Date.now() < discoverPauseGraceUntil)){
+            discoverLocalPaused = true;
+            discoverPauseGraceUntil = Date.now() + 8000;
+            if (btnDiscoverCancel) btnDiscoverCancel.style.display='none';
+            if (btnDiscoverStart) btnDiscoverStart.style.display='none';
+            if (btnDiscoverResume) btnDiscoverResume.style.display='inline-flex';
+            if (btnDiscoverRestart) btnDiscoverRestart.style.display='inline-flex';
+            setDiscoverRunning(false);
+          }
         }
       }
       if (st.status === 'done' || st.status === 'cancelled' || st.status === 'error'){
@@ -2546,12 +2569,21 @@ function connectDiscoveryStream(){
         return;
       }
     }
-    if (discoverAddModalIp) discoverAddModalIp.value = ip;
-    if (discoverAddModalName) discoverAddModalName.value = suggestName(dev);
-    if (discoverAddModalEndpoint) discoverAddModalEndpoint.value = suggestEndpoint(ip);
-    if (discoverAddModalInterval) discoverAddModalInterval.value = '60';
+    // Ensure form elements exist
+    const nameEl = discoverAddModalName || document.getElementById('discoverAddModalName');
+    const ipEl = discoverAddModalIp || document.getElementById('discoverAddModalIp');
+    const endpointEl = discoverAddModalEndpoint || document.getElementById('discoverAddModalEndpoint');
+    const intervalEl = discoverAddModalInterval || document.getElementById('discoverAddModalInterval');
+    
+    if (ipEl) ipEl.value = ip;
+    if (nameEl) nameEl.value = suggestName(dev);
+    if (endpointEl) endpointEl.value = suggestEndpoint(ip);
+    if (intervalEl) intervalEl.value = '60';
+    
     show(modalEl);
-    try{ discoverAddModalEndpoint?.focus(); }catch(_){}
+    setTimeout(() => {
+      try{ if (endpointEl) endpointEl.focus(); }catch(_){}
+    }, 100);
   }
 
   function closeDiscoverAddModal(){

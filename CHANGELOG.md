@@ -21,6 +21,9 @@ This project follows Semantic Versioning (SemVer).
 - WebUI: "Full changelog" button no longer shows underline.
 
 ### Fixed
+- WebUI Discovery: pause/resume now properly maintains UI state during grace periods (prevents flickering).
+- WebUI Discovery: resume grace period properly maintains running state and prevents auto-pause.
+- WebUI Discovery: add device modal now properly opens when clicking found devices (improved element lookup).
 - WebUI Discovery: resume no longer auto-pauses after successful resume (added grace period).
 - WebUI Discovery: pause/resume error toasts only show when status check confirms failure.
 - WebUI Discovery: backend prevents auto-pause immediately after resume operation.
