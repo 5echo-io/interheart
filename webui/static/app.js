@@ -1848,6 +1848,14 @@ function attachMenuActions(){
     return (l.ip||'').toLowerCase().includes(q) || (l.host||'').toLowerCase().includes(q) || (l.vendor||'').toLowerCase().includes(q) || (l.mac||'').toLowerCase().includes(q);
   }
 
+  function isAlreadyAddedDevice(dev){
+    const ip = String(dev?.ip || '').trim();
+    if (!ip) return false;
+    if (dev?.added_now) return false;
+    if (dev?.already_added) return true;
+    return (lastTargets||[]).some(t => String(t?.ip || '').trim() === ip);
+  }
+
   function renderDiscoverList(){
     if (!discoverList || !discoverListEmpty) return;
     const q = (discoverFilter?.value || '').trim();
@@ -1879,6 +1887,7 @@ function attachMenuActions(){
       shown += 1;
       const el = document.createElement('div');
       el.className = 'scan-item' + (addedNow ? ' is-added' : '') + (already ? ' is-disabled' : '');
+      el.dataset.ip = ip;
 
       const lbl = computeDeviceLabel(dev);
       const chipTxt = addedNow ? 'Added now' : (already ? 'Already added' : 'New');
@@ -1900,23 +1909,30 @@ function attachMenuActions(){
         </div>
       `;
 
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        if (already && !addedNow){
-          toast('Network discovery', 'Already added');
-          return;
-        }
-        // Open modal instead of showing card
-        console.log('Opening add modal for device:', dev);
-        openDiscoverAddModal(dev);
-      });
-
       discoverList.appendChild(el);
     });
 
     discoverListEmpty.style.display = shown ? 'none' : 'block';
     if (discoverCountHint) discoverCountHint.textContent = `${shown} shown`;
+  }
+
+  if (discoverList && !discoverList.dataset.bound){
+    discoverList.dataset.bound = '1';
+    discoverList.addEventListener('click', (e) => {
+      const item = e.target?.closest?.('.scan-item');
+      if (!item) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const ip = String(item.dataset.ip || '').trim();
+      if (!ip) return;
+      const dev = discoverDeviceMap.get(ip);
+      if (!dev) return;
+      if (isAlreadyAddedDevice(dev)){
+        toast('Network discovery', 'Already added');
+        return;
+      }
+      openDiscoverAddModal(dev);
+    });
   }
   function toggleClearButtons(){
     document.querySelectorAll('.btn-clear[data-clear-for]').forEach(btn => {
@@ -2100,6 +2116,8 @@ function attachMenuActions(){
 
   async function pauseDiscovery(){
     try{
+      // Optimistic UI: show paused immediately
+      applyPausedDiscoveryUI();
       const r = await apiPostJson('/api/discover-pause', {});
       // Always check status after API call, regardless of response
       let st = null;
@@ -2129,7 +2147,14 @@ function attachMenuActions(){
           return;
         }
         // Only show error if status check confirms it's not paused
-        toast('Discovery', err);
+        setTimeout(async () => {
+          try{
+            const st2 = await apiGet('/api/discover-status');
+            if (String(st2?.status || '').toLowerCase() !== 'paused'){
+              toast('Discovery', err);
+            }
+          }catch(_){ }
+        }, 600);
         return;
       }
       // If API says ok but status check shows not paused, check status again after short delay
@@ -2153,12 +2178,21 @@ function attachMenuActions(){
           return;
         }
       }catch(_){ }
-      toast('Discovery', 'Pause failed');
+      setTimeout(async () => {
+        try{
+          const st2 = await apiGet('/api/discover-status');
+          if (String(st2?.status || '').toLowerCase() !== 'paused'){
+            toast('Discovery', 'Pause failed');
+          }
+        }catch(_){ }
+      }, 600);
     }
   }
 
   async function resumeDiscovery(){
     try{
+      // Optimistic UI: show running immediately
+      applyRunningDiscoveryUI();
       const r = await apiPostJson('/api/discover-resume', {});
       // Always check status after API call, regardless of response
       let st = null;
@@ -2182,7 +2216,15 @@ function attachMenuActions(){
           applyPausedDiscoveryUI();
           return;
         }
-        toast('Discovery', err);
+        setTimeout(async () => {
+          try{
+            const st2 = await apiGet('/api/discover-status');
+            const s = String(st2?.status || '').toLowerCase();
+            if (s !== 'running' && s !== 'starting'){
+              toast('Discovery', err);
+            }
+          }catch(_){ }
+        }, 600);
         return;
       }
       // If API says ok but status check shows not running, check status again after short delay
@@ -2213,7 +2255,15 @@ function attachMenuActions(){
           return;
         }
       }catch(_){ }
-      toast('Discovery', 'Resume failed');
+      setTimeout(async () => {
+        try{
+          const st2 = await apiGet('/api/discover-status');
+          const s = String(st2?.status || '').toLowerCase();
+          if (s !== 'running' && s !== 'starting'){
+            toast('Discovery', 'Resume failed');
+          }
+        }catch(_){ }
+      }, 600);
     }
   }
 

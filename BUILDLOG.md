@@ -123,3 +123,9 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery UI: improve add modal element lookup with fallback to getElementById and better error handling.
   - Discovery UI: add preventDefault to device click handler and cursor pointer styling to ensure modal opens properly.
   - Files: webui/static/app.js, webui/static/app.css, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.45.0-beta.1+build.5 | bugfix
+  - Discovery pause/resume: optimistic UI with delayed error toasts to avoid false failures.
+  - Discovery pause/resume: allow non-posix systems to update status without signals.
+  - Discovery UI: delegated click handler on devices list for reliable modal opening.
+  - Files: webui/app.py, webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION

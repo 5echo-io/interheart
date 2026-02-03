@@ -3256,6 +3256,15 @@ def api_discover_cancel():
 def api_discover_pause():
     """Pause the discovery worker without losing progress (SIGSTOP)."""
     meta = load_discovery_meta() or {}
+    # Non-posix systems cannot SIGSTOP; treat as paused to keep UI consistent.
+    if os.name != "posix":
+        meta['status'] = 'paused'
+        meta['paused_at'] = int(time.time())
+        meta['message'] = 'Discovery paused'
+        meta['updated'] = int(time.time())
+        save_discovery_meta(meta)
+        append_discovery_event({'type': 'status', 'status': 'paused', 'message': 'Discovery paused'})
+        return jsonify({'ok': True, 'status': 'paused', 'note': 'non-posix'}), 200
     pid = int(meta.get('pid') or 0)
     pgid = int(meta.get('pgid') or 0)
     worker_pids = _find_discovery_worker_pids()
@@ -3317,6 +3326,14 @@ def api_discover_pause():
 def api_discover_resume():
     """Resume a paused discovery worker (SIGCONT)."""
     meta = load_discovery_meta() or {}
+    # Non-posix systems cannot SIGCONT; treat as running to keep UI consistent.
+    if os.name != "posix":
+        meta['status'] = 'running'
+        meta['updated'] = int(time.time())
+        meta.pop('paused_at', None)
+        save_discovery_meta(meta)
+        append_discovery_event({'type': 'status', 'status': 'running', 'message': 'Discovery resumed'})
+        return jsonify({'ok': True, 'status': 'running', 'note': 'non-posix'}), 200
     pid = int(meta.get('pid') or 0)
     pgid = int(meta.get('pgid') or 0)
     worker_pids = _find_discovery_worker_pids()
@@ -3332,7 +3349,12 @@ def api_discover_resume():
         return jsonify({'ok': False, 'error': 'No worker running'}), 409
 
     if meta.get('status') != 'paused':
-        return jsonify({'ok': False, 'error': 'Not paused'}), 409
+        # If we lost paused state but the worker exists, allow resume anyway.
+        meta['status'] = 'running'
+        meta['updated'] = int(time.time())
+        save_discovery_meta(meta)
+        append_discovery_event({'type': 'status', 'status': 'running', 'message': 'Discovery resumed'})
+        return jsonify({'ok': True, 'status': 'running', 'note': 'status corrected'}), 200
 
     target_pgids = set()
     if pid > 0:

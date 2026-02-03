@@ -21,6 +21,9 @@ This project follows Semantic Versioning (SemVer).
 - WebUI: "Full changelog" button no longer shows underline.
 
 ### Fixed
+- WebUI Discovery: pause/resume uses optimistic UI and delayed toasts to avoid false failures.
+- WebUI Discovery: pause/resume now handles non-posix systems by updating status without signals.
+- WebUI Discovery: device click handler uses delegated binding for reliable modal opening.
 - WebUI Discovery: pause/resume now properly maintains UI state during grace periods (prevents flickering).
 - WebUI Discovery: resume grace period properly maintains running state and prevents auto-pause.
 - WebUI Discovery: add device modal now properly opens when clicking found devices (improved element lookup).
