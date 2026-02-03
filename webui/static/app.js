@@ -56,10 +56,14 @@
   function debugLog(location, message, data, hypothesisId){
     try{
       const logData = {location, message, data, timestamp:Date.now(), sessionId:'debug-session', runId:'run1', hypothesisId:hypothesisId||'X'};
-      console.log('[DEBUG]', logData);
-      reportClientLog('INFO', `[DEBUG] ${location}: ${message}`, logData);
+      console.log('[DEBUG]', location, message, data);
+      try{
+        reportClientLog('INFO', `[DEBUG] ${location}: ${message}`, logData);
+      }catch(e2){
+        console.error('reportClientLog failed:', e2);
+      }
     }catch(e){
-      console.error('debugLog error:', e);
+      console.error('debugLog error:', e, location, message);
     }
   }
 
@@ -67,7 +71,9 @@
     try{
       const now = Date.now();
       // basic throttle to avoid loops when the backend is down
-      if (now - _clientLogLast < 600) return;
+      // BUT: don't throttle DEBUG logs - they're important for debugging
+      const isDebug = String(message || '').includes('[DEBUG]');
+      if (!isDebug && now - _clientLogLast < 600) return;
       _clientLogLast = now;
       const payload = {
         level: String(level || 'INFO').toUpperCase(),
@@ -2155,25 +2161,48 @@ function attachMenuActions(){
 
   async function pauseDiscovery(){
     // #region agent log
-    debugLog('app.js:2131', 'pauseDiscovery START', {discoverLocalRunning,discoverLocalPaused,discoverPauseRetries}, 'A');
+    debugLog('app.js:2149', 'pauseDiscovery START', {discoverLocalRunning,discoverLocalPaused,discoverPauseRetries}, 'A');
     // #endregion
     try{
       // Optimistic UI: show paused immediately
-      applyPausedDiscoveryUI();
+      try{
+        applyPausedDiscoveryUI();
+        // #region agent log
+        debugLog('app.js:2155', 'applyPausedDiscoveryUI called', {}, 'A');
+        // #endregion
+      }catch(e_ui){
+        // #region agent log
+        console.error('applyPausedDiscoveryUI exception:', e_ui);
+        debugLog('app.js:2157', 'applyPausedDiscoveryUI exception', {error:String(e_ui)}, 'A');
+        // #endregion
+      }
       // #region agent log
-      debugLog('app.js:2135', 'calling apiPostJson pause', {}, 'A');
+      debugLog('app.js:2161', 'calling apiPostJson pause', {}, 'A');
       // #endregion
-      const r = await apiPostJson('/api/discover-pause', {}); 
+      let r;
+      try{
+        r = await apiPostJson('/api/discover-pause', {}); 
+      }catch(e_api){
+        // #region agent log
+        console.error('apiPostJson exception:', e_api);
+        debugLog('app.js:2165', 'apiPostJson exception', {error:String(e_api),errorName:e_api?.name}, 'A');
+        // #endregion
+        throw e_api; // Re-throw to be caught by outer catch
+      }
       // #region agent log
-      debugLog('app.js:2137', 'pause API response', {ok:r?.ok,error:r?.error,status:r?.status,note:r?.note}, 'A');
+      debugLog('app.js:2169', 'pause API response', {ok:r?.ok,error:r?.error,status:r?.status,note:r?.note}, 'A');
       // #endregion
       // Always check status after API call, regardless of response
       let st = null;
       try{
         st = await apiGet('/api/discover-status');
+        // #region agent log
+        debugLog('app.js:2175', 'status check success', {status:st?.status}, 'A');
+        // #endregion
       }catch(e){
         // #region agent log
-        debugLog('app.js:2143', 'status check exception', {error:String(e)}, 'A');
+        console.error('status check exception:', e);
+        debugLog('app.js:2178', 'status check exception', {error:String(e),errorName:e?.name}, 'A');
         // #endregion
       }
       const stStatus = st ? String(st?.status || '').toLowerCase() : '';
@@ -2264,7 +2293,28 @@ function attachMenuActions(){
     }catch(e){
       // #region agent log
       console.error('pauseDiscovery EXCEPTION:', e);
-      debugLog('app.js:2206', 'pauseDiscovery EXCEPTION', {error:String(e),errorName:e?.name,errorMessage:e?.message,stack:e?.stack?.substring(0,500)}, 'D');
+      console.error('Exception details:', {name:e?.name, message:e?.message, stack:e?.stack});
+      // Force immediate log without throttling
+      try{
+        const logData = {location:'app.js:2291', message:'pauseDiscovery EXCEPTION', data:{error:String(e),errorName:e?.name,errorMessage:e?.message,stack:String(e?.stack||'').substring(0,500)}, timestamp:Date.now(), sessionId:'debug-session', runId:'run1', hypothesisId:'D'};
+        console.log('[DEBUG] EXCEPTION', logData);
+        // Bypass throttle by using fetch directly
+        fetch('/api/client-log', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            level: 'INFO',
+            message: `[DEBUG] app.js:2291: pauseDiscovery EXCEPTION`,
+            context: logData,
+            path: location.pathname,
+            href: location.href,
+            ts: new Date().toISOString(),
+          }),
+        }).catch(() => {});
+      }catch(e_log){
+        console.error('Failed to log exception:', e_log);
+      }
+      debugLog('app.js:2294', 'pauseDiscovery EXCEPTION (via debugLog)', {error:String(e),errorName:e?.name,errorMessage:e?.message}, 'D');
       // #endregion
       try{
         const st = await apiGet('/api/discover-status');      
