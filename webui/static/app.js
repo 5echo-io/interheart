@@ -1932,13 +1932,20 @@ function attachMenuActions(){
     discoverList.dataset.bound = '1';
     discoverList.addEventListener('click', (e) => {
       // #region agent log
-      debugLog('app.js:1922', 'click event on discoverList', {targetTag:e.target?.tagName,targetClass:e.target?.className,targetId:e.target?.id,discoverListExists:!!discoverList}, 'E');
+      console.log('[DEBUG] click handler called', e.target);
+      debugLog('app.js:1933', 'click event on discoverList', {targetTag:e.target?.tagName,targetClass:e.target?.className,targetId:e.target?.id,discoverListExists:!!discoverList}, 'E');
       // #endregion
       const item = e.target?.closest?.('.scan-item');
       // #region agent log
-      debugLog('app.js:1924', 'scan-item closest check', {itemFound:!!item,itemIp:item?.dataset?.ip,itemClass:item?.className}, 'E');
+      console.log('[DEBUG] closest scan-item:', item);
+      debugLog('app.js:1937', 'scan-item closest check', {itemFound:!!item,itemIp:item?.dataset?.ip,itemClass:item?.className}, 'E');
       // #endregion
-      if (!item) return;
+      if (!item) {
+        // #region agent log
+        debugLog('app.js:1941', 'no item found - returning early', {}, 'E');
+        // #endregion
+        return;
+      }
       e.stopPropagation();
       e.preventDefault();
       const ip = String(item.dataset.ip || '').trim();        
@@ -2256,7 +2263,8 @@ function attachMenuActions(){
       applyPausedDiscoveryUI();
     }catch(e){
       // #region agent log
-      debugLog('app.js:2206', 'pauseDiscovery EXCEPTION', {error:String(e),stack:e?.stack}, 'D');
+      console.error('pauseDiscovery EXCEPTION:', e);
+      debugLog('app.js:2206', 'pauseDiscovery EXCEPTION', {error:String(e),errorName:e?.name,errorMessage:e?.message,stack:e?.stack?.substring(0,500)}, 'D');
       // #endregion
       try{
         const st = await apiGet('/api/discover-status');      
@@ -2270,7 +2278,8 @@ function attachMenuActions(){
         }
       }catch(e2){
         // #region agent log
-        debugLog('app.js:2214', 'exception handler status check failed', {error:String(e2)}, 'D');
+        console.error('exception handler status check failed:', e2);
+        debugLog('app.js:2214', 'exception handler status check failed', {error:String(e2),errorName:e2?.name}, 'D');
         // #endregion
       }
       setTimeout(async () => {
@@ -2287,7 +2296,12 @@ function attachMenuActions(){
             // #endregion
             toast('Discovery', 'Pause failed');
           }
-        }catch(_){ }
+        }catch(e3){
+          // #region agent log
+          console.error('delayed status check exception:', e3);
+          debugLog('app.js:2227', 'delayed status check exception in setTimeout', {error:String(e3)}, 'D');
+          // #endregion
+        }
       }, 600);
     }
   }
