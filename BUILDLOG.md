@@ -86,3 +86,9 @@ Technical build notes intended for iterative zip handoffs.
   - Discovery pause: stop running animation and keep Resume/Restart visible while paused.
   - Discovery pause: prevent auto-resume during pause grace window.
   - Files: webui/static/app.js, CHANGELOG.md, BUILDLOG.md, VERSION
+
+- 2026-02-02 | dev | 5.44.0-beta.1+build.7 | bugfix
+  - Discovery workers: clean up orphaned workers/nmap on WebUI start to avoid stale scans.
+  - Discovery status: reattach to real workers (paused/running) when meta PID is missing.
+  - Discovery workers: avoid resetting discovery state inside worker imports.
+  - Files: webui/app.py, webui/discovery_worker.py, webui/scan_worker.py, CHANGELOG.md, BUILDLOG.md, VERSION

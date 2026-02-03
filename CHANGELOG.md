@@ -27,6 +27,9 @@ This project follows Semantic Versioning (SemVer).
 - WebUI Discovery: Devices list updates via fallback polling when SSE is blocked.
 - WebUI Discovery: Progress layout flipped (percent/status left, KPIs right).
 - WebUI Discovery: Pause keeps animations stopped and preserves Resume/Restart buttons.
+- WebUI Discovery: orphaned discovery workers are cleaned up on WebUI start.
+- WebUI Discovery: status reattaches to running or paused workers even when meta is stale.
+- WebUI Discovery: workers no longer reset discovery state on import.
 
 ## v5.44.0-beta.1 – 2026-02-02
 

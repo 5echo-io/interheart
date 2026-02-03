@@ -6,7 +6,7 @@
 # Purpose: Flask WebUI API and frontend server, including discovery and targets management.
 # Intended path: /opt/interheart/webui/app.py
 # Created: 2026-02-01
-# Last modified: 2026-02-01
+# Last modified: 2026-02-02
 # =============================================================================
 
 from flask import Flask, request, jsonify, render_template, Response, send_file, g
@@ -101,6 +101,113 @@ def ensure_state_dir():
         pass
 
 
+def _ps_snapshot() -> list[dict]:
+    """Return a best-effort process snapshot for PID/PPID/stat/cmd."""
+    if os.name != "posix":
+        return []
+    if not shutil.which("ps"):
+        return []
+    try:
+        out = subprocess.check_output(["ps", "-eo", "pid,ppid,stat,cmd"], text=True)
+    except Exception:
+        return []
+    rows = []
+    for raw in (out or "").splitlines():
+        line = raw.strip()
+        if not line or line.lower().startswith("pid"):
+            continue
+        parts = line.split(None, 3)
+        if len(parts) < 4:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except Exception:
+            continue
+        stat = parts[2]
+        cmd = parts[3]
+        rows.append({"pid": pid, "ppid": ppid, "stat": stat, "cmd": cmd})
+    return rows
+
+
+def _find_discovery_workers() -> list[dict]:
+    """Return running discovery worker process info (best effort)."""
+    rows = _ps_snapshot()
+    if not rows:
+        return []
+    worker_hint = str((BASE_DIR / "discovery_worker.py").resolve())
+    out = []
+    for row in rows:
+        cmd = row.get("cmd") or ""
+        if "discovery_worker.py" not in cmd:
+            continue
+        if worker_hint in cmd or "webui/discovery_worker.py" in cmd:
+            out.append(row)
+    return out
+
+
+def _find_discovery_worker_pids() -> list[int]:
+    """Return running discovery worker PIDs (best effort)."""
+    out = []
+    for row in _find_discovery_workers():
+        out.append(int(row.get("pid") or 0))
+    return [p for p in out if p > 0]
+
+
+def _terminate_pids(pids: list[int]) -> None:
+    """Best-effort terminate PIDs with a short grace period."""
+    if not pids:
+        return
+    for pid in pids:
+        if not pid:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            continue
+    time.sleep(0.6)
+    for pid in pids:
+        try:
+            if pid and pid_is_running(pid):
+                os.kill(pid, signal.SIGKILL)
+        except Exception:
+            continue
+
+
+def _cleanup_stale_discovery_processes(reason: str = "startup") -> None:
+    """Stop orphaned discovery workers/nmap processes (best effort)."""
+    # First: attempt to stop the tracked worker pid/pgid
+    try:
+        meta = {}
+        if DISCOVERY_META_FILE.exists():
+            meta = json.loads(DISCOVERY_META_FILE.read_text(encoding="utf-8") or "{}")
+        pid = int(meta.get("pid") or 0)
+        pgid = int(meta.get("pgid") or 0)
+        if pid:
+            try:
+                if pgid:
+                    os.killpg(pgid, signal.SIGTERM)
+                else:
+                    os.kill(pid, signal.SIGTERM)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Second: stop any orphaned worker + their child nmap processes
+    rows = _ps_snapshot()
+    if not rows:
+        return
+    worker_pids = set(_find_discovery_worker_pids())
+    nmap_pids: list[int] = []
+    for row in rows:
+        cmd = row.get("cmd") or ""
+        if "nmap" in cmd and row.get("ppid") in worker_pids:
+            nmap_pids.append(int(row.get("pid") or 0))
+    _terminate_pids([p for p in nmap_pids if p])
+    _terminate_pids([p for p in worker_pids if p])
+
+
 def reset_discovery_state(reason: str = "startup"):
     """Reset persisted discovery state.
 
@@ -111,6 +218,7 @@ def reset_discovery_state(reason: str = "startup"):
 
     Requirement: always reset discovery status on WebUI start.
     """
+    _cleanup_stale_discovery_processes(reason)
     try:
         # Truncate event stream log
         DISCOVERY_EVENTS_FILE.write_text("", encoding="utf-8")
@@ -139,7 +247,9 @@ def reset_discovery_state(reason: str = "startup"):
         pass
 
 ensure_state_dir()
-reset_discovery_state("webui_start")
+# Avoid resetting discovery state inside worker processes.
+if os.environ.get("INTERHEART_WORKER") != "1":
+    reset_discovery_state("webui_start")
 
 # Ensure Flask logger is usable under systemd (stdout/stderr -> journal)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -2744,6 +2854,24 @@ def api_discover_start():
         except Exception:
             pass
 
+    # Extra guard: detect orphaned workers even if meta is stale.
+    worker_pids = _find_discovery_worker_pids()
+    if worker_pids:
+        try:
+            wpid = int(worker_pids[0])
+            meta['pid'] = wpid
+            try:
+                meta['pgid'] = int(os.getpgid(wpid))
+            except Exception:
+                meta['pgid'] = 0
+            meta['status'] = 'running'
+            if not meta.get('started'):
+                meta['started'] = int(time.time())
+            save_discovery_meta(meta)
+        except Exception:
+            pass
+        return jsonify({'ok': False, 'message': 'Discovery already running'})
+
     # Clear previous progress/events so a new scan starts cleanly
     try:
         (STATE_DIR / 'discovery_events.jsonl').write_text('')
@@ -2802,6 +2930,34 @@ def api_discover_status():
     status = (meta.get('status') or 'idle').lower()
     pid = int(meta.get('pid') or 0)
     pid_alive = bool(pid and pid_is_running(pid))
+
+    # If meta is missing the PID, but a worker exists, reattach.
+    if not pid_alive:
+        workers = _find_discovery_workers()
+        worker_pids = [int(w.get("pid") or 0) for w in workers if int(w.get("pid") or 0) > 0]
+        if worker_pids:
+            try:
+                pid = int(worker_pids[0])
+                meta['pid'] = pid
+                try:
+                    meta['pgid'] = int(os.getpgid(pid))
+                except Exception:
+                    meta['pgid'] = 0
+                # If all workers are stopped, treat as paused.
+                all_stopped = True
+                for w in workers:
+                    stat = str(w.get("stat") or "")
+                    if "T" not in stat:
+                        all_stopped = False
+                        break
+                if status != "cancelling":
+                    meta['status'] = 'paused' if all_stopped else 'running'
+                save_discovery_meta(meta)
+                pid_alive = True
+            except Exception:
+                pid_alive = False
+
+    status = (meta.get('status') or status).lower()
 
     # Normalize when the worker is gone
     if status in ('running', 'cancelling', 'paused') and not pid_alive:
@@ -3062,9 +3218,18 @@ def api_discover_cancel():
 @APP.post('/api/discover-pause')
 def api_discover_pause():
     """Pause the discovery worker without losing progress (SIGSTOP)."""
-    meta = load_discovery_meta()
+    meta = load_discovery_meta() or {}
     pid = int(meta.get('pid') or 0)
     pgid = int(meta.get('pgid') or 0)
+    worker_pids = _find_discovery_worker_pids()
+    if pid <= 0 and worker_pids:
+        pid = int(worker_pids[0])
+        meta['pid'] = pid
+        try:
+            meta['pgid'] = int(os.getpgid(pid))
+        except Exception:
+            meta['pgid'] = 0
+        save_discovery_meta(meta)
     status = (meta.get('status') or '').lower()
     if pid <= 0:
         # If status says running/starting but we lost the PID, treat as paused
@@ -3084,10 +3249,21 @@ def api_discover_pause():
 
     # The worker is started in its own process group (see Popen(..., preexec_fn=os.setsid)).
     # We must signal the PGID (not the PID) for pause/resume/cancel to work reliably.
-    target_pgid = pgid or os.getpgid(pid)
+    target_pgids = set()
+    if pid > 0:
+        try:
+            target_pgids.add(int(pgid or os.getpgid(pid)))
+        except Exception:
+            pass
+    for wp in worker_pids:
+        try:
+            target_pgids.add(int(os.getpgid(int(wp))))
+        except Exception:
+            continue
 
     try:
-        os.killpg(target_pgid, signal.SIGSTOP)
+        for g in target_pgids:
+            os.killpg(g, signal.SIGSTOP)
     except ProcessLookupError:
         reset_discovery_state()
         return jsonify({'ok': False, 'error': 'Worker not found'}), 409
@@ -3102,19 +3278,39 @@ def api_discover_pause():
 @APP.post('/api/discover-resume')
 def api_discover_resume():
     """Resume a paused discovery worker (SIGCONT)."""
-    meta = load_discovery_meta()
+    meta = load_discovery_meta() or {}
     pid = int(meta.get('pid') or 0)
     pgid = int(meta.get('pgid') or 0)
+    worker_pids = _find_discovery_worker_pids()
+    if pid <= 0 and worker_pids:
+        pid = int(worker_pids[0])
+        meta['pid'] = pid
+        try:
+            meta['pgid'] = int(os.getpgid(pid))
+        except Exception:
+            meta['pgid'] = 0
+        save_discovery_meta(meta)
     if pid <= 0:
         return jsonify({'ok': False, 'error': 'No worker running'}), 409
 
     if meta.get('status') != 'paused':
         return jsonify({'ok': False, 'error': 'Not paused'}), 409
 
-    target_pgid = pgid or os.getpgid(pid)
+    target_pgids = set()
+    if pid > 0:
+        try:
+            target_pgids.add(int(pgid or os.getpgid(pid)))
+        except Exception:
+            pass
+    for wp in worker_pids:
+        try:
+            target_pgids.add(int(os.getpgid(int(wp))))
+        except Exception:
+            continue
 
     try:
-        os.killpg(target_pgid, signal.SIGCONT)
+        for g in target_pgids:
+            os.killpg(g, signal.SIGCONT)
     except ProcessLookupError:
         reset_discovery_state()
         return jsonify({'ok': False, 'error': 'Worker not found'}), 409
